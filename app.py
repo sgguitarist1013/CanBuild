@@ -112,7 +112,9 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240)):
             async def attempt(params):
                 if params is None:return []
                 try:return await parcel_query(params)
-                except (httpx.HTTPError,ValueError):return []
+                except (httpx.HTTPError,ValueError) as exc:
+                    result["warnings"].append("Parcel query failed: "+type(exc).__name__)
+                    return []
             results=await asyncio.gather(*(attempt(p) for p in queries))
             def norm(v):return re.sub(r"[^A-Z0-9]","",str(v or "").upper())
             feats=results[0]
