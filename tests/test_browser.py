@@ -49,7 +49,9 @@ def test_mobile_layout_and_input_validation(page, app_url):
     page.goto(app_url)
     page.get_by_role("button", name="Explore property").click()
     expect(page.locator("#status")).to_have_text("Enter a full Massachusetts address.")
-    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    page.evaluate("window.scrollTo(1000, 0)")
+    assert page.evaluate("window.scrollX === 0")
+    assert page.evaluate("Array.from(document.body.querySelectorAll('*')).every(el => { const s=getComputedStyle(el), r=el.getBoundingClientRect(); return s.display === 'none' || s.visibility === 'hidden' || (r.left >= -1 && r.right <= window.innerWidth + 1) })")
 
 
 def test_alias_selection_owner_and_sales(page, app_url, property_record):

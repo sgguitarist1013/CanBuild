@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from parcel_engine import resolve_parcel, conceptual_massing, normalize_address
 import boston
+import ma_sales
 from monitoring import configure_monitoring
 
 configure_monitoring()
@@ -79,7 +80,7 @@ async def suggest(q:str=Query(min_length=2,max_length=150)):
 async def property_lookup(address:str=Query(min_length=5,max_length=240), boston_pid:str|None=Query(default=None,pattern=r"^\d{10}$")):
     address=normalize_address(address)
     if not re.search(r"\b(MA|Massachusetts)\b",address,re.I): address=address.rstrip(", ") + ", MA"
-    result={"query":address,"checked_at":now(),"parcel_candidates":[],"sales_research":{"status":"Sales connector not configured for this municipality","candidates":[]},"address":None,"coordinates":None,"parcel":None,"zoning":None,"existing_building":None,"zoning_potential":None,"verification":{"address":"unverified","parcel":"unverified","assessor":"not matched","zoning":"unverified","amendments":"not checked"},"warnings":[],"sources":SOURCES}
+    result={"query":address,"checked_at":now(),"parcel_candidates":[],"sales_research":{"status":"Sales connector not configured for this municipality","candidates":[]},"address":None,"coordinates":None,"parcel":None,"zoning":None,"existing_building":None,"zoning_potential":None,"recommendations":[],"verification":{"address":"unverified","parcel":"unverified","assessor":"not matched","zoning":"unverified","amendments":"not checked"},"warnings":[],"sources":SOURCES}
     async with httpx.AsyncClient(timeout=13,follow_redirects=True) as client:
         try:
             resp=await client.get(CENSUS,params={"address":address,"benchmark":"Public_AR_Current","vintage":"Current_Current","format":"json"})
@@ -129,6 +130,11 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
                     result["warnings"].append("Municipal records use different address labels here. Select and verify a candidate parcel before attributing ownership or sales.")
             except (httpx.HTTPError,ValueError,TypeError):
                 result["warnings"].append("Boston municipal records temporarily unavailable; retry the lookup.")
+        elif result.get("parcel"):
+            try:
+                result["sales_research"]=await ma_sales.search(client,lon,lat,parts.get("city"),result["parcel"],result.get("existing_building"))
+            except (httpx.HTTPError,ValueError,TypeError):
+                result["sales_research"]={"status":"Statewide assessor sale lookup temporarily unavailable","candidates":[],"source_url":ma_sales.SOURCE}
         if parts.get("city","").lower()=="cambridge":
           try:
             # Socrata geometry predicate, authoritative city zoning layer.
@@ -136,7 +142,7 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
             z=await client.get(ZONES,params={"$where":predicate,"$select":"zone_type,pud_type","$limit":"5"})
             z.raise_for_status(); zones=z.json()
             if len(zones)==1:
-                result["zoning"]={"district":zones[0].get("zone_type"),"pud":zones[0].get("pud_type")}
+                result["zoning"]={"district":zones[0].get("zone_type"),"pud":zones[0].get("pud_type"),"source_url":"https://www.cambridgema.gov/gis/gisdatadictionary/cdd/cdd_zoningdistricts","source_checked_at":now()}
                 result["verification"]["zoning"]="GIS point match; overlays/amendments not checked"
             elif len(zones)>1:result["warnings"].append("Multiple zoning polygons intersect the point; boundary review needed.")
             else:result["warnings"].append("Zoning GIS did not return a unique district.")
@@ -156,6 +162,12 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
         else:
             result["warnings"].append("No verified zoning calculation rules configured for this municipality and district.")
     result["warnings"] += ["MassGIS assessor extracts can be stale; BLD_AREA and RES_AREA use different measurement conventions and may not equal zoning gross floor area.","Parcel maps are not legal surveys; legal units and additions require independent confirmation.","Zoning overlays, pending/adopted amendments, site constraints and legal buildability have NOT been automatically verified."]
+    if not result.get("zoning"):
+        result["recommendations"].append({"title":"Verify the property's zoning district","reason":"A current, parcel-level municipal zoning layer is not connected for this municipality, so CanBuild cannot responsibly estimate expansion potential.","next_step":"Use the municipality's official zoning map and confirm the parcel's base and overlay districts with its planning or building department.","confidence":"Not yet verified"})
+    elif not result.get("zoning_potential"):
+        result["recommendations"].append({"title":"Check local expansion standards","reason":"The district is mapped, but a reviewed rule set for this district is not available in CanBuild.","next_step":"Confirm setbacks, height, lot coverage, open space, nonconforming-lot rules, overlays, and permit requirements with the municipality.","confidence":"District mapped; dimensional rules incomplete"})
+    else:
+        result["recommendations"].append({"title":"Review the preliminary zoning scenario","reason":"A district-specific scenario is available, subject to its stated assumptions and limitations.","next_step":"Have the city review a current survey and proposed footprint before paying for design work.","confidence":result["zoning_potential"].get("confidence")})
     return result
 
 # Regression tests run with every deployment. A failing suite prevents startup.
