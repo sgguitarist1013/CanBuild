@@ -90,16 +90,16 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240)):
                 data=r.json()
                 if "error" in data:raise ValueError(str(data["error"].get("message","MassGIS query error")))
                 return [x.get("attributes",{}) for x in data.get("features",[])]
-            feats=[]
-            if house and street_name:
-                # One query, not three sequential slow calls. Filter street/city locally.
-                feats=await parcel_query({"where":f"ADDR_NUM = '{safe(house)}' AND FULL_STR LIKE '%{safe(street_name.upper())}%'"})
+            # Prefer spatially indexed parcel lookup; wildcard street searches time out statewide.
+            feats=await parcel_query({"geometry":f"{lon},{lat}","geometryType":"esriGeometryPoint","inSR":4326,"spatialRel":"esriSpatialRelIntersects"})
+            if house:
+                matched=[x for x in feats if str(x.get("ADDR_NUM") or "").strip()==house]
+                if matched:feats=matched
+            if not feats and house and street_name:
+                # Exact street address lookup only, no unindexed leading-wildcard LIKE.
+                feats=await parcel_query({"where":f"ADDR_NUM = '{safe(house)}' AND CITY = '{safe(city.upper())}'"})
                 def norm(v):return re.sub(r"[^A-Z0-9]","",str(v or "").upper())
-                feats=[x for x in feats if norm(x.get("CITY"))==norm(city) and norm(street_name) in norm(x.get("FULL_STR"))]
-            if not feats:
-                feats=await parcel_query({"geometry":f"{lon},{lat}","geometryType":"esriGeometryPoint","inSR":4326,"spatialRel":"esriSpatialRelIntersects"})
-                if house:
-                    feats=[x for x in feats if str(x.get("ADDR_NUM") or "").strip()==house]
+                feats=[x for x in feats if norm(street_name) in norm(x.get("FULL_STR"))]
             feats=[x for x in feats if x.get("POLY_TYPE") not in ("ROW","WATER","RAIL_ROW")]
             ids={str(x.get("LOC_ID") or x.get("MAP_PAR_ID")) for x in feats}
             if len(ids)==1 and feats:
