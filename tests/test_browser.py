@@ -49,7 +49,7 @@ def test_mobile_layout_and_input_validation(page, app_url):
     page.goto(app_url)
     page.get_by_role("button", name="Explore property").click()
     expect(page.locator("#status")).to_have_text("Enter a full Massachusetts address.")
-    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), page.evaluate("JSON.stringify({viewport: window.innerWidth, html: {scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth}, body: {scroll: document.body.scrollWidth, client: document.body.clientWidth}, overflowing: Array.from(document.querySelectorAll('*')).filter(el => el.scrollWidth > el.clientWidth + 1).map(el => ({tag: el.tagName, id: el.id, cls: String(el.className).slice(0,60), scroll: el.scrollWidth, client: el.clientWidth, overflow: getComputedStyle(el).overflowX}))})")
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), page.evaluate("JSON.stringify({viewport: window.innerWidth, media: matchMedia('(max-width:680px)').matches, intro: {display:getComputedStyle(document.querySelector('#intro')).display, grid:getComputedStyle(document.querySelector('#intro')).gridTemplateColumns, rect:document.querySelector('#intro').getBoundingClientRect().toJSON(), scroll:document.querySelector('#intro').scrollWidth, client:document.querySelector('#intro').clientWidth}, html:document.documentElement.scrollWidth, styles:Array.from(document.styleSheets).map(s=>{try{return Array.from(s.cssRules).map(r=>r.cssText).filter(t=>t.includes('680px'))}catch(e){return 'blocked'}})})")
 
 
 def test_alias_selection_owner_and_sales(page, app_url, property_record):
