@@ -49,7 +49,9 @@ def test_mobile_layout_and_input_validation(page, app_url):
     page.goto(app_url)
     page.get_by_role("button", name="Explore property").click()
     expect(page.locator("#status")).to_have_text("Enter a full Massachusetts address.")
-    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), page.evaluate("JSON.stringify({viewport:innerWidth,scroll:document.documentElement.scrollWidth,text:Array.from(document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT)).map(n=>{const r=document.createRange();r.selectNodeContents(n);const b=r.getBoundingClientRect();return {text:n.textContent.trim().slice(0,70),left:Math.round(b.left),right:Math.round(b.right),width:Math.round(b.width)}}).filter(x=>x.right>innerWidth+1||x.left< -1),pseudo:Array.from(document.querySelectorAll('*')).flatMap(e=>['::before','::after'].map(p=>({tag:e.tagName,id:e.id,cls:String(e.className).slice(0,40),pseudo:p,content:getComputedStyle(e,p).content})).filter(x=>x.content!='none'&&x.content!='normal'))})")
+    page.evaluate("window.scrollTo(1000, 0)")
+    assert page.evaluate("window.scrollX === 0")
+    assert page.evaluate("Array.from(document.body.querySelectorAll('*')).every(el => { const s=getComputedStyle(el), r=el.getBoundingClientRect(); return s.display === 'none' || s.visibility === 'hidden' || (r.left >= -1 && r.right <= window.innerWidth + 1) })")
 
 
 def test_alias_selection_owner_and_sales(page, app_url, property_record):
