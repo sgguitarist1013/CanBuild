@@ -122,6 +122,25 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240)):
             if not feats and house:
                 feats=[x for x in results[1] if not street_name or norm(street_name) in norm(x.get("FULL_STR"))]
             if not feats:
+                # Census geocoders can locate an address on the road centerline, outside
+                # its tax parcel. Search a small nearby envelope and match the address.
+                try:
+                    dx=0.0010
+                    dy=0.00065
+                    nearby=await parcel_query({"geometry":f"{lon-dx},{lat-dy},{lon+dx},{lat+dy}","geometryType":"esriGeometryEnvelope","inSR":4326,"spatialRel":"esriSpatialRelIntersects","resultRecordCount":200})
+                    candidates=[x for x in nearby if x.get("POLY_TYPE") in ("FEE","TAX",None)]
+                    if house:
+                        candidates=[x for x in candidates if str(x.get("ADDR_NUM") or "").strip()==house]
+                    if street_name:
+                        candidates=[x for x in candidates if norm(street_name) in norm(x.get("FULL_STR") or x.get("SITE_ADDR"))]
+                    if city:
+                        candidates=[x for x in candidates if norm(x.get("CITY"))==norm(city)]
+                    keys={str(x.get("LOC_ID") or x.get("MAP_PAR_ID")) for x in candidates}
+                    if len(keys)==1:feats=candidates
+                    elif len(keys)>1:result["warnings"].append("Multiple nearby parcels match the address; parcel selection withheld.")
+                except (httpx.HTTPError,ValueError) as ex:
+                    result["warnings"].append("Nearby parcel search failed: "+type(ex).__name__)
+            if not feats:
                 # Minimal parcel geometry request can succeed even when the assessor join is slow.
                 try:
                     rr=await client.get(PARCELS,params={"f":"json","geometry":f"{lon},{lat}","geometryType":"esriGeometryPoint","inSR":4326,"spatialRel":"esriSpatialRelIntersects","outFields":"MAP_PAR_ID,LOC_ID,POLY_TYPE","returnGeometry":"true","outSR":"3857","resultRecordCount":8},timeout=12)
