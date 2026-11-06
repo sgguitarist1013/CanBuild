@@ -49,7 +49,7 @@ async def suggest(q:str=Query(min_length=2,max_length=150)):
             pass
     try:
         async with httpx.AsyncClient(timeout=9) as client:
-            r=await client.get("https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/suggest",params={"f":"json","text":query,"searchExtent":"-73.6,41.2,-69.9,42.9","location":"-71.06,42.36","maxSuggestions":15,"category":"Address","countryCode":"USA"})
+            r=await client.get("https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/suggest",params={"f":"json","text":query if re.search(r"\\b(MA|Massachusetts|Cambridge|Somerville|Boston)\\b",query,re.I) else query+", Cambridge, MA","searchExtent":"-73.6,41.2,-69.9,42.9","location":"-71.06,42.36","maxSuggestions":15,"category":"Address","countryCode":"USA"})
             r.raise_for_status()
             data=r.json()
             if "error" in data:raise ValueError("ArcGIS suggestion error")
@@ -85,7 +85,7 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240)):
             city=str(parts.get("city") or "").strip()
             def safe(v):return v.replace("'","''")
             async def parcel_query(params):
-                r=await client.get(PARCELS,params={"f":"json","outFields":fields,"returnGeometry":"false","resultRecordCount":30,**params},timeout=httpx.Timeout(22.0,connect=6.0))
+                r=await client.get(PARCELS,params={"f":"json","outFields":fields,"returnGeometry":"false","resultRecordCount":30,**params},timeout=httpx.Timeout(8.0,connect=4.0))
                 r.raise_for_status()
                 data=r.json()
                 if "error" in data:raise ValueError(str(data["error"].get("message","MassGIS query error")))
