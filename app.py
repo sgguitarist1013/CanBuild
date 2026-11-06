@@ -54,6 +54,19 @@ async def suggest(q:str=Query(min_length=2,max_length=150)):
             data=r.json()
             if "error" in data:raise ValueError("ArcGIS suggestion error")
             vals=[x.get("text","") for x in data.get("suggestions",[]) if x.get("text")]
+            # Require a literal house-number and street-prefix match; geocoder rank alone is insufficient.
+            parsed=re.match(r"^\\s*(\\d+[A-Za-z]?)\\s+([A-Za-z][A-Za-z0-9 .'-]*)",query)
+            if parsed:
+                number=parsed.group(1).upper()
+                prefix=parsed.group(2).strip().upper()
+                def matching(value):
+                    candidate=value.upper().strip()
+                    candidate=re.sub(r"^\\s*"+re.escape(number)+r"\\s+","",candidate)
+                    return candidate.startswith(prefix) and re.match(r"^\\s*"+re.escape(number)+r"\\b",value.upper()) is not None
+                vals=[v for v in vals if matching(v)]
+            elif re.match(r"^\\s*\\d+\\s*$",query):
+                vals=[v for v in vals if re.match(r"^\\s*"+re.escape(query.strip())+r"\\b",v)]
+
             return {"configured":True,"provider":"ArcGIS","suggestions":list(dict.fromkeys(vals))[:8]}
     except (httpx.HTTPError,ValueError):
         return {"configured":False,"suggestions":[]}
