@@ -8,7 +8,8 @@ from shapely.ops import unary_union, transform
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from parcel_engine import resolve_parcel, conceptual_massing
+from parcel_engine import resolve_parcel, conceptual_massing, normalize_address
+import boston
 from monitoring import configure_monitoring
 
 configure_monitoring()
@@ -75,9 +76,10 @@ async def suggest(q:str=Query(min_length=2,max_length=150)):
     except (httpx.HTTPError,ValueError):
         return {"configured":False,"suggestions":[]}
 @app.get("/api/property")
-async def property_lookup(address:str=Query(min_length=5,max_length=240)):
+async def property_lookup(address:str=Query(min_length=5,max_length=240), boston_pid:str|None=Query(default=None,pattern=r"^\d{10}$")):
+    address=normalize_address(address)
     if not re.search(r"\b(MA|Massachusetts)\b",address,re.I): address=address.rstrip(", ") + ", MA"
-    result={"query":address,"checked_at":now(),"address":None,"coordinates":None,"parcel":None,"zoning":None,"existing_building":None,"zoning_potential":None,"verification":{"address":"unverified","parcel":"unverified","assessor":"not matched","zoning":"unverified","amendments":"not checked"},"warnings":[],"sources":SOURCES}
+    result={"query":address,"checked_at":now(),"parcel_candidates":[],"sales_research":{"status":"Sales connector not configured for this municipality","candidates":[]},"address":None,"coordinates":None,"parcel":None,"zoning":None,"existing_building":None,"zoning_potential":None,"verification":{"address":"unverified","parcel":"unverified","assessor":"not matched","zoning":"unverified","amendments":"not checked"},"warnings":[],"sources":SOURCES}
     async with httpx.AsyncClient(timeout=13,follow_redirects=True) as client:
         try:
             resp=await client.get(CENSUS,params={"address":address,"benchmark":"Public_AR_Current","vintage":"Current_Current","format":"json"})
@@ -95,7 +97,7 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240)):
         result["verification"]["address"]="Census geocoded (not Google-confirmed)"
         polygon=None
         try:
-            parcel,building,polygon=await resolve_parcel(client,lon,lat,parts,result["warnings"],address)
+            parcel,building,polygon=(None,None,None) if parts.get("city","").upper()=="BOSTON" else await resolve_parcel(client,lon,lat,parts,result["warnings"],address)
             if parcel:
                 result["parcel"]=parcel
                 result["existing_building"]=building
@@ -110,6 +112,23 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240)):
         except Exception as exc:
             result["warnings"].append("Statewide parcel matcher unavailable: "+type(exc).__name__+".")
             print("Statewide parcel lookup failed:",type(exc).__name__,str(exc)[:200],flush=True)
+        if parts.get("city","").upper()=="BOSTON":
+            result["sources"]=[{"name":"Boston municipal assessor FY2026 and recorded sales","url":boston.SOURCE},{"name":"MassGIS statewide parcels","url":SOURCES[0]["url"]}]
+            try:
+                record,candidates,method=await boston.lookup(client,lon,lat,parts,address,boston_pid)
+                result["parcel_candidates"]=candidates
+                if record:
+                    result["parcel"],result["existing_building"]=boston.to_result(record,method)
+                    result["verification"]["parcel"]=method
+                    result["verification"]["assessor"]="Boston municipal FY2026 record"
+                    result["assessor_address"]=record.get("FULL_ADDRESS")
+                    try:result["sales_research"]=await boston.sales_research(client,record)
+                    except (httpx.HTTPError,ValueError,TypeError):
+                        result["sales_research"]={"status":"Boston sales service temporarily unavailable","candidates":[]}
+                elif candidates:
+                    result["warnings"].append("Municipal records use different address labels here. Select and verify a candidate parcel before attributing ownership or sales.")
+            except (httpx.HTTPError,ValueError,TypeError):
+                result["warnings"].append("Boston municipal records temporarily unavailable; retry the lookup.")
         if parts.get("city","").lower()=="cambridge":
           try:
             # Socrata geometry predicate, authoritative city zoning layer.
@@ -156,7 +175,7 @@ async def validate_startup():
     # Live integration check, independent of visitors. Logs only; no displayed guesses.
     async def smoke():
         try:
-            result=await property_lookup("95 Magazine St, Cambridge, MA, 02139")
+            result=await property_lookup("95 Magazine St, Cambridge, MA, 02139",None)
             p=result.get("parcel") or {}
             print("CANBUILD 95 MAGAZINE SMOKE:",
                 "parcel_id=",p.get("parcel_number"),

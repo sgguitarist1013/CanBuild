@@ -50,3 +50,30 @@ def test_mobile_layout_and_input_validation(page, app_url):
     page.get_by_role("button", name="Explore property").click()
     expect(page.locator("#status")).to_have_text("Enter a full Massachusetts address.")
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+def test_alias_selection_owner_and_sales(page, app_url, property_record):
+    first=dict(property_record,parcel=None,existing_building=None,parcel_candidates=[{
+        'parcel_number':'0303029000','address':'38-34 ATLANTIC AV, BOSTON, MA 02110',
+        'recorded_owner':'ONE LEWIS WHARF LLC','use_description':'OFFICE 3-9 STORY'}])
+    selected=dict(property_record,assessor_address='38-34 ATLANTIC AV, BOSTON, MA 02110',
+        parcel={'parcel_number':'0303029000','recorded_owners':['ONE LEWIS WHARF LLC']},
+        parcel_candidates=[],sales_research={'status':'Recorded sale candidates found','candidates':[{
+            'address':'Test office sale','sale_date':'2026-01-01','sale_price':12000000,
+            'gross_area_sqft':18000,'price_per_gross_sqft':667,'use_description':'OFFICE 3-9 STORY',
+            'parcel_number':'0000000001','source_url':'https://properties.boston.gov/'}]})
+    requests=[]
+    def respond(route):
+        requests.append(route.request.url)
+        route.fulfill(json=selected if 'boston_pid=0303029000' in route.request.url else first)
+    page.route('**/api/property?*',respond)
+    page.route('**/api/suggest?*',lambda route:route.fulfill(json={'suggestions':[]}))
+    page.goto(app_url)
+    page.get_by_role('combobox').fill('One Lewis Wharf, Boston, MA')
+    page.get_by_role('button',name='Explore property').click()
+    expect(page.locator('#ownerStatus')).to_contain_text('No recorded owner attributed')
+    page.get_by_role('button',name='Review this assessor record').click()
+    expect(page.locator('#propertyAddress')).to_have_text('38-34 ATLANTIC AV, BOSTON, MA 02110')
+    expect(page.locator('#ownerStatus')).to_contain_text('ONE LEWIS WHARF LLC')
+    expect(page.locator('#salesCandidates')).to_contain_text('$12,000,000')
+    assert any('boston_pid=0303029000' in url for url in requests)
