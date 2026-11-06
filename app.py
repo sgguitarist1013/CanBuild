@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 ROOT=Path(__file__).parent
-app=FastAPI(title="CanBuild Cambridge",version="0.6.0")
+app=FastAPI(title="CanBuild Cambridge",version="0.6.1")
 app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
 CENSUS="https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress"
 PARCELS="https://services1.arcgis.com/hGdibHYSPO59RG1h/ArcGIS/rest/services/Massachusetts_Property_Tax_Parcels/FeatureServer/0/query"
@@ -25,7 +25,7 @@ def now(): return datetime.now(timezone.utc).isoformat()
 @app.get("/")
 def home(): return FileResponse(ROOT/"static"/"index.html")
 @app.get("/api/health")
-def health(): return {"ok":True,"version":"0.6.0","time":now()}
+def health(): return {"ok":True,"version":"0.6.1","time":now()}
 @app.get("/api/sources")
 def sources(): return {"sources":SOURCES,"note":"Reference links only; no live amendment validation."}
 @app.get("/api/suggest")
@@ -94,6 +94,14 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240)):
                 if expected:
                     feats=[x for x in feats if expected in clean(x.get("FULL_STR")).split(" ")]
             if not feats:
+                # The assessor SITE_ADDR may not agree with standardized FULL_STR.
+                if house and street_name:
+                    where=f"UPPER(CITY) = 'CAMBRIDGE' AND UPPER(SITE_ADDR) LIKE '{sqlsafe(house)}%{sqlsafe(street_name.upper())}%'"
+                    alt=await client.get(PARCELS,params={"f":"json","where":where,"outFields":fields,"returnGeometry":"false","resultRecordCount":100})
+                    alt.raise_for_status()
+                    alt_data=alt.json()
+                    if "error" not in alt_data:feats=[x.get("attributes",{}) for x in alt_data.get("features",[])]
+            if not feats:
                 p=await client.get(PARCELS,params={"f":"json","geometry":f"{lon},{lat}","geometryType":"esriGeometryPoint","inSR":4326,"spatialRel":"esriSpatialRelIntersects","outFields":fields,"returnGeometry":"false","resultRecordCount":100})
                 p.raise_for_status()
                 data=p.json()
@@ -101,8 +109,8 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240)):
                 feats=[x.get("attributes",{}) for x in data.get("features",[])]
                 if house:
                     feats=[x for x in feats if str(x.get("ADDR_NUM") or "").strip()==house]
-            feats=[x for x in feats if x.get("POLY_TYPE") in ("FEE","TAX")]
-            ids={str(x.get("LOC_ID") or x.get("MAP_PAR_ID")) for x in feats}
+            feats=[x for x in feats if x.get("POLY_TYPE") not in ("ROW","WATER")]
+            ids={str(x.get("MAP_PAR_ID") or x.get("LOC_ID")) for x in feats}
             if len(ids)==1 and feats:
                 x=feats[0]
                 area=x.get("Shape__Area")
@@ -120,8 +128,9 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240)):
                 result["warnings"].append("Several MassGIS parcels match this address; parcel details require disambiguation.")
             else:
                 result["warnings"].append("No MassGIS assessor parcel matched the address or point.")
-        except (httpx.HTTPError,ValueError,TypeError,KeyError):
+        except (httpx.HTTPError,ValueError,TypeError,KeyError) as exc:
             result["warnings"].append("MassGIS property record query failed; no assessor values inferred.")
+            print("MassGIS lookup failed:",type(exc).__name__,str(exc)[:300],flush=True)
         try:
             # Socrata geometry predicate, authoritative city zoning layer.
             predicate=f"intersects(the_geom, 'POINT ({lon} {lat})')"
