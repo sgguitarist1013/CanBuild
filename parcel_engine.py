@@ -28,7 +28,7 @@ SUPPORTED_RULES = {
 def requested_house_number(address):
     """Return the explicitly requested house number, never Census block-range fromAddress."""
     segment=str(address or "").split(",")[0]
-    match=re.match(r"^\\s*(\\d+[A-Za-z]?)(?=\\s)",segment)
+    match=re.match(r"^\s*(\d+[A-Za-z]?)(?=\s)",segment)
     return match.group(1).upper() if match else None
 
 def clean(s):
