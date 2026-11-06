@@ -103,16 +103,26 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240)):
                 data=r.json()
                 if "error" in data:raise ValueError(str(data["error"].get("message","MassGIS query error")))
                 return [x.get("attributes",{}) for x in data.get("features",[])]
-            # Prefer spatially indexed parcel lookup; wildcard street searches time out statewide.
-            feats=await parcel_query({"geometry":f"{lon},{lat}","geometryType":"esriGeometryPoint","inSR":4326,"spatialRel":"esriSpatialRelIntersects"})
+            # Query geometry and assessor attributes independently; use bounded fallback queries.
+            import asyncio
+            queries=[
+                {"geometry":f"{lon},{lat}","geometryType":"esriGeometryPoint","inSR":4326,"spatialRel":"esriSpatialRelIntersects"},
+                {"where":f"ADDR_NUM = '{safe(house)}' AND CITY = '{safe(city.upper())}'"} if house and city else None
+            ]
+            async def attempt(params):
+                if params is None:return []
+                try:return await parcel_query(params)
+                except (httpx.HTTPError,ValueError):return []
+            results=await asyncio.gather(*(attempt(p) for p in queries))
+            def norm(v):return re.sub(r"[^A-Z0-9]","",str(v or "").upper())
+            feats=results[0]
             if house:
                 matched=[x for x in feats if str(x.get("ADDR_NUM") or "").strip()==house]
                 if matched:feats=matched
-            if not feats and house and street_name:
-                # Exact street address lookup only, no unindexed leading-wildcard LIKE.
-                feats=await parcel_query({"where":f"ADDR_NUM = '{safe(house)}' AND CITY = '{safe(city.upper())}'"})
-                def norm(v):return re.sub(r"[^A-Z0-9]","",str(v or "").upper())
-                feats=[x for x in feats if norm(street_name) in norm(x.get("FULL_STR"))]
+            if not feats and house:
+                feats=[x for x in results[1] if not street_name or norm(street_name) in norm(x.get("FULL_STR"))]
+            if not feats:
+                result["warnings"].append("MassGIS did not return parcel records from spatial or address lookup.")
             feats=[x for x in feats if x.get("POLY_TYPE") not in ("ROW","WATER","RAIL_ROW")]
             ids={str(x.get("LOC_ID") or x.get("MAP_PAR_ID")) for x in feats}
             if len(ids)==1 and feats:
