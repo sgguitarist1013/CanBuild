@@ -150,7 +150,7 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240)):
                 if shapes:
                     g=unary_union(shapes)
                     factor=math.cos(math.radians(lat))*3.280839895
-                    g=transform(lambda x,y,z=None:(x*factor,y*factor) if z is None else (x*factor,y*factor,z),g)
+                    g=transform(lambda x,y,z=None:((x*factor,y*factor) if abs(x)>180 else ((6378137*math.radians(x))*factor,(6378137*math.log(math.tan(math.pi/4+math.radians(y)/2)))*factor)) if z is None else (x*factor,y*factor,z),g)
                     if g.is_valid and g.area>100:
                         cap=g.area*.7
                         low=min(max(0,g.buffer(-10,join_style=2).area),cap)*4
