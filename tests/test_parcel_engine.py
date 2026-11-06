@@ -15,6 +15,15 @@ class StatewideParcelTests(unittest.TestCase):
                         "FULL_STR":"MAGAZINE ST"}
                 self.assertTrue(exact_address_match(record,"95","Magazine",city))
 
+    def test_street_suffix_variants_across_cities(self):
+        for city in ("CAMBRIDGE","BOSTON","WORCESTER","SPRINGFIELD"):
+            record={"CITY":city,"ADDR_NUM":"43","SITE_ADDR":"43 WENDELL STREET",
+                    "FULL_STR":"WENDELL ST"}
+            self.assertTrue(exact_address_match(record,"43","Wendell Street",city))
+            self.assertTrue(exact_address_match(record,"43","Wendell St",city))
+            self.assertTrue(exact_address_match(record,"43","Wendell",city))
+            self.assertFalse(exact_address_match(record,"43","Wendell Avenue",city))
+
     def test_nearby_property_must_be_rejected(self):
         record={"CITY":"CAMBRIDGE","ADDR_NUM":"91","SITE_ADDR":"91 MAGAZINE ST",
                 "FULL_STR":"MAGAZINE ST"}
