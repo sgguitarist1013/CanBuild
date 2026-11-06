@@ -4,7 +4,8 @@ Run: python -m unittest discover -s tests -v
 """
 import unittest
 from shapely.geometry import box
-from parcel_engine import exact_address_match, conceptual_massing, lot_area_sqft
+from parcel_engine import exact_address_match, conceptual_massing, lot_area_sqft, requested_house_number, resolve_parcel
+from unittest.mock import patch, AsyncMock
 
 class StatewideParcelTests(unittest.TestCase):
     def test_accepts_same_address_in_multiple_municipalities(self):
@@ -29,6 +30,11 @@ class StatewideParcelTests(unittest.TestCase):
         record={"CITY":"CAMBRIDGE","ADDR_NUM":"95","SITE_ADDR":"91 MAGAZINE ST",
                 "FULL_STR":"MAGAZINE ST"}
         self.assertFalse(exact_address_match(record,"95","Magazine","CAMBRIDGE"))
+
+    def test_house_number_not_census_street_range(self):
+        self.assertEqual(requested_house_number("95 Magazine St, Cambridge, MA"),"95")
+        self.assertEqual(requested_house_number("95A Magazine St, Cambridge, MA"),"95A")
+        self.assertEqual(requested_house_number("91 Magazine St, Cambridge, MA"),"91")
 
     def test_lot_area_units(self):
         self.assertEqual(lot_area_sqft({"LOT_SIZE":0.2,"LOT_UNITS":"ACRES"}),8712)
@@ -58,6 +64,38 @@ class StatewideParcelTests(unittest.TestCase):
         self.assertIsNotNone(out)
         self.assertNotIn("inclusionary_scenario",out)
         self.assertIsNone(out["additional_area_high_sqft"])
+
+class StatewideLookupIntegrationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_95_does_not_select_91_census_range(self):
+        # Census fromAddress 91 must not influence matching user-entered 95.
+        components={"fromAddress":"91","streetName":"MAGAZINE","city":"CAMBRIDGE"}
+        neighboring={"attributes":{"OBJECTID":91,"CITY":"CAMBRIDGE","ADDR_NUM":"91",
+            "SITE_ADDR":"91 MAGAZINE ST","FULL_STR":"MAGAZINE ST","MAP_PAR_ID":"101-99","LOC_ID":"101-99"}}
+        target={"attributes":{"OBJECTID":95,"CITY":"CAMBRIDGE","ADDR_NUM":"95",
+            "SITE_ADDR":"95 MAGAZINE ST","FULL_STR":"MAGAZINE ST","MAP_PAR_ID":"101-200",
+            "LOC_ID":"101-200","LOT_SIZE":4000,"LOT_UNITS":"SF","FY":2026}}
+        responses=[[neighboring],[target]]
+        async def fake_query(client, params, timeout=12.0):
+            return responses.pop(0)
+        with patch("parcel_engine.query",new=fake_query), patch("parcel_engine.selected_geometry",new=AsyncMock(return_value=None)):
+            warnings=[]
+            parcel,building,geometry=await resolve_parcel(None,-71.11,42.35,components,warnings,
+                "95 Magazine St, Cambridge, MA")
+        self.assertEqual(parcel["parcel_number"],"101-200")
+        self.assertEqual(parcel["assessor_site_address"],"95 MAGAZINE ST")
+        self.assertNotEqual(parcel["parcel_number"],"101-99")
+
+    async def test_only_neighbor_returns_no_parcel(self):
+        components={"fromAddress":"91","streetName":"MAGAZINE","city":"CAMBRIDGE"}
+        neighboring={"attributes":{"OBJECTID":91,"CITY":"CAMBRIDGE","ADDR_NUM":"91",
+            "SITE_ADDR":"91 MAGAZINE ST","FULL_STR":"MAGAZINE ST","MAP_PAR_ID":"101-99","LOC_ID":"101-99"}}
+        with patch("parcel_engine.query",new=AsyncMock(return_value=[neighboring])):
+            warnings=[]
+            parcel,building,geometry=await resolve_parcel(None,-71.11,42.35,components,warnings,
+                "95 Magazine St, Cambridge, MA")
+        self.assertIsNone(parcel)
+        self.assertIsNone(building)
+        self.assertIsNone(geometry)
 
 if __name__=="__main__":
     unittest.main()
