@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 ROOT=Path(__file__).parent
-app=FastAPI(title="CanBuild Cambridge",version="0.4.0")
+app=FastAPI(title="CanBuild Cambridge",version="0.4.1")
 app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
 CENSUS="https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress"
 PARCELS="https://services1.arcgis.com/hGdibHYSPO59RG1h/ArcGIS/rest/services/Massachusetts_Property_Tax_Parcels/FeatureServer/0/query"
@@ -25,21 +25,33 @@ def now(): return datetime.now(timezone.utc).isoformat()
 @app.get("/")
 def home(): return FileResponse(ROOT/"static"/"index.html")
 @app.get("/api/health")
-def health(): return {"ok":True,"version":"0.4.0","time":now()}
+def health(): return {"ok":True,"version":"0.4.1","time":now()}
 @app.get("/api/sources")
 def sources(): return {"sources":SOURCES,"note":"Reference links only; no live amendment validation."}
 @app.get("/api/suggest")
 async def suggest(q:str=Query(min_length=3,max_length=150)):
-    """Google Places predictions when configured; otherwise explicit fallback."""
+    """Address suggestions from public ArcGIS geocoder, with optional Google Places."""
     key=os.getenv("GOOGLE_MAPS_API_KEY","")
-    if not key: return {"configured":False,"suggestions":[],"message":"Google Places requires a server-side API key and Google billing."}
+    if key:
+        try:
+            async with httpx.AsyncClient(timeout=7) as client:
+                r=await client.post("https://places.googleapis.com/v1/places:autocomplete",json={"input":q,"includedRegionCodes":["us"],"locationBias":{"circle":{"center":{"latitude":42.3736,"longitude":-71.1097},"radius":5000}}},headers={"X-Goog-Api-Key":key,"X-Goog-FieldMask":"suggestions.placePrediction.text.text"})
+                r.raise_for_status()
+                vals=[x.get("placePrediction",{}).get("text",{}).get("text","") for x in r.json().get("suggestions",[])]
+                vals=[v for v in vals if "cambridge" in v.lower()][:6]
+                if vals:return {"configured":True,"provider":"Google Places","suggestions":vals}
+        except (httpx.HTTPError,ValueError):pass
+    # Public ArcGIS World Geocoding endpoint: no API key needed for ordinary search.
     try:
-        async with httpx.AsyncClient(timeout=8) as client:
-            r=await client.post("https://places.googleapis.com/v1/places:autocomplete",json={"input":q,"includedRegionCodes":["us"],"locationBias":{"circle":{"center":{"latitude":42.3736,"longitude":-71.1097},"radius":5000}}},headers={"X-Goog-Api-Key":key,"X-Goog-FieldMask":"suggestions.placePrediction.text.text"})
+        async with httpx.AsyncClient(timeout=9) as client:
+            r=await client.get("https://geocode-api.arcgis.com/arcgis/rest/services/World/GeocodeServer/suggest",params={"f":"json","text":q if "cambridge" in q.lower() else q+", Cambridge, MA","searchExtent":"-71.17,42.34,-71.06,42.41","location":"-71.1097,42.3736","maxSuggestions":8,"category":"Address"})
             r.raise_for_status()
-            vals=[x.get("placePrediction",{}).get("text",{}).get("text","") for x in r.json().get("suggestions",[])]
-        return {"configured":True,"suggestions":[v for v in vals if "cambridge" in v.lower()][:6]}
-    except (httpx.HTTPError,ValueError): return {"configured":True,"suggestions":[],"message":"Google suggestions unavailable."}
+            data=r.json()
+            if "error" in data: raise ValueError("ArcGIS suggestion service error")
+            vals=[x.get("text","") for x in data.get("suggestions",[]) if "cambridge" in x.get("text","").lower()]
+            return {"configured":True,"provider":"ArcGIS public geocoder","suggestions":list(dict.fromkeys(vals))[:6]}
+    except (httpx.HTTPError,ValueError):
+        return {"configured":False,"suggestions":[],"message":"Address suggestions temporarily unavailable; enter the complete address and select Analyze."}
 @app.get("/api/property")
 async def property_lookup(address:str=Query(min_length=5,max_length=240)):
     if not re.search(r"cambridge|,\s*ma\b",address,re.I): address=address.rstrip(", ") + ", Cambridge, MA"
