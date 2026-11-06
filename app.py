@@ -135,3 +135,30 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240)):
             result["warnings"].append("No verified zoning calculation rules configured for this municipality and district.")
     result["warnings"] += ["MassGIS assessor extracts can be stale; BLD_AREA and RES_AREA use different measurement conventions and may not equal zoning gross floor area.","Parcel maps are not legal surveys; legal units and additions require independent confirmation.","Zoning overlays, pending/adopted amendments, site constraints and legal buildability have NOT been automatically verified."]
     return result
+
+# Regression tests run with every deployment. A failing suite prevents startup.
+@app.on_event("startup")
+async def validate_startup():
+    import unittest
+    suite=unittest.defaultTestLoader.discover(start_dir=str(ROOT/"tests"),
+        top_level_dir=str(ROOT),pattern="test_*.py")
+    checks=unittest.TextTestRunner(verbosity=1).run(suite)
+    print("CANBUILD REGRESSION TESTS:",checks.testsRun,
+          "passed" if checks.wasSuccessful() else "FAILED",flush=True)
+    if not checks.wasSuccessful():
+        raise RuntimeError("CanBuild failed parcel and zoning regression tests.")
+    # Live integration check, independent of visitors. Logs only; no displayed guesses.
+    import asyncio
+    async def smoke():
+        try:
+            result=await property_lookup("95 Magazine St, Cambridge, MA, 02139")
+            p=result.get("parcel") or {}
+            print("CANBUILD 95 MAGAZINE SMOKE:",
+                "parcel_id=",p.get("parcel_number"),
+                "site_address=",p.get("assessor_site_address"),
+                "building_units=",(result.get("existing_building") or {}).get("units"),
+                "geometry_available=",bool(result.get("zoning_potential")),
+                "warnings=",result.get("warnings",[])[:4],flush=True)
+        except Exception as exc:
+            print("CANBUILD 95 MAGAZINE SMOKE ERROR:",type(exc).__name__,str(exc)[:120],flush=True)
+    asyncio.create_task(smoke())
