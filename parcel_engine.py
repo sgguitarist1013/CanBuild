@@ -34,6 +34,20 @@ def requested_house_number(address):
 def clean(s):
     return re.sub(r"[^A-Z0-9]+", " ", str(s or "").upper()).strip()
 
+def street_tokens(value):
+    """Normalize common assessor/geocoder street-type abbreviations statewide."""
+    aliases={"ST":"STREET","RD":"ROAD","AVE":"AVENUE","AV":"AVENUE",
+             "BLVD":"BOULEVARD","DR":"DRIVE","LN":"LANE","CT":"COURT",
+             "PL":"PLACE","TER":"TERRACE","PKWY":"PARKWAY","CIR":"CIRCLE",
+             "HWY":"HIGHWAY","SQ":"SQUARE"}
+    parts=clean(value).split()
+    return [aliases.get(x,x) for x in parts]
+
+def same_street(actual, requested):
+    a,b=street_tokens(actual),street_tokens(requested)
+    if not a or not b:return False
+    return a==b or (len(b)==1 and len(a)==2 and a[0]==b[0]) or (len(a)==1 and len(b)==2 and a[0]==b[0])
+
 def exact_address_match(feature, house, street, city):
     """Reject a nearby parcel unless its assessor address matches all supplied components."""
     if not house or not street or not city:
@@ -53,8 +67,7 @@ def exact_address_match(feature, house, street, city):
     actual_street = str(feature.get("FULL_STR") or "").strip()
     if not actual_street:
         actual_street = re.sub(r"^\s*\d+[A-Za-z]?\s*", "", site)
-    a, b = clean(actual_street), clean(street)
-    return bool(b and (a == b or a.startswith(b + " ")))
+    return same_street(actual_street,street)
 
 def lot_area_sqft(feature):
     value = feature.get("LOT_SIZE")
