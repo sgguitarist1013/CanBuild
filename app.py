@@ -31,29 +31,32 @@ def health(): return {"ok":True,"version":"0.7.1","time":now()}
 @app.get("/api/sources")
 def sources(): return {"sources":SOURCES,"note":"Reference links only; no live amendment validation."}
 @app.get("/api/suggest")
-async def suggest(q:str=Query(min_length=3,max_length=150)):
-    """Address suggestions from public ArcGIS geocoder, with optional Google Places."""
+async def suggest(q:str=Query(min_length=2,max_length=150)):
+    """Massachusetts address suggestions, updated for each typed prefix."""
+    query=q.strip()
+    if len(query)<2:
+        return {"suggestions":[]}
     key=os.getenv("GOOGLE_MAPS_API_KEY","")
     if key:
         try:
-            async with httpx.AsyncClient(timeout=7) as client:
-                r=await client.post("https://places.googleapis.com/v1/places:autocomplete",json={"input":q,"includedRegionCodes":["us"],"locationBias":{"circle":{"center":{"latitude":42.3736,"longitude":-71.1097},"radius":5000}}},headers={"X-Goog-Api-Key":key,"X-Goog-FieldMask":"suggestions.placePrediction.text.text"})
+            async with httpx.AsyncClient(timeout=6) as client:
+                r=await client.post("https://places.googleapis.com/v1/places:autocomplete",json={"input":query,"includedRegionCodes":["us"],"includedPrimaryTypes":["street_address","route","premise","subpremise"],"locationBias":{"rectangle":{"low":{"latitude":41.2,"longitude":-73.6},"high":{"latitude":42.9,"longitude":-69.9}}}},headers={"X-Goog-Api-Key":key,"X-Goog-FieldMask":"suggestions.placePrediction.text.text"})
                 r.raise_for_status()
                 vals=[x.get("placePrediction",{}).get("text",{}).get("text","") for x in r.json().get("suggestions",[])]
-                vals=[v for v in vals if "cambridge" in v.lower()][:6]
-                if vals:return {"configured":True,"provider":"Google Places","suggestions":vals}
-        except (httpx.HTTPError,ValueError):pass
-    # Public ArcGIS World Geocoding endpoint: no API key needed for ordinary search.
+                vals=[v for v in vals if re.search(r"\\b(MA|Massachusetts)\\b",v,re.I)]
+                if vals:return {"configured":True,"provider":"Google Places","suggestions":list(dict.fromkeys(vals))[:8]}
+        except (httpx.HTTPError,ValueError):
+            pass
     try:
         async with httpx.AsyncClient(timeout=9) as client:
-            r=await client.get("https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/suggest",params={"f":"json","text":q if "cambridge" in q.lower() else q+", Cambridge, MA","searchExtent":"-71.17,42.34,-71.06,42.41","location":"-71.1097,42.3736","maxSuggestions":8,"category":"Address"})
+            r=await client.get("https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/suggest",params={"f":"json","text":query,"searchExtent":"-73.6,41.2,-69.9,42.9","location":"-71.06,42.36","maxSuggestions":15,"category":"Address","countryCode":"USA"})
             r.raise_for_status()
             data=r.json()
-            if "error" in data: raise ValueError("ArcGIS suggestion service error")
-            vals=[x.get("text","") for x in data.get("suggestions",[]) if "cambridge" in x.get("text","").lower()]
-            return {"configured":True,"provider":"ArcGIS public geocoder","suggestions":list(dict.fromkeys(vals))[:6]}
+            if "error" in data:raise ValueError("ArcGIS suggestion error")
+            vals=[x.get("text","") for x in data.get("suggestions",[]) if re.search(r"\\b(MA|Massachusetts)\\b",x.get("text",""),re.I)]
+            return {"configured":True,"provider":"ArcGIS","suggestions":list(dict.fromkeys(vals))[:8]}
     except (httpx.HTTPError,ValueError):
-        return {"configured":False,"suggestions":[],"message":"Address suggestions temporarily unavailable; enter the complete address and select Analyze."}
+        return {"configured":False,"suggestions":[]}
 @app.get("/api/property")
 async def property_lookup(address:str=Query(min_length=5,max_length=240)):
     if not re.search(r"\b(MA|Massachusetts)\b",address,re.I): address=address.rstrip(", ") + ", MA"
