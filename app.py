@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 ROOT=Path(__file__).parent
-app=FastAPI(title="CanBuild Cambridge",version="0.4.1")
+app=FastAPI(title="CanBuild Cambridge",version="0.4.2")
 app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
 CENSUS="https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress"
 PARCELS="https://services1.arcgis.com/hGdibHYSPO59RG1h/ArcGIS/rest/services/Massachusetts_Property_Tax_Parcels/FeatureServer/0/query"
@@ -25,7 +25,7 @@ def now(): return datetime.now(timezone.utc).isoformat()
 @app.get("/")
 def home(): return FileResponse(ROOT/"static"/"index.html")
 @app.get("/api/health")
-def health(): return {"ok":True,"version":"0.4.1","time":now()}
+def health(): return {"ok":True,"version":"0.4.2","time":now()}
 @app.get("/api/sources")
 def sources(): return {"sources":SOURCES,"note":"Reference links only; no live amendment validation."}
 @app.get("/api/suggest")
@@ -44,7 +44,7 @@ async def suggest(q:str=Query(min_length=3,max_length=150)):
     # Public ArcGIS World Geocoding endpoint: no API key needed for ordinary search.
     try:
         async with httpx.AsyncClient(timeout=9) as client:
-            r=await client.get("https://geocode-api.arcgis.com/arcgis/rest/services/World/GeocodeServer/suggest",params={"f":"json","text":q if "cambridge" in q.lower() else q+", Cambridge, MA","searchExtent":"-71.17,42.34,-71.06,42.41","location":"-71.1097,42.3736","maxSuggestions":8,"category":"Address"})
+            r=await client.get("https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/suggest",params={"f":"json","text":q if "cambridge" in q.lower() else q+", Cambridge, MA","searchExtent":"-71.17,42.34,-71.06,42.41","location":"-71.1097,42.3736","maxSuggestions":8,"category":"Address"})
             r.raise_for_status()
             data=r.json()
             if "error" in data: raise ValueError("ArcGIS suggestion service error")
@@ -77,7 +77,19 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240)):
             p.raise_for_status()
             data=p.json()
             if "error" in data: raise ValueError("ArcGIS error")
-            feats=[x.get("attributes",{}) for x in data.get("features",[]) if x.get("attributes",{}).get("POLY_TYPE") in ("FEE","TAX")]
+            feats=[x.get("attributes",{}) for x in data.get("features",[])]
+            # Census points may lie in the street rather than inside the parcel.
+            # Use exact assessor address as fallback; never pick an arbitrary nearby lot.
+            if not feats:
+                house=str(parts.get("fromAddress","")).replace("'","''")
+                street=str(parts.get("streetName","")).replace("'","''")
+                if house and street:
+                    alt=await client.get(PARCELS,params={"f":"json","where":f"CITY = 'CAMBRIDGE' AND ADDR_NUM = '{house}' AND UPPER(FULL_STR) LIKE '%{street.upper()}%'","outFields":fields,"returnGeometry":"false","resultRecordCount":30})
+                    alt.raise_for_status()
+                    alt_data=alt.json()
+                    if "error" not in alt_data:
+                        feats=[x.get("attributes",{}) for x in alt_data.get("features",[])]
+            feats=[x for x in feats if x.get("POLY_TYPE") not in ("ROW","WATER")]
             unique={str(x.get("LOC_ID") or x.get("MAP_PAR_ID")) for x in feats}
             if len(unique)==1 and feats:
                 # Condominiums may have multiple assessor records on one polygon.
@@ -95,10 +107,10 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240)):
                     lot_sqft=round(lot*43560) if isinstance(lot,(int,float)) and units=="A" else round(lot) if isinstance(lot,(int,float)) and units=="S" else None
                     result["parcel"]={"parcel_number":x.get("MAP_PAR_ID"),"full_number":x.get("MAP_PAR_ID"),"loc_id":x.get("LOC_ID"),"type":x.get("POLY_TYPE"),"gis_area_sqft_approx":lot_sqft,"assessor_site_address":x.get("SITE_ADDR"),"fiscal_year":x.get("FY")}
                     result["existing_building"]={"building_area_sqft":x.get("BLD_AREA"),"residential_area_sqft":x.get("RES_AREA"),"units":x.get("UNITS"),"year_built":x.get("YEAR_BUILT"),"stories":x.get("STORIES"),"use_description":x.get("USE_DESC"),"assessed_value":x.get("TOTAL_VAL"),"assessor_zoning":x.get("ZONING")}
-                    result["verification"]["parcel"]="MassGIS parcel spatial match (not surveyed)"
+                    result["verification"]["parcel"]="MassGIS parcel/address match (not surveyed)"
                     result["verification"]["assessor"]="MassGIS standardized assessor extract; FY "+str(x.get("FY") or "unknown")
             elif len(unique)>1: result["warnings"].append("Multiple MassGIS parcels intersect this address point; manual parcel verification required.")
-            else: result["warnings"].append("No MassGIS parcel intersected the geocoded point.")
+            else: result["warnings"].append("No MassGIS parcel matched the geocoded point or assessor address.")
         except (httpx.HTTPError,ValueError,TypeError,KeyError):
             result["warnings"].append("MassGIS statewide parcel/assessor service unavailable.")
         try:
