@@ -122,6 +122,29 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240)):
             if not feats and house:
                 feats=[x for x in results[1] if not street_name or norm(street_name) in norm(x.get("FULL_STR"))]
             if not feats:
+                # Minimal parcel geometry request can succeed even when the assessor join is slow.
+                try:
+                    rr=await client.get(PARCELS,params={"f":"json","geometry":f"{lon},{lat}","geometryType":"esriGeometryPoint","inSR":4326,"spatialRel":"esriSpatialRelIntersects","outFields":"MAP_PAR_ID,LOC_ID,POLY_TYPE","returnGeometry":"true","outSR":"3857","resultRecordCount":8},timeout=12)
+                    rr.raise_for_status()
+                    raw=rr.json().get("features",[])
+                    from shapely.geometry import Polygon
+                    shapes=[]
+                    for item in raw:
+                        attr=item.get("attributes") or {}
+                        if attr.get("POLY_TYPE") in ("ROW","RAIL_ROW","WATER"):continue
+                        for ring in (item.get("geometry") or {}).get("rings",[]):
+                            if len(ring)>=4:
+                                poly=Polygon(ring)
+                                if poly.is_valid and poly.area>0:shapes.append(poly)
+                    if shapes:
+                        geo=unary_union(shapes)
+                        area=round(geo.area*math.cos(math.radians(lat))**2*10.7639104167)
+                        result["parcel"]={"parcel_number":(raw[0].get("attributes") or {}).get("MAP_PAR_ID"),"loc_id":(raw[0].get("attributes") or {}).get("LOC_ID"),"gis_area_sqft_approx":area,"area_source":"Approximate GIS polygon area; assessor attributes unavailable","fiscal_year":None}
+                        result["verification"]["parcel"]="MassGIS polygon only; assessor data unavailable"
+                        result["warnings"].append("Parcel area calculated from GIS polygon because assessor lookup did not return a record.")
+                except (httpx.HTTPError,ValueError,TypeError):
+                    result["warnings"].append("MassGIS parcel geometry fallback unavailable.")
+            if not feats and not result.get("parcel"):
                 result["warnings"].append("MassGIS did not return parcel records from spatial or address lookup.")
             feats=[x for x in feats if x.get("POLY_TYPE") not in ("ROW","WATER","RAIL_ROW")]
             ids={str(x.get("LOC_ID") or x.get("MAP_PAR_ID")) for x in feats}
