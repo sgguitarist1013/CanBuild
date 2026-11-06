@@ -139,16 +139,18 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240)):
 # Regression tests run with every deployment. A failing suite prevents startup.
 @app.on_event("startup")
 async def validate_startup():
-    import unittest
-    suite=unittest.defaultTestLoader.discover(start_dir=str(ROOT/"tests"),
-        top_level_dir=str(ROOT),pattern="test_*.py")
-    checks=unittest.TextTestRunner(verbosity=1).run(suite)
+    import asyncio, unittest
+    def run_checks():
+        suite=unittest.defaultTestLoader.discover(start_dir=str(ROOT/"tests"),
+            top_level_dir=str(ROOT),pattern="test_*.py")
+        return unittest.TextTestRunner(verbosity=1).run(suite)
+    # IsolatedAsyncioTestCase must run outside the already-active server event loop.
+    checks=await asyncio.to_thread(run_checks)
     print("CANBUILD REGRESSION TESTS:",checks.testsRun,
           "passed" if checks.wasSuccessful() else "FAILED",flush=True)
     if not checks.wasSuccessful():
         raise RuntimeError("CanBuild failed parcel and zoning regression tests.")
     # Live integration check, independent of visitors. Logs only; no displayed guesses.
-    import asyncio
     async def smoke():
         try:
             result=await property_lookup("95 Magazine St, Cambridge, MA, 02139")
