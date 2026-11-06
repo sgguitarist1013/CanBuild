@@ -49,7 +49,7 @@ def test_mobile_layout_and_input_validation(page, app_url):
     page.goto(app_url)
     page.get_by_role("button", name="Explore property").click()
     expect(page.locator("#status")).to_have_text("Enter a full Massachusetts address.")
-    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), page.evaluate("Array.from(document.querySelectorAll('*')).filter(el => el.scrollWidth > el.clientWidth + 1 || el.getBoundingClientRect().left < -1).map(el => ({tag: el.tagName, id: el.id, className: String(el.className).slice(0,80), left: Math.round(el.getBoundingClientRect().left), right: Math.round(el.getBoundingClientRect().right), width: el.getBoundingClientRect().width, scrollWidth: el.scrollWidth, clientWidth: el.clientWidth, overflowX: getComputedStyle(el).overflowX})).slice(0,20)")
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), page.evaluate("JSON.stringify({viewport: window.innerWidth, html: {scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth}, body: {scroll: document.body.scrollWidth, client: document.body.clientWidth}, overflowing: Array.from(document.querySelectorAll('*')).filter(el => el.scrollWidth > el.clientWidth + 1).map(el => ({tag: el.tagName, id: el.id, cls: String(el.className).slice(0,60), scroll: el.scrollWidth, client: el.clientWidth, overflow: getComputedStyle(el).overflowX}))})")
 
 
 def test_alias_selection_owner_and_sales(page, app_url, property_record):
