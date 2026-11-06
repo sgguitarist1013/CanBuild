@@ -43,13 +43,13 @@ async def suggest(q:str=Query(min_length=2,max_length=150)):
                 r=await client.post("https://places.googleapis.com/v1/places:autocomplete",json={"input":query,"includedRegionCodes":["us"],"includedPrimaryTypes":["street_address","route","premise","subpremise"],"locationBias":{"rectangle":{"low":{"latitude":41.2,"longitude":-73.6},"high":{"latitude":42.9,"longitude":-69.9}}}},headers={"X-Goog-Api-Key":key,"X-Goog-FieldMask":"suggestions.placePrediction.text.text"})
                 r.raise_for_status()
                 vals=[x.get("placePrediction",{}).get("text",{}).get("text","") for x in r.json().get("suggestions",[])]
-                vals=[v for v in vals if re.search(r"\\b(MA|Massachusetts)\\b",v,re.I)]
+                vals=[v for v in vals if re.search(r"\b(MA|Massachusetts)\b",v,re.I)]
                 if vals:return {"configured":True,"provider":"Google Places","suggestions":list(dict.fromkeys(vals))[:8]}
         except (httpx.HTTPError,ValueError):
             pass
     try:
         async with httpx.AsyncClient(timeout=9) as client:
-            r=await client.get("https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/suggest",params={"f":"json","text":query if re.search(r"\\b(MA|Massachusetts|Cambridge|Somerville|Boston)\\b",query,re.I) else query+", Cambridge, MA","searchExtent":"-73.6,41.2,-69.9,42.9","location":"-71.06,42.36","maxSuggestions":15,"category":"Address","countryCode":"USA"})
+            r=await client.get("https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/suggest",params={"f":"json","text":query if re.search(r"\b(MA|Massachusetts|Cambridge|Somerville|Boston)\b",query,re.I) else query+", Cambridge, MA","searchExtent":"-73.6,41.2,-69.9,42.9","location":"-71.06,42.36","maxSuggestions":15,"category":"Address","countryCode":"USA"})
             r.raise_for_status()
             data=r.json()
             if "error" in data:raise ValueError("ArcGIS suggestion error")
