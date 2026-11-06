@@ -177,6 +177,14 @@ async def resolve_parcel(client, lon, lat, components, warnings, requested_addre
                 "spatialRel":"esriSpatialRelIntersects","resultRecordCount":200}
         choices=matches(await attempt(nearby,"Nearby parcel search"))
     if not choices:
+        # Explain why nearby candidates were rejected without exposing owner information.
+        sample=[]
+        for response in responses:
+            for feature in response[:12]:
+                a=feature.get("attributes") or {}
+                sample.append(str(a.get("SITE_ADDR") or "")[:70])
+        if sample:
+            warnings.append("Assessor candidates did not match requested address; candidate site addresses: "+", ".join(dict.fromkeys(sample[:8])))
         warnings.append("No assessor parcel matched the exact house number, street and municipality; neighboring records withheld.")
         return None,None,None
     # Avoid a mix of spatial polygons and condo tax-account rows for different parcels.
