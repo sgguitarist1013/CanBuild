@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from parcel_engine import resolve_parcel, conceptual_massing, normalize_address
 import boston
+import ma_sales
 from monitoring import configure_monitoring
 
 configure_monitoring()
@@ -129,6 +130,11 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
                     result["warnings"].append("Municipal records use different address labels here. Select and verify a candidate parcel before attributing ownership or sales.")
             except (httpx.HTTPError,ValueError,TypeError):
                 result["warnings"].append("Boston municipal records temporarily unavailable; retry the lookup.")
+        elif result.get("parcel"):
+            try:
+                result["sales_research"]=await ma_sales.search(client,lon,lat,parts.get("city"),result["parcel"],result.get("existing_building"))
+            except (httpx.HTTPError,ValueError,TypeError):
+                result["sales_research"]={"status":"Statewide assessor sale lookup temporarily unavailable","candidates":[],"source_url":ma_sales.SOURCE}
         if parts.get("city","").lower()=="cambridge":
           try:
             # Socrata geometry predicate, authoritative city zoning layer.
