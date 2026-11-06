@@ -1,87 +1,85 @@
-"""CanBuild Cambridge pilot: source-aware, conservative research prototype."""
+"""CanBuild Cambridge: source-labeled address and parcel research. No zoning entitlement claims."""
 from pathlib import Path
 from datetime import datetime, timezone
-import os
+import os, math, re
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
 
-ROOT = Path(__file__).parent
-app = FastAPI(title="CanBuild Cambridge", version="0.2.0")
-app.mount('/static', StaticFiles(directory=ROOT/'static'), name='static')
-
-SOURCES = [
- {'id':'ordinance','name':'Cambridge zoning ordinance','url':'https://www.cambridgema.gov/cdd/zoninganddevelopment/zoning/ordinance','type':'official'},
- {'id':'maps','name':'Cambridge zoning maps','url':'https://www.cambridgema.gov/cdd/zoninganddevelopment/zoning/maps','type':'official'},
- {'id':'amendments','name':'Cambridge zoning amendments','url':'https://www.cambridgema.gov/cdd/zoninganddevelopment/zoning/amendments','type':'official'},
- {'id':'multifamily','name':'2025 multifamily zoning reform','url':'https://www.cambridgema.gov/cdd/projects/zoning/multifamilyhousing','type':'official'},
- {'id':'gis','name':'Cambridge GIS REST service','url':'https://gisserver.cambridgema.gov/arcgis/rest/services/VisionMap/MapServer/layers','type':'official'},
- {'id':'permits','name':'Cambridge Inspectional Services zoning','url':'https://www.cambridgema.gov/inspection/zoning','type':'official'},
+ROOT=Path(__file__).parent
+app=FastAPI(title="CanBuild Cambridge",version="0.3.0")
+app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
+CENSUS="https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress"
+PARCELS="https://services1.arcgis.com/WnzC35krSYGuYov4/ArcGIS/rest/services/Parcels/FeatureServer/0/query"
+ZONES="https://data.cambridgema.gov/resource/yc3q-q3hf.json"
+SOURCES=[
+ {"name":"Cambridge assessor property database","url":"https://www.cambridgema.gov/Departments/assessing"},
+ {"name":"Cambridge FY2027 parcel GIS","url":"https://www.cambridgema.gov/gis/gisdatadictionary/assessing/fy2027/assessing_parcelsfy2027"},
+ {"name":"Cambridge zoning district GIS","url":"https://www.cambridgema.gov/gis/gisdatadictionary/cdd/cdd_zoningdistricts"},
+ {"name":"Cambridge zoning ordinance","url":"https://www.cambridgema.gov/cdd/zoninganddevelopment/zoning/ordinance"},
+ {"name":"Zoning amendments","url":"https://www.cambridgema.gov/cdd/zoninganddevelopment/zoning/amendments"}
 ]
-
-class Scenario(BaseModel):
-    lot_area: float = Field(gt=0, le=10000000)
-    existing_floor_area: float = Field(ge=0, le=10000000)
-    existing_footprint: float = Field(ge=0, le=10000000)
-    existing_stories: float = Field(ge=0, le=100)
-    proposed_stories: float = Field(gt=0, le=100)
-    setbacks_front: float = Field(ge=0, le=1000)
-    setbacks_rear: float = Field(ge=0, le=1000)
-    setbacks_side: float = Field(ge=0, le=1000)
-    lot_width: float = Field(gt=0, le=10000)
-    lot_depth: float = Field(gt=0, le=10000)
-    open_space_pct: float = Field(ge=0, le=100)
-    coverage_pct: float = Field(ge=0, le=100)
-    efficiency_pct: float = Field(gt=0, le=100)
-
-@app.get('/')
-def home():
-    return FileResponse(ROOT/'static'/'index.html')
-
-@app.get('/api/health')
-def health():
-    return {'ok':True,'version':'0.2.0','as_of':datetime.now(timezone.utc).isoformat()}
-
-@app.get('/api/sources')
-def sources():
-    return {'sources':SOURCES, 'note':'Links are reference sources, not evidence of an automatic current amendment scan.'}
-
-@app.get('/api/geocode')
-async def geocode(address: str):
-    if len(address.strip()) < 5 or len(address)>240:
-        raise HTTPException(400,'Enter a complete street address.')
+def now(): return datetime.now(timezone.utc).isoformat()
+@app.get("/")
+def home(): return FileResponse(ROOT/"static"/"index.html")
+@app.get("/api/health")
+def health(): return {"ok":True,"version":"0.3.0","time":now()}
+@app.get("/api/sources")
+def sources(): return {"sources":SOURCES,"note":"Reference links only; no live amendment validation."}
+@app.get("/api/suggest")
+async def suggest(q:str=Query(min_length=3,max_length=150)):
+    """Google Places predictions when configured; otherwise explicit fallback."""
+    key=os.getenv("GOOGLE_MAPS_API_KEY","")
+    if not key: return {"configured":False,"suggestions":[],"message":"Google Places requires a server-side API key and Google billing."}
     try:
-        async with httpx.AsyncClient(timeout=12,follow_redirects=True) as client:
-            response=await client.get('https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress',params={
-                'address':address,'benchmark':'Public_AR_Current','vintage':'Current_Current','format':'json'})
-            response.raise_for_status()
-            data=response.json()
-        matches=data.get('result',{}).get('addressMatches',[])
-        if not matches: return {'matched':False,'message':'No Census address match. Enter property details manually.'}
-        m=matches[0]; comps=m.get('addressComponents',{})
-        city=comps.get('city','')
-        if city.lower()!='cambridge' or comps.get('state','').upper()!='MA':
-            return {'matched':False,'message':'The address did not match Cambridge, Massachusetts.','suggestion':m.get('matchedAddress')}
-        return {'matched':True,'address':m.get('matchedAddress'),'coordinates':m.get('coordinates'),
-            'source':'US Census Geocoder','parcel_verified':False,'zoning_verified':False,
-            'message':'Address located. Parcel, building and zoning information still require verification.'}
-    except (httpx.HTTPError, ValueError, KeyError):
-        raise HTTPException(503,'Address lookup is temporarily unavailable. Manual analysis remains available.')
-
-@app.post('/api/scenario')
-def scenario(s:Scenario):
-    buildable_width=max(0,s.lot_width-2*s.setbacks_side)
-    buildable_depth=max(0,s.lot_depth-s.setbacks_front-s.setbacks_rear)
-    rectangle_area=buildable_width*buildable_depth
-    footprint=min(rectangle_area,s.lot_area*s.coverage_pct/100,s.lot_area*(1-s.open_space_pct/100))
-    gross=footprint*s.proposed_stories
-    added=max(0,gross-s.existing_floor_area)
-    return {'theoretical_footprint_sqft':round(footprint), 'theoretical_total_floor_area_sqft':round(gross),
-      'theoretical_additional_floor_area_sqft':round(added),'estimated_usable_additional_sqft':round(added*s.efficiency_pct/100),
-      'inputs_are_verified':False,'zoning_determination':False,
-      'warnings':['All dimensional limits are user-entered scenario assumptions, not verified Cambridge parcel-specific standards.',
-       'Rectangular lot assumption; geometry, slopes, easements, overlays, existing nonconformities and code may materially reduce capacity.',
-       'Residential FAR caps may not apply in many districts after the February 2025 reform; verify special district and overlay exceptions.',
-       'Theoretical envelope does not establish buildability, permit eligibility or permissible number of units.']}
+        async with httpx.AsyncClient(timeout=8) as client:
+            r=await client.post("https://places.googleapis.com/v1/places:autocomplete",json={"input":q,"includedRegionCodes":["us"],"locationBias":{"circle":{"center":{"latitude":42.3736,"longitude":-71.1097},"radius":5000}}},headers={"X-Goog-Api-Key":key,"X-Goog-FieldMask":"suggestions.placePrediction.text.text"})
+            r.raise_for_status()
+            vals=[x.get("placePrediction",{}).get("text",{}).get("text","") for x in r.json().get("suggestions",[])]
+        return {"configured":True,"suggestions":[v for v in vals if "cambridge" in v.lower()][:6]}
+    except (httpx.HTTPError,ValueError): return {"configured":True,"suggestions":[],"message":"Google suggestions unavailable."}
+@app.get("/api/property")
+async def property_lookup(address:str=Query(min_length=5,max_length=240)):
+    if not re.search(r"cambridge|,\s*ma\b",address,re.I): address=address.rstrip(", ") + ", Cambridge, MA"
+    result={"query":address,"checked_at":now(),"address":None,"coordinates":None,"parcel":None,"zoning":None,"existing_building":None,"verification":{"address":"unverified","parcel":"unverified","assessor":"not connected","zoning":"unverified","amendments":"not checked"},"warnings":[],"sources":SOURCES}
+    async with httpx.AsyncClient(timeout=13,follow_redirects=True) as client:
+        try:
+            resp=await client.get(CENSUS,params={"address":address,"benchmark":"Public_AR_Current","vintage":"Current_Current","format":"json"})
+            resp.raise_for_status()
+            matches=resp.json().get("result",{}).get("addressMatches",[])
+        except (httpx.HTTPError,ValueError):
+            raise HTTPException(503,"Census geocoding is temporarily unavailable.")
+        if not matches: raise HTTPException(404,"Address not matched. Check the street number and name.")
+        m=matches[0]; parts=m.get("addressComponents",{})
+        if parts.get("city","").lower()!="cambridge" or parts.get("state","").upper()!="MA":
+            raise HTTPException(422,"Matched address is outside Cambridge, MA.")
+        c=m.get("coordinates",{}); lon,lat=c.get("x"),c.get("y")
+        if not isinstance(lat,(int,float)) or not isinstance(lon,(int,float)): raise HTTPException(502,"Geocoder returned no coordinates.")
+        result["address"]=m.get("matchedAddress");result["coordinates"]={"lat":lat,"lon":lon}
+        result["verification"]["address"]="Census geocoded (not Google-confirmed)"
+        try:
+            p=await client.get(PARCELS,params={"f":"json","geometry":f"{lon},{lat}","geometryType":"esriGeometryPoint","inSR":4326,"spatialRel":"esriSpatialRelIntersects","outFields":"Parcel_Num,Full_Num,Type,Shape__Area","returnGeometry":"false"})
+            p.raise_for_status(); feats=p.json().get("features",[])
+            if len(feats)==1:
+                a=feats[0].get("attributes",{})
+                result["parcel"]={"parcel_number":a.get("Parcel_Num"),"full_number":a.get("Full_Num"),"type":a.get("Type"),"gis_area_sqft_approx":round(float(a["Shape__Area"])*10.7639104) if isinstance(a.get("Shape__Area"),(int,float)) else None}
+                result["verification"]["parcel"]="GIS spatial match (not assessor verified)"
+            elif len(feats)>1:result["warnings"].append("Multiple parcels intersect the geocoded point; manual review required.")
+            else:result["warnings"].append("No Cambridge GIS parcel intersected the address point.")
+        except (httpx.HTTPError,ValueError,TypeError,KeyError):
+            result["warnings"].append("Cambridge parcel GIS lookup unavailable.")
+        try:
+            # Socrata geometry predicate, authoritative city zoning layer.
+            predicate=f"intersects(the_geom, 'POINT ({lon} {lat})')"
+            z=await client.get(ZONES,params={"$where":predicate,"$select":"zone_type,pud_type","$limit":"5"})
+            z.raise_for_status(); zones=z.json()
+            if len(zones)==1:
+                result["zoning"]={"district":zones[0].get("zone_type"),"pud":zones[0].get("pud_type")}
+                result["verification"]["zoning"]="GIS point match; overlays/amendments not checked"
+            elif len(zones)>1:result["warnings"].append("Multiple zoning polygons intersect the point; boundary review needed.")
+            else:result["warnings"].append("Zoning GIS did not return a unique district.")
+        except (httpx.HTTPError,ValueError,TypeError):
+            result["warnings"].append("Zoning GIS lookup unavailable; district not verified.")
+    result["warnings"] += ["Cambridge parcel polygons do not certify deeded lot area or existing building area.","Assessor building size, legal unit count and year built are not connected. Do not infer them from the GIS parcel.","Zoning overlays, pending/adopted amendments, site constraints and legal buildability have NOT been automatically verified."]
+    return result
