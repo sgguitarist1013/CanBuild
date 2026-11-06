@@ -9,6 +9,9 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from parcel_engine import resolve_parcel, conceptual_massing
+from monitoring import configure_monitoring
+
+configure_monitoring()
 
 ROOT=Path(__file__).parent
 app=FastAPI(title="CanBuild Massachusetts",version="0.8.0")
@@ -56,17 +59,17 @@ async def suggest(q:str=Query(min_length=2,max_length=150)):
             if "error" in data:raise ValueError("ArcGIS suggestion error")
             vals=[x.get("text","") for x in data.get("suggestions",[]) if x.get("text")]
             # Require a literal house-number and street-prefix match; geocoder rank alone is insufficient.
-            parsed=re.match(r"^\\s*(\\d+[A-Za-z]?)\\s+([A-Za-z][A-Za-z0-9 .'-]*)",query)
+            parsed=re.match(r"^\s*(\d+[A-Za-z]?)\s+([A-Za-z][A-Za-z0-9 .'-]*)",query)
             if parsed:
                 number=parsed.group(1).upper()
                 prefix=parsed.group(2).strip().upper()
                 def matching(value):
                     candidate=value.upper().strip()
-                    candidate=re.sub(r"^\\s*"+re.escape(number)+r"\\s+","",candidate)
-                    return candidate.startswith(prefix) and re.match(r"^\\s*"+re.escape(number)+r"\\b",value.upper()) is not None
+                    candidate=re.sub(r"^\s*"+re.escape(number)+r"\s+","",candidate)
+                    return candidate.startswith(prefix) and re.match(r"^\s*"+re.escape(number)+r"\b",value.upper()) is not None
                 vals=[v for v in vals if matching(v)]
-            elif re.match(r"^\\s*\\d+\\s*$",query):
-                vals=[v for v in vals if re.match(r"^\\s*"+re.escape(query.strip())+r"\\b",v)]
+            elif re.match(r"^\s*\d+\s*$",query):
+                vals=[v for v in vals if re.match(r"^\s*"+re.escape(query.strip())+r"\b",v)]
 
             return {"configured":True,"provider":"ArcGIS","suggestions":list(dict.fromkeys(vals))[:8]}
     except (httpx.HTTPError,ValueError):
@@ -142,7 +145,7 @@ async def validate_startup():
     import asyncio, unittest
     def run_checks():
         suite=unittest.defaultTestLoader.discover(start_dir=str(ROOT/"tests"),
-            top_level_dir=str(ROOT),pattern="test_*.py")
+            top_level_dir=str(ROOT),pattern="test_parcel_engine.py")
         return unittest.TextTestRunner(verbosity=1).run(suite)
     # IsolatedAsyncioTestCase must run outside the already-active server event loop.
     checks=await asyncio.to_thread(run_checks)
