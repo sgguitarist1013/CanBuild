@@ -42,7 +42,7 @@ def exact_address_match(feature, house, street, city):
     match = re.match(r"^\s*(\d+[A-Za-z]?)\b", site)
     if match:
         numbers.add(clean(match.group(1)))
-    if clean(house) not in numbers:
+    if not numbers or any(n != clean(house) for n in numbers):
         return False
     actual_street = str(feature.get("FULL_STR") or "").strip()
     if not actual_street:
@@ -212,7 +212,7 @@ def conceptual_massing(polygon, parcel, building, city, district):
     existing=float(existing) if isinstance(existing,(int,float)) and existing>=0 else None
     base_low=round(footprint_low*rules["stories"])
     base_high=round(footprint_high*rules["stories"])
-    result={"method":"GIS polygon with 5–10 ft all-edge setbacks sensitivity, 30% open-space cap and four-story base scenario",
+    result={"method":f"GIS polygon with {rules['side_rear_setback_ft']}–{rules['front_setback_ft']} ft all-edge inset sensitivity, {round(rules['open_space_fraction']*100)}% open-space cap and {rules['stories']}-story base scenario",
             "confidence":"conceptual, not a zoning determination",
             "parcel_polygon_area_sqft":round(area),
             "gross_area_low_sqft":base_low,"gross_area_high_sqft":base_high,
