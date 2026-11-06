@@ -11,7 +11,7 @@ from shapely.geometry import Polygon
 from shapely.ops import unary_union, transform
 
 SERVICE = "https://services1.arcgis.com/hGdibHYSPO59RG1h/ArcGIS/rest/services/Massachusetts_Property_Tax_Parcels/FeatureServer/0/query"
-FIELDS = "OBJECTID,MAP_PAR_ID,LOC_ID,POLY_TYPE,PROP_ID,SITE_ADDR,ADDR_NUM,FULL_STR,CITY,FY,LOT_SIZE,LOT_UNITS,BLD_AREA,RES_AREA,UNITS,YEAR_BUILT,STORIES,USE_DESC,ZONING,TOTAL_VAL,LAST_EDIT"
+FIELDS = "OBJECTID,MAP_PAR_ID,LOC_ID,POLY_TYPE,PROP_ID,SITE_ADDR,ADDR_NUM,FULL_STR,CITY,FY,LOT_SIZE,LOT_UNITS,BLD_AREA,RES_AREA,UNITS,YEAR_BUILT,STORIES,USE_DESC,ZONING,TOTAL_VAL,LAST_EDIT,OWNER1,USE_CODE,LS_DATE,LS_PRICE"
 
 # Rules here are municipality-specific; no city rules are applied statewide.
 SUPPORTED_RULES = {
@@ -25,9 +25,15 @@ SUPPORTED_RULES = {
     },
 }
 
+def normalize_address(address):
+    """Normalize only an unambiguous spelled-out leading house number."""
+    words={'one':'1','two':'2','three':'3','four':'4','five':'5','six':'6','seven':'7','eight':'8','nine':'9','ten':'10'}
+    return re.sub(r"^\s*(one|two|three|four|five|six|seven|eight|nine|ten)(?=\s+)",
+                  lambda m:words[m.group(1).lower()],str(address or ''),flags=re.I)
+
 def requested_house_number(address):
     """Return the explicitly requested house number, never Census block-range fromAddress."""
-    segment=str(address or "").split(",")[0]
+    segment=normalize_address(address).split(",")[0]
     match=re.match(r"^\s*(\d+[A-Za-z]?)(?=\s)",segment)
     return match.group(1).upper() if match else None
 
@@ -39,7 +45,7 @@ def street_tokens(value):
     aliases={"ST":"STREET","RD":"ROAD","AVE":"AVENUE","AV":"AVENUE",
              "BLVD":"BOULEVARD","DR":"DRIVE","LN":"LANE","CT":"COURT",
              "PL":"PLACE","TER":"TERRACE","PKWY":"PARKWAY","CIR":"CIRCLE",
-             "HWY":"HIGHWAY","SQ":"SQUARE"}
+             "HWY":"HIGHWAY","SQ":"SQUARE","WH":"WHARF"}
     parts=clean(value).split()
     return [aliases.get(x,x) for x in parts]
 
@@ -204,7 +210,8 @@ async def resolve_parcel(client, lon, lat, components, warnings, requested_addre
             "full_number":x.get("MAP_PAR_ID"),"loc_id":x.get("LOC_ID"),
             "type":x.get("POLY_TYPE"),"gis_area_sqft_approx":lot_area_sqft(x),
             "assessor_site_address":x.get("SITE_ADDR"),"fiscal_year":x.get("FY"),
-            "last_edit":x.get("LAST_EDIT"),"area_source":"MassGIS assessor LOT_SIZE"}
+            "last_edit":x.get("LAST_EDIT"),"recorded_owners":list(dict.fromkeys(r["OWNER1"] for r in records if r.get("OWNER1"))),
+            "ownership_source":"https://www.mass.gov/info-details/massgis-data-property-tax-parcels","area_source":"MassGIS assessor LOT_SIZE"}
     building=None
     if len(records)==1:
         building={"building_area_sqft":x.get("BLD_AREA"),

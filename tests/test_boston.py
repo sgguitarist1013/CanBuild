@@ -1,0 +1,45 @@
+from datetime import date
+from unittest.mock import AsyncMock, patch
+import pytest
+import boston
+from parcel_engine import requested_house_number, normalize_address, same_street
+
+
+def test_spelled_number_and_wharf_suffix():
+    assert normalize_address('One Lewis Wharf, Boston, MA')=='1 Lewis Wharf, Boston, MA'
+    assert requested_house_number('One Lewis Wharf, Boston, MA')=='1'
+    assert same_street('LEWIS WH','LEWIS WHARF')
+    assert not same_street('LEWIS PL','LEWIS WHARF')
+
+
+def test_boston_exact_match_does_not_infer_owner_alias():
+    a={'ST_NUM':38,'ST_NAME':'ATLANTIC AV','OWNER':'ONE LEWIS WHARF LLC'}
+    assert not boston.matches(a,'1','LEWIS WHARF')
+    assert boston.matches({'ST_NUM':1,'ST_NAME':'LEWIS WH','UNIT_NUM':None},'1','LEWIS WHARF')
+    assert not boston.matches({'ST_NUM':1,'ST_NAME':'LEWIS WH','UNIT_NUM':'2'},'1','LEWIS WHARF')
+
+
+def test_owner_and_selected_record_labels():
+    p,_=boston.to_result({'PID':'0303029000','OWNER':'ONE LEWIS WHARF LLC','FULL_ADDRESS':'38-34 ATLANTIC AV'},'User-selected')
+    assert p['recorded_owners']==['ONE LEWIS WHARF LLC']
+    assert p['match_method']=='User-selected'
+
+
+def test_sale_filters_exclude_subject_wrong_use_stale_and_nominal_transfers():
+    subject={'PID':'1','LUC':'344','GROSS_AREA':17000}
+    records=[{'PID':str(i),'LUC':'344','GROSS_AREA':15000} for i in range(1,7)]
+    records[3]['LUC']='101';records[4]['GROSS_AREA']=100
+    sales=[{'parcel_id':str(i),'latest_sales_date':'2026-01-01','latest_sales_price':1000000} for i in range(1,7)]
+    sales[2]['latest_sales_price']=1;sales[5]['latest_sales_date']='2001-01-01'
+    out=boston.filter_sales(records,sales,subject,date(2026,11,6))
+    assert [x['parcel_number'] for x in out]==['2']
+    assert out[0]['price_per_gross_sqft']==67
+
+
+def test_ambiguous_alias_returns_candidate_without_selecting():
+    import asyncio
+    row={'attributes':{'PID':'0303029000','OWNER':'ONE LEWIS WHARF LLC','FULL_ADDRESS':'38-34 ATLANTIC AV','ST_NUM':38,'ST_NAME':'ATLANTIC AV'}}
+    with patch('boston.fetch',new=AsyncMock(side_effect=[{'features':[]},{'features':[row]}])):
+        record,candidates,method=asyncio.run(boston.lookup(None,-71.05,42.36,{'streetName':'LEWIS WHARF'},'1 Lewis Wharf, Boston, MA'))
+    assert record is None
+    assert candidates[0]['parcel_number']=='0303029000'
