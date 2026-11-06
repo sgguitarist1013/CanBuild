@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 ROOT=Path(__file__).parent
-app=FastAPI(title="CanBuild Cambridge",version="0.4.2")
+app=FastAPI(title="CanBuild Cambridge",version="0.5.0")
 app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
 CENSUS="https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress"
 PARCELS="https://services1.arcgis.com/hGdibHYSPO59RG1h/ArcGIS/rest/services/Massachusetts_Property_Tax_Parcels/FeatureServer/0/query"
@@ -25,7 +25,7 @@ def now(): return datetime.now(timezone.utc).isoformat()
 @app.get("/")
 def home(): return FileResponse(ROOT/"static"/"index.html")
 @app.get("/api/health")
-def health(): return {"ok":True,"version":"0.4.2","time":now()}
+def health(): return {"ok":True,"version":"0.5.0","time":now()}
 @app.get("/api/sources")
 def sources(): return {"sources":SOURCES,"note":"Reference links only; no live amendment validation."}
 @app.get("/api/suggest")
@@ -72,47 +72,24 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240)):
         result["address"]=m.get("matchedAddress");result["coordinates"]={"lat":lat,"lon":lon}
         result["verification"]["address"]="Census geocoded (not Google-confirmed)"
         try:
-            fields="MAP_PAR_ID,LOC_ID,PROP_ID,SITE_ADDR,CITY,FY,LOT_SIZE,LOT_UNITS,BLD_AREA,RES_AREA,UNITS,YEAR_BUILT,STORIES,USE_DESC,USE_CODE,ZONING,TOTAL_VAL,POLY_TYPE"
-            p=await client.get(PARCELS,params={"f":"json","geometry":f"{lon},{lat}","geometryType":"esriGeometryPoint","inSR":4326,"spatialRel":"esriSpatialRelIntersects","outFields":fields,"returnGeometry":"false","resultRecordCount":30})
+            # This hosted MassGIS layer contains parcel geometry ONLY. Assessor
+            # building characteristics live in a separate Assess table.
+            p=await client.get(PARCELS,params={"f":"json","geometry":f"{lon},{lat}","geometryType":"esriGeometryPoint","inSR":4326,"spatialRel":"esriSpatialRelIntersects","outFields":"MAP_PAR_ID,LOC_ID,POLY_TYPE,Shape__Area","returnGeometry":"false","resultRecordCount":30})
             p.raise_for_status()
             data=p.json()
-            if "error" in data: raise ValueError("ArcGIS error")
-            feats=[x.get("attributes",{}) for x in data.get("features",[])]
-            # Census points may lie in the street rather than inside the parcel.
-            # Use exact assessor address as fallback; never pick an arbitrary nearby lot.
-            if not feats:
-                house=str(parts.get("fromAddress","")).replace("'","''")
-                street=str(parts.get("streetName","")).replace("'","''")
-                if house and street:
-                    alt=await client.get(PARCELS,params={"f":"json","where":f"CITY = 'CAMBRIDGE' AND ADDR_NUM = '{house}' AND UPPER(FULL_STR) LIKE '%{street.upper()}%'","outFields":fields,"returnGeometry":"false","resultRecordCount":30})
-                    alt.raise_for_status()
-                    alt_data=alt.json()
-                    if "error" not in alt_data:
-                        feats=[x.get("attributes",{}) for x in alt_data.get("features",[])]
-            feats=[x for x in feats if x.get("POLY_TYPE") not in ("ROW","WATER")]
+            if "error" in data: raise ValueError("ArcGIS parcel service rejected query")
+            feats=[x.get("attributes",{}) for x in data.get("features",[]) if x.get("attributes",{}).get("POLY_TYPE") in ("FEE","TAX")]
             unique={str(x.get("LOC_ID") or x.get("MAP_PAR_ID")) for x in feats}
             if len(unique)==1 and feats:
-                # Condominiums may have multiple assessor records on one polygon.
-                def norm(x): return re.sub(r"[^A-Z0-9]","",str(x or "").upper())
-                street=norm(m.get("addressComponents",{}).get("streetName",""))
-                house=norm(m.get("addressComponents",{}).get("fromAddress",""))
-                matching=[x for x in feats if (not house or norm(x.get("SITE_ADDR","")).startswith(house)) and (not street or street in norm(x.get("SITE_ADDR","")))]
-                if len(feats)>1 and len(matching)!=1:
-                    result["warnings"].append("Multiple assessor records share this parcel (possibly condominiums). Building details not automatically selected.")
-                else:
-                    x=matching[0] if matching else feats[0]
-                    if len(feats)>1 and not matching: result["warnings"].append("Assessor address differs from geocoder; verify unit and parcel identity.")
-                    units=x.get("LOT_UNITS")
-                    lot=x.get("LOT_SIZE")
-                    lot_sqft=round(lot*43560) if isinstance(lot,(int,float)) and units=="A" else round(lot) if isinstance(lot,(int,float)) and units=="S" else None
-                    result["parcel"]={"parcel_number":x.get("MAP_PAR_ID"),"full_number":x.get("MAP_PAR_ID"),"loc_id":x.get("LOC_ID"),"type":x.get("POLY_TYPE"),"gis_area_sqft_approx":lot_sqft,"assessor_site_address":x.get("SITE_ADDR"),"fiscal_year":x.get("FY")}
-                    result["existing_building"]={"building_area_sqft":x.get("BLD_AREA"),"residential_area_sqft":x.get("RES_AREA"),"units":x.get("UNITS"),"year_built":x.get("YEAR_BUILT"),"stories":x.get("STORIES"),"use_description":x.get("USE_DESC"),"assessed_value":x.get("TOTAL_VAL"),"assessor_zoning":x.get("ZONING")}
-                    result["verification"]["parcel"]="MassGIS parcel/address match (not surveyed)"
-                    result["verification"]["assessor"]="MassGIS standardized assessor extract; FY "+str(x.get("FY") or "unknown")
-            elif len(unique)>1: result["warnings"].append("Multiple MassGIS parcels intersect this address point; manual parcel verification required.")
-            else: result["warnings"].append("No MassGIS parcel matched the geocoded point or assessor address.")
+                x=feats[0]
+                area=x.get("Shape__Area")
+                result["parcel"]={"parcel_number":x.get("MAP_PAR_ID"),"full_number":x.get("MAP_PAR_ID"),"loc_id":x.get("LOC_ID"),"type":x.get("POLY_TYPE"),"gis_area_sqft_approx":round(area*10.76391041671) if isinstance(area,(int,float)) else None,"assessor_site_address":None,"fiscal_year":None}
+                result["verification"]["parcel"]="MassGIS polygon match (not surveyed)"
+            elif len(unique)>1:result["warnings"].append("Multiple parcel polygons intersect the address point; manual verification required.")
+            else:result["warnings"].append("Geocoded address point does not intersect a MassGIS parcel polygon.")
         except (httpx.HTTPError,ValueError,TypeError,KeyError):
-            result["warnings"].append("MassGIS statewide parcel/assessor service unavailable.")
+            result["warnings"].append("MassGIS parcel polygon lookup unavailable.")
+        result["warnings"].append("The MassGIS polygon API does not contain building area, units or year built. A separate standardized Assess data service must be connected.")
         try:
             # Socrata geometry predicate, authoritative city zoning layer.
             predicate=f"intersects(the_geom, 'POINT ({lon} {lat})')"
