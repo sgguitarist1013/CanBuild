@@ -92,7 +92,7 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240)):
         result["verification"]["address"]="Census geocoded (not Google-confirmed)"
         polygon=None
         try:
-            parcel,building,polygon=await resolve_parcel(client,lon,lat,parts,result["warnings"])
+            parcel,building,polygon=await resolve_parcel(client,lon,lat,parts,result["warnings"],address)
             if parcel:
                 result["parcel"]=parcel
                 result["existing_building"]=building
