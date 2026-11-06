@@ -53,7 +53,7 @@ async def suggest(q:str=Query(min_length=2,max_length=150)):
             r.raise_for_status()
             data=r.json()
             if "error" in data:raise ValueError("ArcGIS suggestion error")
-            vals=[x.get("text","") for x in data.get("suggestions",[]) if re.search(r"\\b(MA|Massachusetts)\\b",x.get("text",""),re.I)]
+            vals=[x.get("text","") for x in data.get("suggestions",[]) if x.get("text")]
             return {"configured":True,"provider":"ArcGIS","suggestions":list(dict.fromkeys(vals))[:8]}
     except (httpx.HTTPError,ValueError):
         return {"configured":False,"suggestions":[]}
