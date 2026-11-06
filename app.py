@@ -90,9 +90,9 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240)):
                 # Street name LIKE is broad: confirm the full street name from
                 # the standardized assessor address, not merely a substring.
                 def clean(v):return re.sub(r"[^A-Z0-9]+"," ",str(v or "").upper()).strip()
-                expected=clean(street)
+                expected=clean(street_name)
                 if expected:
-                    feats=[x for x in feats if clean(x.get("FULL_STR"))==expected or clean(x.get("FULL_STR")).startswith(expected+" ")]
+                    feats=[x for x in feats if expected in clean(x.get("FULL_STR")).split(" ")]
             if not feats:
                 p=await client.get(PARCELS,params={"f":"json","geometry":f"{lon},{lat}","geometryType":"esriGeometryPoint","inSR":4326,"spatialRel":"esriSpatialRelIntersects","outFields":fields,"returnGeometry":"false","resultRecordCount":100})
                 p.raise_for_status()
@@ -109,7 +109,7 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240)):
                 lot=x.get("LOT_SIZE")
                 lot_unit=str(x.get("LOT_UNITS") or "").strip().upper()
                 lot_sqft=(round(lot*43560) if lot_unit in ("A","AC","ACRES") else round(lot) if lot_unit in ("S","SF","SQFT","SQUARE FEET") else None) if isinstance(lot,(int,float)) else None
-                result["parcel"]={"parcel_number":x.get("MAP_PAR_ID"),"full_number":x.get("MAP_PAR_ID"),"loc_id":x.get("LOC_ID"),"type":x.get("POLY_TYPE"),"gis_area_sqft_approx":lot_sqft or (round(area/10.76391041671) if isinstance(area,(int,float)) else None),"assessor_site_address":x.get("SITE_ADDR"),"fiscal_year":x.get("FY")}
+                result["parcel"]={"parcel_number":x.get("MAP_PAR_ID"),"full_number":x.get("MAP_PAR_ID"),"loc_id":x.get("LOC_ID"),"type":x.get("POLY_TYPE"),"gis_area_sqft_approx":lot_sqft,"assessor_site_address":x.get("SITE_ADDR"),"fiscal_year":x.get("FY")}
                 result["verification"]["parcel"]="MassGIS assessor/parcel record match (not surveyed)"
                 if len(feats)==1:
                     result["existing_building"]={"building_area_sqft":x.get("BLD_AREA"),"residential_area_sqft":x.get("RES_AREA"),"units":x.get("UNITS"),"year_built":x.get("YEAR_BUILT"),"stories":x.get("STORIES"),"use_description":x.get("USE_DESC"),"assessed_value":x.get("TOTAL_VAL"),"assessor_zoning":x.get("ZONING")}
