@@ -25,6 +25,12 @@ SUPPORTED_RULES = {
     },
 }
 
+def requested_house_number(address):
+    """Return the explicitly requested house number, never Census block-range fromAddress."""
+    segment=str(address or "").split(",")[0]
+    match=re.match(r"^\\s*(\\d+[A-Za-z]?)(?=\\s)",segment)
+    return match.group(1).upper() if match else None
+
 def clean(s):
     return re.sub(r"[^A-Z0-9]+", " ", str(s or "").upper()).strip()
 
@@ -123,8 +129,8 @@ async def selected_geometry(client, features, warnings, latitude):
         warnings.append("Selected parcel polygon unavailable: "+type(exc).__name__+".")
         return None
 
-async def resolve_parcel(client, lon, lat, components, warnings):
-    house = str(components.get("fromAddress") or "").strip()
+async def resolve_parcel(client, lon, lat, components, warnings, requested_address):
+    house = requested_house_number(requested_address)
     street = str(components.get("streetName") or "").strip()
     city = str(components.get("city") or "").strip()
     if not all((house,street,city)):
