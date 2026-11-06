@@ -3,6 +3,8 @@ from pathlib import Path
 from datetime import datetime, timezone
 import os, math, re
 import httpx
+from shapely.geometry import shape
+from shapely.ops import unary_union, transform
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -55,7 +57,7 @@ async def suggest(q:str=Query(min_length=3,max_length=150)):
 @app.get("/api/property")
 async def property_lookup(address:str=Query(min_length=5,max_length=240)):
     if not re.search(r"\b(MA|Massachusetts)\b",address,re.I): address=address.rstrip(", ") + ", MA"
-    result={"query":address,"checked_at":now(),"address":None,"coordinates":None,"parcel":None,"zoning":None,"existing_building":None,"verification":{"address":"unverified","parcel":"unverified","assessor":"not matched","zoning":"unverified","amendments":"not checked"},"warnings":[],"sources":SOURCES}
+    result={"query":address,"checked_at":now(),"address":None,"coordinates":None,"parcel":None,"zoning":None,"existing_building":None,"zoning_potential":None,"verification":{"address":"unverified","parcel":"unverified","assessor":"not matched","zoning":"unverified","amendments":"not checked"},"warnings":[],"sources":SOURCES}
     async with httpx.AsyncClient(timeout=13,follow_redirects=True) as client:
         try:
             resp=await client.get(CENSUS,params={"address":address,"benchmark":"Public_AR_Current","vintage":"Current_Current","format":"json"})
@@ -136,5 +138,29 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240)):
             result["warnings"].append("Cambridge zoning GIS unavailable; district not verified.")
         else:
             result["warnings"].append("Live municipal zoning connector is not yet configured for "+str(parts.get("city"))+". Assessor zoning codes are not treated as verified current zoning.")
+    if result.get("parcel") and result.get("zoning") and str(result["zoning"].get("district") or "").strip().upper() in ("C-1","RES C-1","RES. C-1"):
+        try:
+            loc=str(result["parcel"].get("loc_id") or "").replace("'","''")
+            if loc:
+                async with httpx.AsyncClient(timeout=20) as gc:
+                    rr=await gc.get(PARCELS,params={"f":"geojson","where":"LOC_ID = '"+loc+"'","outFields":"LOC_ID,POLY_TYPE","returnGeometry":"true","outSR":"3857","resultRecordCount":15})
+                    rr.raise_for_status()
+                    features=rr.json().get("features",[])
+                shapes=[shape(feat["geometry"]) for feat in features if feat.get("geometry") and (feat.get("properties") or {}).get("POLY_TYPE") not in ("ROW","WATER","RAIL_ROW")]
+                if shapes:
+                    g=unary_union(shapes)
+                    factor=math.cos(math.radians(lat))*3.280839895
+                    g=transform(lambda x,y,z=None:(x*factor,y*factor) if z is None else (x*factor,y*factor,z),g)
+                    if g.is_valid and g.area>100:
+                        cap=g.area*.7
+                        low=min(max(0,g.buffer(-10,join_style=2).area),cap)*4
+                        high=min(max(0,g.buffer(-5,join_style=2).area),cap)*4
+                        old=(result.get("existing_building") or {}).get("building_area_sqft")
+                        old=float(old) if isinstance(old,(float,int)) and old>=0 else None
+                        result["zoning_potential"]={"method":"Mapped parcel polygon with 5–10 ft all-edge offset sensitivity, 30% open-space allowance, four stories","confidence":"low","parcel_polygon_area_sqft":round(g.area),"gross_area_low_sqft":round(low),"gross_area_high_sqft":round(high),"additional_area_low_sqft":round(max(0,low-old)) if old is not None else None,"additional_area_high_sqft":round(max(0,high-old)) if old is not None else None,"source":"https://www.cambridgema.gov/cdd/zoninganddevelopment/zoning/ordinance","limitations":"Conceptual massing only. All-edge buffers do not identify front/side/rear boundaries. Actual setbacks, reductions, overlays, historic restrictions, building footprint and zoning GFA are not verified."}
+                        result["warnings"].append("Zoning potential is a low-confidence polygon-based massing range, NOT allowable floor area or approved development.")
+        except Exception as exc:
+            result["warnings"].append("Parcel geometry estimate unavailable; no floor-area estimate shown.")
+            print("Geometry lookup:",type(exc).__name__,str(exc)[:200],flush=True)
     result["warnings"] += ["MassGIS assessor extracts can be stale; BLD_AREA and RES_AREA use different measurement conventions and may not equal zoning gross floor area.","Parcel maps are not legal surveys; legal units and additions require independent confirmation.","Zoning overlays, pending/adopted amendments, site constraints and legal buildability have NOT been automatically verified."]
     return result
