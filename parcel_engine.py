@@ -205,7 +205,7 @@ async def resolve_parcel(client, lon, lat, components, warnings, requested_addre
     return parcel,building,polygon
 
 def conceptual_massing(polygon, parcel, building, city, district):
-    rules=SUPPORTED_RULES.get((clean(city),clean(district)))
+    rules=next((value for (town,zone),value in SUPPORTED_RULES.items() if clean(city)==clean(town) and clean(district)==clean(zone)), None)
     if rules is None or polygon is None or polygon.is_empty or polygon.area<=100:
         return None
     area=polygon.area
