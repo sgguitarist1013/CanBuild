@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 ROOT=Path(__file__).parent
-app=FastAPI(title="CanBuild Massachusetts",version="0.7.0")
+app=FastAPI(title="CanBuild Massachusetts",version="0.7.1")
 app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
 CENSUS="https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress"
 PARCELS="https://services1.arcgis.com/hGdibHYSPO59RG1h/ArcGIS/rest/services/Massachusetts_Property_Tax_Parcels/FeatureServer/0/query"
@@ -25,7 +25,7 @@ def now(): return datetime.now(timezone.utc).isoformat()
 @app.get("/")
 def home(): return FileResponse(ROOT/"static"/"index.html")
 @app.get("/api/health")
-def health(): return {"ok":True,"version":"0.7.0","time":now()}
+def health(): return {"ok":True,"version":"0.7.1","time":now()}
 @app.get("/api/sources")
 def sources(): return {"sources":SOURCES,"note":"Reference links only; no live amendment validation."}
 @app.get("/api/suggest")
@@ -106,6 +106,15 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240)):
                 if len(feats)==1:
                     result["existing_building"]={"building_area_sqft":x.get("BLD_AREA"),"residential_area_sqft":x.get("RES_AREA"),"units":x.get("UNITS"),"year_built":x.get("YEAR_BUILT"),"stories":x.get("STORIES"),"use_description":x.get("USE_DESC"),"assessed_value":x.get("TOTAL_VAL"),"assessor_zoning":x.get("ZONING")}
                     result["verification"]["assessor"]="MassGIS assessor data, fiscal year "+str(x.get("FY") or "not specified")
+                    use=str(x.get("USE_DESC") or "").lower()
+                    expected_units=3 if "three-family" in use or "three family" in use else 2 if "two-family" in use or "two family" in use else None
+                    reported_units=x.get("UNITS")
+                    if expected_units is not None and reported_units is not None and str(reported_units).strip()!=str(expected_units):
+                        result["existing_building"]["units"]=None
+                        result["existing_building"]["reported_units"]=reported_units
+                        result["existing_building"]["use_classification_units"]=expected_units
+                        result["verification"]["assessor"]="CONFLICT: MassGIS unit count disagrees with property use classification"
+                        result["warnings"].append("Conflicting assessor data: use classification suggests "+str(expected_units)+" units, but UNITS reports "+str(reported_units)+". Legal unit count requires municipal verification; neither value is assumed correct.")
                 else:result["warnings"].append("Multiple assessor records match this parcel; building details withheld to avoid confusing condominium units.")
             elif len(ids)>1:result["warnings"].append("Multiple parcels matched this address; manual parcel selection needed.")
             else:result["warnings"].append("No unique MassGIS parcel matched; municipal assessor verification recommended.")
