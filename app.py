@@ -10,6 +10,25 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from parcel_engine import resolve_parcel, conceptual_massing
 
+# Error reports omit request addresses, query strings and user data.
+def scrub_sentry_event(event, hint):
+    event.pop("request", None)
+    event.pop("user", None)
+    event.pop("breadcrumbs", None)
+    return event
+
+if os.getenv("SENTRY_DSN"):
+    import sentry_sdk
+    sentry_sdk.init(
+        dsn=os.environ["SENTRY_DSN"],
+        environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
+        release=os.getenv("RENDER_GIT_COMMIT"),
+        send_default_pii=False,
+        include_local_variables=False,
+        traces_sample_rate=0,
+        before_send=scrub_sentry_event,
+    )
+
 ROOT=Path(__file__).parent
 app=FastAPI(title="CanBuild Massachusetts",version="0.8.0")
 app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
@@ -163,4 +182,5 @@ async def validate_startup():
                 "warnings=",result.get("warnings",[])[:4],flush=True)
         except Exception as exc:
             print("CANBUILD 95 MAGAZINE SMOKE ERROR:",type(exc).__name__,str(exc)[:120],flush=True)
-    asyncio.create_task(smoke())
+    if os.getenv("CANBUILD_LIVE_STARTUP_SMOKE", "1") == "1":
+        asyncio.create_task(smoke())
