@@ -49,7 +49,7 @@ def test_mobile_layout_and_input_validation(page, app_url):
     page.goto(app_url)
     page.get_by_role("button", name="Explore property").click()
     expect(page.locator("#status")).to_have_text("Enter a full Massachusetts address.")
-    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), page.evaluate("JSON.stringify({viewport: window.innerWidth, dpr: devicePixelRatio, root: document.documentElement.getBoundingClientRect().toJSON(), body: document.body.getBoundingClientRect().toJSON(), children: Array.from(document.body.children).map(el => ({tag:el.tagName,id:el.id,cls:String(el.className),rect:el.getBoundingClientRect().toJSON(),scroll:el.scrollWidth,client:el.clientWidth,display:getComputedStyle(el).display,position:getComputedStyle(el).position,zoom:getComputedStyle(el).zoom,transform:getComputedStyle(el).transform,before:getComputedStyle(el,'::before').content,after:getComputedStyle(el,'::after').content}))})")
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
 
 
 def test_alias_selection_owner_and_sales(page, app_url, property_record):
