@@ -253,9 +253,14 @@ async def lookup(client, city, parcel_geometry, latitude, parcel):
     fields='ZONECODE,ZONEDESC,Permitted_Building_Types,Use_Provisions,Development_Standards,Standards_and_Measurements,Parking_and_Mobility' if city=='SOMERVILLE' else '*'
     results = await asyncio.gather(fetch_layer(client, base, geometry, fields), *(fetch_layer(client, url, geometry, include_geometry=False) for _, url, _ in screens))
     features, error = results[0]
-    matches = await asyncio.to_thread(overlap_features, features, parcel_geometry, latitude, repair_ring=city == "EVERETT")
-    clipped = [(a, g.intersection(parcel_geometry), n) for a, g, n in matches]
-    district = district_match(clipped, field, parcel_geometry.area)
+    matches, district = [], None
+    try:
+        matches = await asyncio.to_thread(overlap_features, features, parcel_geometry, latitude, repair_ring=city == "EVERETT")
+        clipped = [(a, g.intersection(parcel_geometry), n) for a, g, n in matches]
+        district = district_match(clipped, field, parcel_geometry.area)
+    except (GEOSException, ValueError, TypeError):
+        # Base district geometry and the attributes-only overlay screens are independent.
+        error = "Base zoning geometry could not be validated"
     constraints = []
     for (name, url, label), (rows, failure) in zip(screens, results[1:]):
         # The server performs the parcel intersection. Screening needs attributes only;

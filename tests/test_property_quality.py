@@ -235,14 +235,17 @@ def test_watertown_overlay_references_keep_active_frontage_and_district_rules_se
 
 
 @pytest.mark.anyio
-async def test_revere_uses_city_layers_and_keeps_overlay_references_separate():
+@pytest.mark.parametrize("valid_base", [True, False])
+async def test_revere_uses_city_layers_and_keeps_overlay_references_separate(valid_base):
     parcel = to_ground(box(0, 0, 100, 100), 42)
     def handler(request):
         assert request.url.host == "gis.revere.org"
         if request.url.path.endswith("/62/query"):
             assert request.url.params["returnGeometry"] == "true"
-            rows = [{"attributes": {"zone_name": "GB"},
-                     "geometry": {"rings": [list(box(0, 0, 100, 100).exterior.coords)]}}]
+            ring = list(box(0, 0, 100, 100).exterior.coords) if valid_base else [
+                (0, 0), (100, 100), (100, 0), (0, 100), (0, 0),
+            ]
+            rows = [{"attributes": {"zone_name": "GB"}, "geometry": {"rings": [ring]}}]
         else:
             assert request.url.path.endswith("/20/query")
             assert request.url.params["returnGeometry"] == "false"
@@ -251,8 +254,12 @@ async def test_revere_uses_city_layers_and_keeps_overlay_references_separate():
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         result = await lookup(client, "Revere", parcel, 42, {})
-    assert result["zoning"]["district"] == "GB"
-    assert result["zoning"]["current_amendments_verified"] is False
+    if valid_base:
+        assert result["zoning"]["district"] == "GB"
+        assert result["zoning"]["current_amendments_verified"] is False
+    else:
+        assert result["zoning"] is None
+        assert result["status"] == "Base zoning geometry could not be validated"
     assert result["constraints"][0]["status"] == "mapped intersection"
     references = result["constraints"][0]["rule_references"]
     assert [ref["code"] for ref in references] == ["SASGOD B"]
