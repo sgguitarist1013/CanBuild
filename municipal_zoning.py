@@ -56,6 +56,8 @@ SMART_GROWTH_DISTRICTS = json.loads((Path(__file__).parent / "docs/massachusetts
 
 ARLINGTON = "https://services2.arcgis.com/s1Sh73K7qtP9JdrG/arcgis/rest/services/Zoning_and_Overlay_Districts/FeatureServer"
 NORTHAMPTON = "https://services3.arcgis.com/rXBMAZhnkewHZIaE/arcgis/rest/services/Northampton_Zoning_and_Overlays_WFL2/FeatureServer"
+NEWTON = "https://gisweb.newtonma.gov/server/rest/services/Data/MapServer"
+WORCESTER = "https://services1.arcgis.com/j8dqo2DJE7mVUBU1/arcgis/rest/services"
 STOW = "https://services6.arcgis.com/bYxJFmZwD1DSkFy9/arcgis/rest/services"
 NMCOG = "https://services2.arcgis.com/8sfNXBvIUURUO8wz/arcgis/rest/services/NMCOG_Zoning_Districts_v20230106/FeatureServer/131"
 NMCOG_TOWNS = ("BILLERICA", "CHELMSFORD", "DRACUT", "DUNSTABLE", "LOWELL", "PEPPERELL", "TEWKSBURY", "TYNGSBOROUGH", "WESTFORD")
@@ -64,7 +66,8 @@ NMCOG_TOWNS = ("BILLERICA", "CHELMSFORD", "DRACUT", "DUNSTABLE", "LOWELL", "PEPP
 SNAPSHOT_CONNECTORS = {
     "ARLINGTON": {
         "base": ARLINGTON + "/1", "field": "ZoneCode", "description_field": "ZoneName",
-        "updated": "2025-11-07", "screens": [("Arlington zoning overlays", ARLINGTON + "/0", "OverlayDistrict")],
+        "updated": "2025-11-07", "repair_ring": True,
+        "screens": [("Arlington zoning overlays", ARLINGTON + "/0", "OverlayDistrict")],
         "map_url": "https://www.arcgis.com/home/item.html?id=9916a97573ca40db9c817f478bf44c43",
         "priority": 2, "reason": "Multifamily and transit corridor redevelopment",
         "status": "Town GIS base districts and overlays; current bylaws and amendments require confirmation",
@@ -75,6 +78,21 @@ SNAPSHOT_CONNECTORS = {
         "map_url": "https://www.arcgis.com/home/item.html?id=60931800fa7c4fc2880b4c593af00b7a",
         "code_url": "https://ecode360.com/13265306",
         "priority": 2, "reason": "Downtown infill and housing redevelopment",
+        "status": "City GIS base districts and overlays; current ordinance and amendments require confirmation",
+    },
+    "NEWTON": {
+        "base": NEWTON + "/24", "field": "Zoning", "description_field": None,
+        "updated": None, "screens": [("Newton village center overlays", NEWTON + "/23", "Name")],
+        "map_url": "https://www.arcgis.com/home/item.html?id=a0903a1841634b3c8b7400f31bf9a8d7",
+        "priority": 2, "reason": "Village center and transit redevelopment",
+        "status": "City GIS district codes and village center overlay screening; project rules pending",
+    },
+    "WORCESTER": {
+        "base": WORCESTER + "/Zoning/FeatureServer/9", "field": "ZONE", "description_field": "NAME",
+        "updated": "2025-04-28", "screens": [("Worcester zoning overlays", WORCESTER + "/Zoning_Overlays/FeatureServer/10", "NAME")],
+        "map_url": "https://www.arcgis.com/home/item.html?id=318e135d47f842e2893ee44906db6749",
+        "code_url": "https://www.worcesterma.gov/planning-regulatory/zoning-ordinance-map",
+        "priority": 2, "reason": "Downtown housing and adaptive reuse",
         "status": "City GIS base districts and overlays; current ordinance and amendments require confirmation",
     },
     "STOW": {
@@ -323,8 +341,9 @@ async def lookup(client, city, parcel_geometry, latitude, parcel):
     if town_field:
         features = [f for f in features if str((f.get("attributes") or {}).get(town_field)).upper() == city]
     matches, district = [], None
+    repair_ring = city == "EVERETT" or bool(snapshot and snapshot.get("repair_ring"))
     try:
-        matches = await asyncio.to_thread(overlap_features, features, parcel_geometry, latitude, repair_ring=city == "EVERETT")
+        matches = await asyncio.to_thread(overlap_features, features, parcel_geometry, latitude, repair_ring=repair_ring)
         clipped = [(a, g.intersection(parcel_geometry), n) for a, g, n in matches]
         district = district_match(clipped, field, parcel_geometry.area)
     except (GEOSException, ValueError, TypeError):

@@ -97,21 +97,22 @@ class StatewideLookupIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_assessor_street_aliases_match_census_components(self):
         cases = [
             ("CHELSEA", "300", "3RD", "", "THIRD ST"),
+            ("ARLINGTON", "248", "MASSACHUSETTS", "", "MASS AVE"),
             ("WATERTOWN", "63", "MOUNT AUBURN", "", "MT AUBURN ST"),
             ("WATERTOWN", "43", "BEACON", "N", "NO BEACON ST"),
         ]
         for city, house, street, direction, assessor in cases:
             with self.subTest(city=city, street=street):
-                components = {"city": city, "streetName": street, "preDirection": direction, "suffixType": "ST"}
+                components = {"city": city, "streetName": street, "preDirection": direction, "suffixType": assessor.split()[-1]}
                 target = {"attributes": {"OBJECTID": 1, "CITY": city, "ADDR_NUM": house,
                                          "SITE_ADDR": f"{house} {assessor}", "FULL_STR": assessor, "LOC_ID": "target"}}
                 with patch("parcel_engine.query", new=AsyncMock(return_value=[target])), patch(
                     "parcel_engine.selected_geometry", new=AsyncMock(return_value=None),
                 ):
-                    parcel, _, _ = await resolve_parcel(None, -71.1, 42.4, components, [], f"{house} {street} St, {city}, MA")
+                    parcel, _, _ = await resolve_parcel(None, -71.1, 42.4, components, [], f"{house} {street} {components['suffixType']}, {city}, MA")
                 self.assertEqual(parcel["loc_id"], "target")
                 self.assertFalse(exact_address_match(target["attributes"], str(int(house) + 1), assessor, city))
-                self.assertFalse(exact_address_match(target["attributes"], house, assessor.replace(" ST", " AVE"), city))
+                self.assertFalse(exact_address_match(target["attributes"], house, assessor.rsplit(" ", 1)[0] + " ROAD", city))
 
     async def test_only_neighbor_returns_no_parcel(self):
         components={"fromAddress":"91","streetName":"MAGAZINE","city":"CAMBRIDGE"}

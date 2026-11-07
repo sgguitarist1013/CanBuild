@@ -23,6 +23,7 @@ def test_development_zoning_rollout_is_explicit():
     assert len(by_city) == 351
     assert sum(data['base_map_counts'].values()) == 351
     assert by_city['ARLINGTON']['base_map_status'] == 'municipal_snapshot'
+    assert by_city['NEWTON']['base_zoning_connected'] and by_city['WORCESTER']['base_zoning_connected']
     assert by_city['LOWELL']['base_map_status'] == 'historical_reference'
     assert not by_city['LOWELL']['base_zoning_connected']
     assert len(by_city['NORTHAMPTON']['smart_growth_inventory']['district_names']) == 2
