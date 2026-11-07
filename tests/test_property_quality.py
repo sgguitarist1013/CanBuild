@@ -187,3 +187,22 @@ async def test_atlas_incomplete_response_is_not_an_outside_district_result():
         result = await multifamily_screen(client, 'Chelsea', box(0, 0, 100, 100), 42, 'F_100_200')
     assert result['status'] == 'State atlas temporarily unavailable'
     assert result['modeled_units'] is None
+
+
+@pytest.mark.anyio
+async def test_everett_triangle_stays_a_historical_reference():
+    parcel = to_ground(box(0, 0, 100, 100), 42)
+    def handler(request):
+        assert request.url.path.endswith('/Zoning_2019/FeatureServer/0/query')
+        return httpx.Response(200, json={'features': [{
+            'attributes': {'Zoning2018': 'EDD', 'ZoningName': 'Commercial Triangle Economic Development District'},
+            'geometry': {'rings': [list(box(0, 0, 100, 100).exterior.coords)]},
+        }]})
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await lookup(client, 'Everett', parcel, 42, {})
+    assert result['zoning']['district'] == 'EDD'
+    assert result['zoning']['historical_reference'] is True
+    assert result['zoning']['current_amendments_verified'] is False
+    assert result['zoning']['regulatory_links'][0]['name'] == 'City-published Section 33 excerpt'
+    assert result['coverage']['base_zoning_connected'] is False
+    assert result['review'] is None
