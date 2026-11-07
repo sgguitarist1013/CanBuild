@@ -84,7 +84,30 @@ if(review){const rules=review.standards;const values=[['Reference section',revie
 else if(z?.reference_standards){Object.entries(z.reference_standards).forEach(([label,value])=>{const item=document.createElement('div');item.className='item';const s=document.createElement('span');s.textContent=label+' · GIS reference';const b=document.createElement('strong');b.textContent=String(value);item.append(s,b);$('zoningStandards').append(item)});$('zoningConditions').textContent='Values are displayed as supplied by the municipal GIS. Check the linked zoning article, dimensional-table units, use-specific rules and footnotes before applying them. '+(z.reference_conditions||'');}
 if(z?.historical_reference&&z.reference_conditions) $('zoningConditions').textContent=z.reference_conditions+' ';
 (z?.regulatory_links||[]).forEach(link=>{const a=document.createElement('a');a.href=link.url;a.target='_blank';a.rel='noopener noreferrer';a.textContent=link.name+' ↗';a.style.marginRight='14px';$('zoningConditions').append(a)});
-$('constraintChecks').replaceChildren();(d.constraints||[]).forEach(c=>{const item=document.createElement('div');item.className='item';const s=document.createElement('span');s.textContent=c.name;const b=document.createElement('strong');b.textContent=c.status;const p=document.createElement('p');p.className='small muted';p.textContent=(c.labels||[]).join(', ')+(c.labels?.length?'. ':'')+c.note;item.append(s,b,p);$('constraintChecks').append(item)});
+$('constraintChecks').replaceChildren();(d.constraints||[]).forEach(c=>{const item=document.createElement('div');item.className='item';const s=document.createElement('span');s.textContent=c.name;const b=document.createElement('strong');b.textContent=c.status;const p=document.createElement('p');p.className='small muted';p.textContent=(c.labels||[]).join(', ')+(c.labels?.length?'. ':'')+c.note;item.append(s,b,p);
+for(const ref of c.rule_references||[]){
+  const details=document.createElement('details');
+  const title=document.createElement('summary');
+  title.textContent=ref.name+' · code reference';
+  const note=document.createElement('p');
+  note.className='small';
+  note.textContent=ref.summary;
+  details.append(title,note);
+  for(const source of ref.sources){
+    const row=document.createElement('p');
+    const link=document.createElement('a');
+    link.href=source.url;
+    link.target='_blank';
+    link.rel='noopener noreferrer';
+    link.textContent=source.name+' ↗';
+    row.className='small';
+    row.append(link);
+    details.append(row);
+  }
+  item.append(details);
+}
+$('constraintChecks').append(item)});
+
 const screen=d.multifamily_screen, box=$('multifamilyScreen');
 box.replaceChildren();
 box.classList.toggle('hide',!screen);

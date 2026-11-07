@@ -20,10 +20,38 @@ SOMERVILLE = "https://cos-geoportal.somervillema.gov/server/rest/services/enCode
 CHELSEA = "https://services9.arcgis.com/diuwWhOq89A0FdTw/arcgis/rest/services/City_of_Chelsea_Map_Layers/FeatureServer"
 EVERETT = "https://services2.arcgis.com/xJ0MjVdyImL1ajyn/arcgis/rest/services/Zoning_2019/FeatureServer/0"
 EVERETT_TRIANGLE_CODE = "https://www.arcgis.com/sharing/rest/content/items/40748ac8f93344daa21a0a3023dd42f3/data"
+REVERE = "https://gis.revere.org/arcgis/rest/services/RevereMA/MapServer"
+REVERE_OVERLAY_REFERENCES = {
+    "WTODOD": {
+        "name": "Wonderland transit overlay",
+        "summary": "Published overlay reference: 25,000 sq ft minimum lot, 100 ft minimum frontage, FAR up to 3.6 and up to 16 stories. The 160 ft ceiling has additional floor-area and spacing limits. Confirm design review and site plan approval before applying these limits.",
+        "sources": [
+            {"name": "Wonderland applicability and review", "url": "https://ecode360.com/45391745"},
+            {"name": "Wonderland dimensional standards", "url": "https://ecode360.com/45391757"},
+        ],
+    },
+    "GSSGOD": {
+        "name": "Green Street smart growth overlay",
+        "summary": "Published overlay reference: 10,000 sq ft minimum lot, FAR up to 1.5, and limits of 60 ft and six stories. Confirm plan approval, parking, affordability and any dimensional waivers.",
+    },
+    "SASGOD A": {
+        "name": "Shirley Avenue smart growth overlay A",
+        "summary": "Published overlay reference: 5,000 sq ft minimum lot, FAR up to 2, and limits of 60 ft and six stories. Confirm plan approval, parking, affordability and any dimensional waivers.",
+    },
+    "SASGOD B": {
+        "name": "Shirley Avenue smart growth overlay B",
+        "summary": "Published overlay reference: 5,000 sq ft minimum lot, FAR up to 2, and limits of 50 ft and five stories. Confirm plan approval, parking, affordability and any dimensional waivers.",
+    },
+}
+REVERE_SMART_GROWTH_SOURCES = [
+    {"name": "Green Street and Shirley Avenue district standards", "url": "https://ecode360.com/45392482"},
+    {"name": "Smart growth housing and affordability", "url": "https://ecode360.com/45392388"},
+    {"name": "Smart growth plan approval", "url": "https://ecode360.com/45392437"},
+]
 ATLAS = "https://services1.arcgis.com/hGdibHYSPO59RG1h/arcgis/rest/services/MBTA_Communities_3A_District_Atlas/FeatureServer"
 ATLAS_SOURCE = "https://www.mass.gov/info-details/massgis-data-mbta-communities-3a-district-atlas"
 MUNICIPALITIES = json.loads((Path(__file__).parent / "docs/massachusetts_municipalities.json").read_text())
-LOCAL_CONNECTORS = {"BOSTON", "SOMERVILLE", "CHICOPEE", "CHELSEA", "EVERETT"}
+LOCAL_CONNECTORS = {"BOSTON", "SOMERVILLE", "CHICOPEE", "CHELSEA", "EVERETT", "REVERE"}
 REGISTRY = {
     "CAMBRIDGE": {"priority": 1, "reason": "Multifamily and inclusionary housing capacity", "status": "District connector and C-1 conceptual rules", "map_url": "https://www.cambridgema.gov/gis/gisdatadictionary/cdd/cdd_zoningdistricts", "code_url": "https://www.cambridgema.gov/cdd/zoninganddevelopment/zoning/ordinance"},
     "SOMERVILLE": {"priority": 1, "reason": "Building type, density, and mixed-use redevelopment", "status": "Published June 2025 parcel zoning and official district-rule links; later amendments require review", "map_url": "https://map.viewprogis.com/ecp/somerville-test?widget=9efa8bb5-3de1-4ff7-86b1-f698d0d6fb0d", "code_url": "https://online.encodeplus.com/regs/somerville-ma/doc-viewer.aspx"},
@@ -31,7 +59,7 @@ REGISTRY = {
     "WATERTOWN": {"priority": 2, "reason": "Corridor and mixed-use redevelopment", "status": "Watertown Square overlay rules linked to state parcel screening; citywide base districts pending", "map_url": "https://www.watertown-ma.gov/zoning", "code_url": "https://ecode360.com/36825722"},
     "EVERETT": {"priority": 2, "reason": "Commercial Triangle and Lower Broadway redevelopment", "status": "Historical city zoning map available (July 2019); current district requires confirmation", "map_url": "https://www.arcgis.com/home/item.html?id=53ba373249404bae80dbb1e5366bd9b5", "code_url": "https://cityofeverett.com/city-hall/departments/planning-development/", "historical_zoning_only": True},
     "CHELSEA": {"priority": 2, "reason": "Density and conversion opportunities", "status": "City GIS snapshot from March 2023; confirm current base zoning and overlays", "map_url": "https://www.arcgis.com/home/item.html?id=ba933034c3eb41ebad0d14ba0c6ea3b1", "code_url": "https://library.municode.com/ma/chelsea/codes/code_of_ordinances"},
-    "REVERE": {"priority": 2, "reason": "Transit and corridor redevelopment", "status": "Queued for municipal source verification", "map_url": "https://www.revere.org/gis", "code_url": "https://ecode360.com/RE6867"},
+    "REVERE": {"priority": 2, "reason": "Transit and corridor redevelopment", "status": "City GIS base districts and overlay screening; selected transit and smart growth code references", "map_url": "https://www.revere.org/gis", "code_url": "https://ecode360.com/45390701"},
     "CHICOPEE": {"priority": 3, "reason": "Addition and nonconforming-lot reference case", "status": "Parcel zoning, constraint screening and residential A/B reference standards", "map_url": "https://chicopeema.gov/566/Geographic-Information-Systems-GIS", "code_url": "https://chicopeema.gov/383/Zoning-Ordinances"},
 }
 
@@ -203,6 +231,9 @@ async def lookup(client, city, parcel_geometry, latitude, parcel):
     elif city == "BOSTON":
         base, field, updated = BOSTON + "/28", "Zoning_Subdistrict", None
         screens = [("Planned development areas", BOSTON + "/41", None), ("Groundwater conservation", BOSTON + "/35", None), ("Interim planning overlays", BOSTON + "/38", None)]
+    elif city == "REVERE":
+        base, field, updated = REVERE + "/62", "zone_name", None
+        screens = [("Revere zoning overlays", REVERE + "/20", "longname")]
     elif city == "EVERETT":
         base, field, updated = EVERETT, "Zoning2018", "2019-07-18"
         screens = []
@@ -222,9 +253,14 @@ async def lookup(client, city, parcel_geometry, latitude, parcel):
     fields='ZONECODE,ZONEDESC,Permitted_Building_Types,Use_Provisions,Development_Standards,Standards_and_Measurements,Parking_and_Mobility' if city=='SOMERVILLE' else '*'
     results = await asyncio.gather(fetch_layer(client, base, geometry, fields), *(fetch_layer(client, url, geometry, include_geometry=False) for _, url, _ in screens))
     features, error = results[0]
-    matches = await asyncio.to_thread(overlap_features, features, parcel_geometry, latitude, repair_ring=city == "EVERETT")
-    clipped = [(a, g.intersection(parcel_geometry), n) for a, g, n in matches]
-    district = district_match(clipped, field, parcel_geometry.area)
+    matches, district = [], None
+    try:
+        matches = await asyncio.to_thread(overlap_features, features, parcel_geometry, latitude, repair_ring=city == "EVERETT")
+        clipped = [(a, g.intersection(parcel_geometry), n) for a, g, n in matches]
+        district = district_match(clipped, field, parcel_geometry.area)
+    except (GEOSException, ValueError, TypeError):
+        # Base district geometry and the attributes-only overlay screens are independent.
+        error = "Base zoning geometry could not be validated"
     constraints = []
     for (name, url, label), (rows, failure) in zip(screens, results[1:]):
         # The server performs the parcel intersection. Screening needs attributes only;
@@ -232,6 +268,12 @@ async def lookup(client, city, parcel_geometry, latitude, parcel):
         hits = [row.get('attributes') or {} for row in rows]
         constraints.append({"name": name, "status": "unavailable" if failure else "mapped intersection" if hits else "no mapped intersection",
             "labels": list(dict.fromkeys(str(a.get(label)) for a in hits if label and a.get(label))), "source_url": url, "note": "Server-side parcel screening includes boundary touches. Absence of a mapped feature is not regulatory clearance."})
+        if city == "REVERE":
+            codes = dict.fromkeys(a.get("zonetype") for a in hits)
+            constraints[-1]["rule_references"] = [
+                {"code": code, "sources": REVERE_SMART_GROWTH_SOURCES, **REVERE_OVERLAY_REFERENCES[code]}
+                for code in codes if code in REVERE_OVERLAY_REFERENCES
+            ]
     zoning = None
     if district:
         attrs = next(a for a, _, _ in matches if a.get(field) == district)
@@ -244,6 +286,12 @@ async def lookup(client, city, parcel_geometry, latitude, parcel):
                 ('Maximum FAR', 'Max_FAR'), ('Maximum height', 'Max_Height'), ('Front setback', 'Front_Setback'),
                 ('Side setback', 'Side_Setback'), ('Rear setback', 'Rear_Setback')) if attrs.get(key) is not None}
             zoning['reference_conditions'] = attrs.get('Condition_Text') or attrs.get('Additional_Restrictions_or_Foot')
+        if city == 'REVERE':
+            zoning["snapshot_note"] = "Revere municipal GIS snapshot. Confirm the current zoning atlas, amendments and project requirements with the city."
+            zoning["regulatory_links"] = [
+                {"name": "Revere use regulations", "url": "https://ecode360.com/45391024"},
+                {"name": "Revere dimensional regulations", "url": "https://ecode360.com/45391923"},
+            ]
         if city == 'EVERETT':
             zoning["historical_reference"] = True
             zoning["district_description"] = attrs.get("ZoningName")
