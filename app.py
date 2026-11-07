@@ -24,11 +24,12 @@ from monitoring import configure_monitoring
 from redevelopment import analyze_redevelopment
 import zoning_research
 import somerville
+import registry
 
 configure_monitoring()
 
 ROOT=Path(__file__).parent
-VERSION = "0.16.5"
+VERSION = "0.16.6"
 app=FastAPI(title="CanBuild Massachusetts",version=VERSION)
 app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
 CENSUS="https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress"
@@ -76,6 +77,20 @@ def zoning_review_queue(authorization: str | None = Header(default=None), limit:
     return {"pending": zoning_research.cache().queue(limit)}
 
 
+@app.get("/api/internal/registry-review", include_in_schema=False)
+def registry_review_queue(authorization: str | None = Header(default=None), limit: int = Query(default=40, ge=1, le=100)):
+    require_reviewer(authorization)
+    return {"pending": registry.review_queue(zoning_research.cache().connect, limit)}
+
+
+def queue_registry_review(city, items):
+    try:
+        registry.enqueue(zoning_research.cache().connect, city, items)
+    except (OSError, sqlite3.Error):
+        # An unavailable review store never changes what counts as confirmed.
+        pass
+
+
 @app.post("/api/internal/zoning-review/{revision}", include_in_schema=False)
 def decide_zoning_review(revision: int, decision: ZoningReviewDecision, authorization: str | None = Header(default=None)):
     require_reviewer(authorization)
@@ -105,7 +120,10 @@ async def condo_references(municipality:str=Query(min_length=2,max_length=80,pat
         boston_pid:str|None=Query(default=None,pattern=r'^\d{10}$'),min_year_built:int|None=Query(default=None,ge=1800,le=datetime.now().year)):
     try:
         async with httpx.AsyncClient(timeout=25,follow_redirects=True) as client:
-            return await condo_sales(client,lon,lat,municipality,boston_pid,min_year_built)
+            report = await condo_sales(client,lon,lat,municipality,boston_pid,min_year_built)
+        report = registry.sale_report(municipality, report)
+        queue_registry_review(municipality, report.get("pending_registry_review", []))
+        return report
     except (httpx.HTTPError,ValueError,TypeError):
         raise HTTPException(503,'Condominium sale references are temporarily unavailable. Your scenario inputs are preserved; try again later.')
 def matching_suggestions(values, query):
@@ -310,6 +328,9 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
         if sales_task:
             try:
                 result["sales_research"] = await sales_task
+                subject_transfer = result["sales_research"].pop("subject_transfer", None)
+                if subject_transfer and result.get("parcel"):
+                    result["parcel"]["last_transfer"] = subject_transfer
             except (httpx.HTTPError, ValueError, TypeError):
                 result["sales_research"] = {"status": "Comparable sales service temporarily unavailable", "candidates": []}
     zoning = result.get('zoning') or {}
@@ -321,7 +342,20 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
     for label,key in (('Municipal zoning map','map_url'),('Municipal planning department' if historical or local_sources.get('historical_zoning_only') else 'Municipal zoning ordinance','code_url')):
         if local_sources.get(key):
             result['sources'].append({'name':city.title()+' '+label,'url':local_sources[key]})
-    result['sources'].append({'name':'Massachusetts Registry of Deeds search','url':'https://www.masslandrecords.com/'})
+    registry_route = registry.district_for(city)
+    result["registry"] = registry_route
+    result["sources"].append({"name": (registry_route["district"] or "Massachusetts") + " Registry of Deeds search", "url": registry_route["url"]})
+    sale_report = registry.sale_report(city, result["sales_research"])
+    result["sales_research"] = sale_report
+    pending = list(sale_report.get("pending_registry_review", []))
+    if result.get("parcel"):
+        parcel = result["parcel"]
+        transfer = parcel.get("last_transfer") or {}
+        registry_address = parcel.get("assessor_site_address") or result["address"]
+        deed = registry.check(city, registry_address, registry.transfer_pair(transfer),
+                              transfer.get("price_reported"), transfer.get("registered_reference"))
+        parcel["deed_verification"] = deed
+        pending.append({"address": registry_address, "deed_verification": deed})
     result['warnings'] += review_building(result.get('existing_building'))
     observed=result.get('existing_building') or {}
     result['dwelling_unit_summary']={'existing_reported_total':observed.get('units'),
@@ -404,6 +438,9 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
                         min_year_built=datetime.now().year - 4, radius_miles=3, new_build_only=True)
         except (TimeoutError, httpx.HTTPError, ValueError, TypeError):
             pass
+        if references:
+            references = registry.sale_report(city, references)
+            pending.extend(references.get("pending_registry_review", []))
         candidates = (references or {}).get("candidates", [])
         subject_parcel = (result.get("parcel") or {}).get("parcel_number")
         comparable = [candidate for candidate in candidates if candidate.get("project_key") != subject_parcel]
@@ -412,6 +449,8 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
             comparable if references and not references["truncated"] else [],
         )
         result["redevelopment"]["sale_references"] = references
+    if pending:
+        queue_registry_review(city, pending)
     return result
 
 # Regression tests run with every deployment. A failing suite prevents startup.

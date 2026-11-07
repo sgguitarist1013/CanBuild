@@ -110,7 +110,7 @@ async def sales_research(client,subject):
          'method':'Boston recorded-sale candidates: same exact assessor use code, within 1,609 meters of selected parcel geometry, 50–200% of subject gross area, last 36 months, recorded price at least $10,000.',
          'limitations':'Candidate sales require review for arms-length status, bundled transfers, condition, leases, title, and measurement differences. This is not an appraisal or a complete sales history. Boston FY2026 characteristics can lag current conditions.'}
     pid=subject['PID'];code=subject.get('LUC');area=subject.get('GROSS_AREA')
-    if not code or not isinstance(area,(int,float)) or area<=0:
+    if not re.fullmatch(r'\d{10}',pid) or not code or not isinstance(area,(int,float)) or area<=0:
         out['status']='Subject use code and gross area required';return out
     # Use the selected parcel geometry, not the geocoder's possibly incorrect street point.
     d=await fetch(client,0,{'where':f"PID = '{pid}'",'outFields':'PID','returnGeometry':'true','outSR':4326,'resultRecordCount':2})
@@ -125,10 +125,16 @@ async def sales_research(client,subject):
                           'resultRecordCount':500})
     records=[x['attributes'] for x in d.get('features',[])]
     ids=sorted(set(x['PID'] for x in records if re.fullmatch(r'\d{10}',x.get('PID',''))))
-    if not ids:out['status']='No matching nearby property records';return out
-    quoted=','.join("'"+i+"'" for i in ids)
+    quoted=','.join("'"+i+"'" for i in sorted(set(ids)|{pid}))
     d2=await fetch(client,11,{'where':f'parcel_id IN ({quoted})','resultRecordCount':2000})
-    out['candidates']=filter_sales(records,[x['attributes'] for x in d2.get('features',[])],subject)
+    sales=[x['attributes'] for x in d2.get('features',[])]
+    subject_sales=[row for row in sales if row.get('parcel_id')==pid]
+    if len(subject_sales)==1:
+        sale=subject_sales[0]
+        sold=sale_date(sale.get('latest_sales_date'))
+        out['subject_transfer']={'sale_date_reported':sold.isoformat() if sold else None,
+            'price_reported':sale.get('latest_sales_price'),'record_reference':sale.get('latest_bkgpcert')}
+    out['candidates']=filter_sales(records,sales,subject)
     out['status']='Recorded sale candidates found' if out['candidates'] else 'No qualifying recorded sales found'
     out['truncated']=bool(d.get('exceededTransferLimit') or d2.get('exceededTransferLimit'))
     return out
