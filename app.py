@@ -20,7 +20,7 @@ from monitoring import configure_monitoring
 configure_monitoring()
 
 ROOT=Path(__file__).parent
-app=FastAPI(title="CanBuild Massachusetts",version="0.11.1")
+app=FastAPI(title="CanBuild Massachusetts",version="0.12.0")
 app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
 CENSUS="https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress"
 PARCELS="https://services1.arcgis.com/hGdibHYSPO59RG1h/ArcGIS/rest/services/Massachusetts_Property_Tax_Parcels/FeatureServer/0/query"
@@ -37,7 +37,7 @@ def now(): return datetime.now(timezone.utc).isoformat()
 @app.get("/")
 def home(): return FileResponse(ROOT/"static"/"index.html")
 @app.get("/api/health")
-def health(): return {"ok":True,"version":"0.11.1","time":now()}
+def health(): return {"ok":True,"version":"0.12.0","time":now()}
 @app.get("/api/coverage")
 def coverage():
     return {"municipalities":[municipal_zoning.coverage(city) for city in municipal_zoning.MUNICIPALITIES],
@@ -213,10 +213,11 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
     multifamily = result.get("multifamily_screen") or {}
     if multifamily.get("districts"):
         names = ", ".join(d["name"] for d in multifamily["districts"])
+        local_review = multifamily.get("local_rule_review")
         result["recommendations"].append({
-            "title": "Evaluate the multifamily zoning option",
+            "title": local_review["title"] if local_review else "Evaluate the multifamily zoning option",
             "reason": f"The selected parcel intersects {names} in the state Section 3A atlas.",
-            "next_step": "Ask local planning to confirm eligible uses, current district boundaries, dimensional standards, any ground-floor use requirements, district caps and affordability rules before setting a unit mix or pricing a condo sellout.",
+            "next_step": local_review["next_step"] if local_review else "Ask local planning to confirm eligible uses, current district boundaries, dimensional standards, any ground-floor use requirements, district caps and affordability rules before setting a unit mix or pricing a condo sellout.",
             "confidence": "State compliance map intersection",
         })
     hits=[c['name'] for c in result['constraints'] if c['status']=='mapped intersection']

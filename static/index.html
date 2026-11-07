@@ -103,6 +103,38 @@ if(screen){
       (district.district_cap_reported>0?' · District-wide cap reported: '+fmt(district.district_cap_reported)+' units':'');
     box.append(row);
   }
+  const local=screen.local_rule_review;
+  if(local){
+    const title=document.createElement('strong');
+    title.textContent=local.title;
+    box.append(title);
+    const rows=[local.summary,
+      ...(local.active_frontage_mapped?['Active street frontage is mapped. Confirm the affected frontage and ground-floor use with Watertown Planning.']:[]),
+      ...local.district_references.map(r=>r.district+' reference · '+r.stories+' stories · '+r.flat_roof_ft+' ft flat roof / '+r.pitched_roof_ft+' ft pitched roof · '+r.minimum_open_space_pct+'% minimum open space'),
+      local.limitations];
+    for(const text of rows){
+      const p=document.createElement('p');
+      p.className='small';
+      p.textContent=text;
+      box.append(p);
+    }
+    const sources=document.createElement('details');
+    const summary=document.createElement('summary');
+    summary.textContent='Watertown zoning sources';
+    sources.append(summary);
+    for(const source of local.sources){
+      const p=document.createElement('p');
+      const a=document.createElement('a');
+      a.href=source.url;
+      a.target='_blank';
+      a.rel='noopener noreferrer';
+      a.textContent=source.name+' ↗';
+      p.className='small';
+      p.append(a);
+      sources.append(p);
+    }
+    box.append(sources);
+  }
   if(screen.modeled_units!=null){
     const units=document.createElement('p');
     units.className='small';

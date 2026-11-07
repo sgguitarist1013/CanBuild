@@ -8,6 +8,17 @@ Reviewed November 7, 2026. Priorities are an implementation order based on devel
 
 The coverage endpoint lists all 351 cities and towns from [MassGIS municipal boundaries](https://www.mass.gov/info-details/massgis-data-municipalities), layer 1 of the published `TownSurveyGenCoast_gdb` service. Inventory, published state district screening and local base zoning are separate coverage levels.
 
+## Municipality checkoff
+
+| Municipality | Source review completed | Open work |
+| --- | --- | --- |
+| Watertown | Watertown Square Section 3A atlas subdistricts paired with published §§ 5.08 and 5.09. Includes active-frontage screening and district table references. | Verify current citywide base-zoning geometry and amendments, then validate parcel-specific envelopes and unit scenarios. |
+| Everett | Historical 2019 parcel map and Commercial Triangle reference excerpt. | Verify the current map and amendments. |
+| Revere | Parcel intersections against the Section 3A atlas. | Verify current municipal base zoning and corridor rules. |
+| Chelsea | City GIS base districts and listed overlay screens, plus Section 3A atlas. | Verify post-2023 municipal map changes and development standards. |
+
+Watertown's [city zoning page](https://www.watertown-ma.gov/zoning) links the MapGeo viewer and code. The viewer's published CARTO legend still lists the older Central Business district and omits the Watertown Square districts, so it is not used for current parcel assignments. The report uses the distinct `314WSQ*_TODO` atlas records, including the active-frontage records, to select reference material. Reference heights and open-space percentages come from [§ 5.08](https://ecode360.com/37104064). Review path and partial-lot treatment come from [§ 5.09](https://ecode360.com/37104096). The screen does not resolve current map boundaries, frontage geometry, eligibility for bonus height, or buildable unit yield.
+
 ## Published sources
 
 - Section 3A screening uses the [MassGIS/EOHLC District Atlas](https://www.mass.gov/info-details/massgis-data-mbta-communities-3a-district-atlas). At review, district layer 0 represented 159 municipalities and was current through the October 27, 2026 compliance snapshot. Parcel-model layer 1 documents a separate August 28, 2026 compliance snapshot. The app reads both live and reports the municipality's submission date when present. Positive-area intersections above the parcel sliver threshold are shown; the atlas cannot confirm zoning outside its published districts. A compliance-model unit count is shown only for one district covering at least 98% of the selected parcel, an exact MassGIS `LOC_ID`, consistent city and district codes, and at least 98% overlapping geometry in both directions. The source's final modeled capacity (`F_L_M__`) is a total for compliance modeling. It is separate from zoning approval, proposed units and gross condo sellout.

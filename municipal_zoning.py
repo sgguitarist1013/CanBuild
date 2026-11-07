@@ -28,7 +28,7 @@ REGISTRY = {
     "CAMBRIDGE": {"priority": 1, "reason": "Multifamily and inclusionary housing capacity", "status": "District connector and C-1 conceptual rules", "map_url": "https://www.cambridgema.gov/gis/gisdatadictionary/cdd/cdd_zoningdistricts", "code_url": "https://www.cambridgema.gov/cdd/zoninganddevelopment/zoning/ordinance"},
     "SOMERVILLE": {"priority": 1, "reason": "Building type, density, and mixed-use redevelopment", "status": "Published June 2025 parcel zoning and official district-rule links; later amendments require review", "map_url": "https://map.viewprogis.com/ecp/somerville-test?widget=9efa8bb5-3de1-4ff7-86b1-f698d0d6fb0d", "code_url": "https://online.encodeplus.com/regs/somerville-ma/doc-viewer.aspx"},
     "BOSTON": {"priority": 1, "reason": "Subdistrict, overlays, and redevelopment capacity", "status": "Municipal subdistrict GIS connector; project rules require review", "map_url": "https://www.bostonplans.org/zoning/zoning-viewer", "code_url": "https://www.bostonplans.org/zoning/zoning-code"},
-    "WATERTOWN": {"priority": 2, "reason": "Corridor and mixed-use redevelopment", "status": "Queued for municipal source verification", "map_url": "https://www.watertown-ma.gov/zoning", "code_url": "https://ecode360.com/36825722"},
+    "WATERTOWN": {"priority": 2, "reason": "Corridor and mixed-use redevelopment", "status": "Watertown Square overlay rules linked to state parcel screening; citywide base districts pending", "map_url": "https://www.watertown-ma.gov/zoning", "code_url": "https://ecode360.com/36825722"},
     "EVERETT": {"priority": 2, "reason": "Commercial Triangle and Lower Broadway redevelopment", "status": "Historical city zoning map available (July 2019); current district requires confirmation", "map_url": "https://www.arcgis.com/home/item.html?id=53ba373249404bae80dbb1e5366bd9b5", "code_url": "https://cityofeverett.com/city-hall/departments/planning-development/", "historical_zoning_only": True},
     "CHELSEA": {"priority": 2, "reason": "Density and conversion opportunities", "status": "City GIS snapshot from March 2023; confirm current base zoning and overlays", "map_url": "https://www.arcgis.com/home/item.html?id=ba933034c3eb41ebad0d14ba0c6ea3b1", "code_url": "https://library.municode.com/ma/chelsea/codes/code_of_ordinances"},
     "REVERE": {"priority": 2, "reason": "Transit and corridor redevelopment", "status": "Queued for municipal source verification", "map_url": "https://www.revere.org/gis", "code_url": "https://ecode360.com/RE6867"},
@@ -268,6 +268,46 @@ async def lookup(client, city, parcel_geometry, latitude, parcel):
         "review": reference_review(district, parcel) if city == "CHICOPEE" else None}
 
 
+def watertown_overlay_review(districts):
+    """Attach reviewed code references to the city's named 3A subdistricts."""
+    rows = [re.fullmatch(r"314(WSQ[123])_TODO(_Active_Frontage)?", row["code"]) for row in districts]
+    matched = [row for row in rows if row]
+    if not matched:
+        return None
+    active = any(row.group(2) for row in matched)
+    standards = {
+        "WSQ1": ("3+", 53, 59, 15),
+        "WSQ2": ("4+", 66, 72, 10),
+        "WSQ3": ("5+", 82, 88, 5),
+    }
+    references = []
+    for district in sorted({row.group(1) for row in matched}):
+        stories, flat, pitched, open_space = standards[district]
+        references.append({
+            "district": district, "stories": stories, "flat_roof_ft": flat,
+            "pitched_roof_ft": pitched, "minimum_open_space_pct": open_space,
+        })
+    return {
+        "title": "Watertown Square multifamily overlay review",
+        "summary": "Section 5.09 allows qualifying multifamily and mixed-use development by right, subject to site plan review and applicable design and affordability requirements.",
+        "active_frontage_mapped": active,
+        "next_step": (
+            "Ask Watertown Planning which frontage must carry ground-floor active use, how the overlay applies to the full lot, and which dimensional and affordability rules govern the proposal."
+            if active else
+            "Ask Watertown Planning to confirm the current overlay boundary, frontage designations, roof form, lot dimensions and affordability requirements."
+        ),
+        "limitations": "Section 5.08 table values are district references. A plus story is subject to roof and step-back rules. Section 5.09 generally limits the overlay to the mapped portion unless the zoning officer determines more than half the lot is in it. Verify current maps and amendments before estimating units.",
+        "district_references": references,
+        "sources": [
+            {"name": "§ 5.09 Transit Oriented Development Overlay", "url": "https://ecode360.com/37104096"},
+            {"name": "§ 5.08 Watertown Square dimensional and design rules", "url": "https://ecode360.com/37104064"},
+            {"name": "§ 5.07 Affordable housing", "url": "https://ecode360.com/37104007"},
+            {"name": "§ 9.03 Site plan review", "url": "https://ecode360.com/37103499"},
+            {"name": "Watertown zoning amendments", "url": "https://watertown-ma.gov/current-zoning-amendments"},
+        ],
+    }
+
+
 async def multifamily_screen(client, city, polygon, latitude, loc_id):
     """Keep the state compliance model separate from base zoning and permitted yield."""
     city = city.upper()
@@ -308,6 +348,10 @@ async def multifamily_screen(client, city, polygon, latitude, loc_id):
             "district_cap_reported": attrs.get("DU_CAP"),
         })
     result["status"] = "Mapped Section 3A district intersection"
+    if city == "WATERTOWN":
+        review = watertown_overlay_review(result["districts"])
+        if review:
+            result["local_rule_review"] = review
     district = result["districts"][0]
     # Withhold the model if the parcel spans multiple districts, has shifted, or lacks an exact ID.
     if len(by_code) != 1 or shares[district["code"]] < .98 or not re.fullmatch(r"[FM]_\d+_\d+", str(loc_id)):

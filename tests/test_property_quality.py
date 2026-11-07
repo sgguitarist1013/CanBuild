@@ -163,11 +163,11 @@ async def test_atlas_capacity_requires_full_district_and_exact_parcel(district_w
         where = request.url.params['where']
         assert "UPPER(MUNI) = 'WATERTOWN'" in where
         if request.url.path.endswith('/0/query'):
-            attrs = {'MUNI': 'Watertown', 'ZONECOD': 'TOD', 'ZONENAM': 'Transit district'}
+            attrs = {'MUNI': 'Watertown', 'ZONECOD': '314WSQ2_TODO', 'ZONENAM': 'Transit district'}
             geometry = box(0, 0, district_width, 100)
         else:
             assert "LOC_ID = 'M_100_200'" in where
-            attrs = {'MUNI': 'Watertown', 'ZONECOD': 'TOD', 'LOC_ID': atlas_id, 'F_L_M__': 24}
+            attrs = {'MUNI': 'Watertown', 'ZONECOD': '314WSQ2_TODO', 'LOC_ID': atlas_id, 'F_L_M__': 24}
             geometry = box(0, 0, 100, 100)
         return httpx.Response(200, json={'features': [
             {'attributes': attrs, 'geometry': {'rings': [list(geometry.exterior.coords)]}},
@@ -176,6 +176,7 @@ async def test_atlas_capacity_requires_full_district_and_exact_parcel(district_w
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         result = await multifamily_screen(client, 'Watertown', parcel, 42, 'M_100_200')
     assert result['districts'][0]['name'] == 'Transit district'
+    assert result['local_rule_review']['district_references'][0]['district'] == 'WSQ2'
     assert result['modeled_units'] == units
     assert len(paths) == (1 if district_width < 98 else 2)
 
@@ -216,3 +217,18 @@ def test_everett_repair_preserves_area_and_rejects_bow_tie():
     bow_tie = {'rings': [[(0, 0), (10, 10), (10, 0), (0, 10), (0, 0)]]}
     with pytest.raises(ValueError):
         esri_polygon(bow_tie, repair_ring=True)
+
+
+def test_watertown_overlay_references_keep_active_frontage_and_district_rules_separate():
+    from municipal_zoning import watertown_overlay_review
+    review = watertown_overlay_review([
+        {"code": "314WSQ2_TODO"},
+        {"code": "314WSQ2_TODO_Active_Frontage"},
+    ])
+    assert review["active_frontage_mapped"]
+    assert review["district_references"] == [{
+        "district": "WSQ2", "stories": "4+", "flat_roof_ft": 66,
+        "pitched_roof_ft": 72, "minimum_open_space_pct": 10,
+    }]
+    assert not watertown_overlay_review([{"code": "314WSQ3_TODO"}])["active_frontage_mapped"]
+    assert watertown_overlay_review([{"code": "314UNKNOWN"}]) is None
