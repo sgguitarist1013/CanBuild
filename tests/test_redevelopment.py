@@ -70,3 +70,19 @@ def test_city_assessor_sales_use_shared_parcel_and_keep_unit_bedrooms():
     assert [(c["address"], c["bedrooms_reported"]) for c in result["candidates"]] == [
         ("10 Example St Unit 1", 2), ("10 Example St Unit 3", 3),
     ]
+
+
+def test_finished_condos_expand_only_distance_to_third_distinct_project():
+    from redevelopment import matching_condos
+    base = {"living_area_sqft": 1050, "bedrooms_reported": 2, "bathrooms_reported": 2}
+    rows = [
+        dict(base, project_key="one", distance_miles=.1),
+        dict(base, project_key="one", distance_miles=.2),
+        dict(base, project_key="two", distance_miles=.3),
+        dict(base, project_key="bad-size", distance_miles=.4, living_area_sqft=1250),
+        dict(base, project_key="bad-bath", distance_miles=.4, bathrooms_reported=1),
+        dict(base, project_key="no-distance", distance_miles=None),
+        dict(base, project_key="three", distance_miles=.55),
+        dict(base, project_key="four", distance_miles=.7),
+    ]
+    assert [r["project_key"] for r in matching_condos(rows, 2, 2, 1050)] == ["one", "two", "three"]

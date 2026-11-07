@@ -255,3 +255,29 @@ def test_somerville_zoning_details_open_from_mobile_summary(page, app_url, prope
     expect(page.locator("#onDemandStatus")).to_contain_text("amendments still need review")
     expect(page.get_by_role("link", name="Dimensional regulations")).to_have_attribute("href", section)
     assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+
+
+def test_nr_buildout_and_size_matched_sales_are_visible_on_mobile(page, app_url, property_record):
+    from somerville import buildout
+
+    page.set_viewport_size({"width": 390, "height": 844})
+    building = {"use_description": "Multiple Houses on one parcel", "residential_area_sqft": 2722,
+                "bedrooms_reported": 5, "bathrooms_reported": 2, "year_built": 1910}
+    record = dict(property_record, address="9 GORHAM ST, SOMERVILLE, MA", zoning={"district": "NR"},
+                  existing_building=building, buildout_review=buildout(property_record["parcel"], building),
+                  sales_research={"candidates": [{"address": "9 JAY ST", "sale_price": 1430000,
+                      "comparison_area_sqft": 2945, "size_difference_pct": 8, "bedrooms_reported": 6,
+                      "bathrooms_reported": 3, "comparison_label": "Similar residential sale · different assessor class"}]})
+    page.route("**/api/property?*", lambda route: route.fulfill(json=record))
+    page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
+    page.goto(app_url)
+    page.get_by_role("combobox").fill("9 Gorham St, Somerville, MA")
+    page.get_by_role("button", name="Explore property").click()
+    expect(page.locator("#potentialAnswer")).to_contain_text("one to three")
+    expect(page.locator("#propertyFactsSummary")).to_contain_text("2,722 sq ft living area · 5 beds · 2 baths")
+    expect(page.locator("#salePreview")).to_contain_text("9 JAY ST sold for $1,430,000")
+    page.get_by_role("button", name="View buildout summary").click()
+    expect(page.locator("#buildoutChecks")).to_contain_text("nonconforming rights")
+    page.get_by_text("Comparable sales", exact=True).click()
+    expect(page.locator("#salesCandidates")).to_contain_text("+8% vs subject · 6 beds / 3 baths")
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")

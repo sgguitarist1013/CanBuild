@@ -47,6 +47,8 @@
 <p class="tag" id="zoneStatus"></p>
 <h3 id="potentialTitle">What can I do here?</h3>
 <p id="potentialAnswer" class="answer"></p>
+<p id="propertyFactsSummary" class="small muted" hidden></p>
+<p id="salePreview" class="small" hidden></p>
 <div class="grid estimate-summary" id="redevelopmentMetrics" hidden>
 <div class="metric"><small>Proposed units</small><strong id="autoUnits"></strong></div>
 <div class="metric"><small>Estimated project cost</small><strong id="autoCost"></strong></div>
@@ -65,6 +67,9 @@
 <div id="salesResearch"><p id="salesStatus" class="small muted"></p><div id="salesCandidates"></div><p id="salesLimits" class="small muted"></p></div>
 </details>
 <details class="card research-card" id="sourceDetails"><summary>Sources &amp; assumptions</summary><p class="muted small">Source dates and verification status</p><div class="links" id="links"></div>
+<details id="buildoutDetails" hidden><summary>Buildout summary</summary>
+<p id="buildoutScope" class="small"></p><ul id="buildoutChecks"></ul><div id="buildoutSources" class="links"></div>
+</details>
 <details id="districtDetails"><summary>District standards</summary>
 <div id="localZoning"><p id="zoningStatus" class="small muted"></p><div id="zoningStandards" class="details"></div><p id="zoningConditions" class="small muted"></p><div id="constraintChecks" class="details"></div><div id="multifamilyScreen" class="item hide"></div></div>
 <details id="onDemandZoning" class="hide"><summary>On-demand zoning research</summary><p id="onDemandStatus" class="muted small"></p><div id="onDemandSources" class="links"></div></details></details>
@@ -97,6 +102,7 @@ function renderOpportunity(d) {
   const historical=d.zoning?.historical_reference;
   const best=d.redevelopment?.best;
   const envelope=d.zoning_potential;
+  const buildout=d.buildout_review;
   const candidates=d.parcel_candidates?.length;
   const linkedStandards=d.zoning_review||d.zoning?.regulatory_links?.length||d.zoning?.reference_standards||
     d.on_demand_zoning_research?.sources?.some(source=>source.topics?.includes('dimensional standards'));
@@ -121,6 +127,10 @@ function renderOpportunity(d) {
     answer='The preliminary building envelope is '+fmt(envelope.gross_area_low_sqft)+'–'+fmt(envelope.gross_area_high_sqft)+' gross sq ft.';
     limit='A building program and cost inputs are needed for a financial estimate.';
     [action,target]=['View building envelope','envelopeDetails'];
+  } else if(buildout) {
+    answer=buildout.summary;
+    limit=buildout.limit;
+    [action,target]=['View buildout summary','buildoutDetails'];
   } else if(historical) {
     answer='CanBuild found a historical zoning district. Confirm the current district before estimating what can be built.';
     [action,target]=['View zoning sources','districtDetails'];
@@ -134,6 +144,38 @@ function renderOpportunity(d) {
     [action,target]=['View zoning sources','districtDetails'];
   }
 
+  const building=d.existing_building||{};
+  const facts=d.parcel?[
+    d.parcel.gis_area_sqft_approx?fmt(d.parcel.gis_area_sqft_approx)+' sq ft lot':null,
+    building.residential_area_sqft?fmt(building.residential_area_sqft)+' sq ft living area':null,
+    building.bedrooms_reported!=null?building.bedrooms_reported+' beds':null,
+    building.bathrooms_reported!=null?building.bathrooms_reported+' baths':null,
+  ].filter(Boolean):[];
+  $('propertyFactsSummary').textContent=facts.join(' · ');
+  $('propertyFactsSummary').hidden=!facts.length;
+  const sales=d.parcel&&d.sales_research?.candidates;
+  const sale=sales?.[0];
+  $('salePreview').hidden=!sale;
+  $('salePreview').textContent=sale?[
+    sales.length+' nearby sale reference'+(sales.length===1?'':'s'),
+    sale.address+' sold for $'+fmt(sale.sale_price),
+    sale.comparison_area_sqft?fmt(sale.comparison_area_sqft)+' sq ft':null,
+    sale.comparison_label||null,
+  ].filter(Boolean).join(' · '):'';
+  $('buildoutDetails').hidden=!buildout;
+  $('buildoutScope').textContent=buildout?[buildout.district_unit_range+'.',buildout.accessory_option].join(' '):'';
+  $('buildoutChecks').replaceChildren();
+  for(const check of buildout?.checks||[]){
+    const item=document.createElement('li');
+    item.textContent=check;
+    $('buildoutChecks').append(item);
+  }
+  $('buildoutSources').replaceChildren();
+  for(const source of buildout?.sources||[]){
+    const link=document.createElement('a');
+    link.href=source.url;link.target='_blank';link.rel='noopener noreferrer';link.textContent=source.name+' ↗';
+    $('buildoutSources').append(link);
+  }
   $('potentialAnswer').textContent=answer;
   $('potentialLimit').textContent=limit;
   $('potentialLimit').hidden=!limit;
@@ -194,7 +236,7 @@ function renderRedevelopment(d){
     const title=document.createElement('strong');
     const body=document.createElement('p');
     item.className='item';
-    title.textContent=row.bedrooms+' bedroom · '+fmt(row.area_sqft)+' sq ft each';
+    title.textContent=row.bedrooms+' bed / '+row.bathrooms_assumed+' bath · '+fmt(row.area_sqft)+' sq ft each';
     body.className='small muted';
     body.textContent=row.market_units+' market / '+row.restricted_units+' restricted · '+range(row.price_per_sqft_low,row.price_per_sqft_high)+'/sq ft · '+row.pricing_basis;
     item.append(title,body);
@@ -215,15 +257,17 @@ function renderRedevelopment(d){
     : 'The budget excludes acquisition and its financing. The remaining amount before land is '+range(best.surplus_low,best.surplus_high)+'.');
   if(best.restricted_units) paragraph('Restricted-unit proceeds credited: $0 until project-specific caps are verified.');
   for(const alt of screen.alternatives) paragraph(alt.name+': '+range(alt.surplus_low,alt.surplus_high)+(screen.acquisition_proxy?' modeled surplus.':' remaining before acquisition.'));
-  const references=screen.sale_references;
-  paragraph(references
-    ? (references.radius_miles?'Nearby recorded condo sales':'Cambridge-wide recorded condo sales')+' screened for a sale in the reported build year or the following year. Confirm first sale, price restrictions, condition, concessions and arm’s-length status.'+
-      (references.truncated?' The result set was incomplete, so city benchmarks were used.':'')
-    : 'Recorded sale references were unavailable. Pricing uses the Cambridge study’s submarket ranges.');
-  for(const comp of references?.candidates||[]){
-    const p=paragraph((comp.address||'Reported sale')+' · '+comp.sale_date+' · '+money(comp.sale_price)+' · '+fmt(comp.living_area_sqft)+' sq ft'+(comp.bedrooms_reported?' · '+comp.bedrooms_reported+' beds':'')+' · '+money(comp.price_per_living_sqft)+'/sq ft · built '+comp.year_built_reported+' · '+comp.record_reference+' ');
-    const a=document.createElement('a');
-    a.href=comp.source_url;a.target='_blank';a.rel='noopener noreferrer';a.textContent='Assessor source ↗';p.append(a);
+  paragraph('Finished-condo references match the modeled bedroom and bathroom counts and are within 15% of modeled living area. Start at 0.5 mile and widen within Cambridge only when fewer than three independent projects match. Recorded build and sale dates are screening proxies.');
+  for(const row of best.unit_mix){
+    const matches=row.sale_matches||[];
+    paragraph(row.bedrooms+' bed / '+row.bathrooms_assumed+' bath · '+matches.length+' matched project reference(s). '+
+      (matches.length<3?'Pricing uses the Cambridge study benchmark.':'Pricing uses these matched sales.'));
+    for(const comp of matches){
+      const p=paragraph(comp.address+' · '+comp.sale_date+' · '+money(comp.sale_price)+' · '+fmt(comp.living_area_sqft)+' sq ft · '+
+        Number(comp.distance_miles).toFixed(2)+' mi · built '+comp.year_built_reported+' · '+comp.record_reference+' ');
+      const a=document.createElement('a');
+      a.href=comp.source_url;a.target='_blank';a.rel='noopener noreferrer';a.textContent='Assessor source ↗';p.append(a);
+    }
   }
   for(const line of best.cost_lines){
     paragraph(line.name+': '+range(...[line.upside,line.downside].sort((a,b)=>(a??0)-(b??0))));
@@ -252,6 +296,8 @@ function render(d) {
   addFact('Assessor site address',d.parcel?.assessor_site_address);
   addFact('Property use',e.use_description);
   addFact('Dwelling-unit count',e.unit_count_status==='conflict'?'Unresolved: '+e.reported_units+' reported / '+e.use_classification_units+' from use classification':e.units??'Not reported');
+  addFact('Bedrooms · assessor reported',e.bedrooms_reported);
+  addFact('Bathrooms · assessor reported',e.bathrooms_reported);
   addFact('Year built',e.year_built);
   addFact('Stories',e.stories);
   addFact('Residential area',e.residential_area_sqft?fmt(e.residential_area_sqft)+' sq ft':null);
@@ -301,7 +347,31 @@ const sales=d.sales_research||{};
 $('salesStatus').textContent=(sales.status||'Sales research unavailable')+(sales.median_sale_price?' · Median reported sale $'+fmt(sales.median_sale_price):'')+'. '+(sales.method||'');
 $('salesLimits').textContent=(sales.limitations||'Candidate sales are not a valuation or a verified appraisal.')+(sales.truncated?' Source result limit reached; coverage is incomplete.':'');
 $('salesCandidates').replaceChildren();
-(sales.candidates||[]).forEach(c=>{const el=document.createElement('div');el.className='item';const title=document.createElement('strong');title.textContent=c.address||'Address unavailable';const note=document.createElement('p');note.className='small muted';const size=c.comparison_area_sqft??c.gross_area_sqft;const basis=c.comparison_area_basis||'assessor gross building area';const rate=c.price_per_comparison_sqft??c.price_per_gross_sqft;note.textContent=(c.sale_date||'Sale date unavailable')+' · $'+fmt(c.sale_price)+(c.distance_miles!=null?' · '+Number(c.distance_miles).toFixed(2)+' mi':'')+' · '+fmt(size)+' sq ft ('+basis+')'+(rate?' · $'+fmt(rate)+'/sq ft':'')+' · '+(c.use_description||'Use unreported')+' · Parcel '+(c.parcel_number||'unreported')+(c.record_reference?' · '+c.record_reference:'')+(c.arm_length_status?' · '+c.arm_length_status:'');const a=document.createElement('a');a.href=c.source_url||sales.source_url||'#';a.target='_blank';a.rel='noopener noreferrer';a.textContent=c.source_name||'Official assessor sales source';el.append(title,note,a);$('salesCandidates').append(el)});
+for(const c of sales.candidates||[]){
+  const el=document.createElement('div');
+  el.className='item';
+  const title=document.createElement('strong');
+  title.textContent=c.address||'Address unavailable';
+  const note=document.createElement('p');
+  note.className='small muted';
+  const size=c.comparison_area_sqft??c.gross_area_sqft;
+  const basis=c.comparison_area_basis||'assessor gross building area';
+  const rate=c.price_per_comparison_sqft??c.price_per_gross_sqft;
+  note.textContent=[
+    c.sale_date||'Sale date unavailable','$'+fmt(c.sale_price),
+    c.distance_miles!=null?Number(c.distance_miles).toFixed(2)+' mi':null,
+    size!=null?fmt(size)+' sq ft ('+basis+')':null,
+    c.size_difference_pct!=null?(c.size_difference_pct>0?'+':'')+c.size_difference_pct+'% vs subject':null,
+    c.bedrooms_reported!=null?c.bedrooms_reported+' beds / '+c.bathrooms_reported+' baths':null,
+    rate?'$'+fmt(rate)+'/sq ft':null,c.use_description,c.comparison_label,
+    c.parcel_number?'Parcel '+c.parcel_number:null,c.record_reference,c.arm_length_status,
+  ].filter(Boolean).join(' · ');
+  const link=document.createElement('a');
+  link.href=c.source_url||sales.source_url||'#';link.target='_blank';link.rel='noopener noreferrer';
+  link.textContent=c.source_name||'Official assessor sales source';
+  el.append(title,note,link);
+  $('salesCandidates').append(el);
+}
 const recs=d.recommendations||[];$('recommendationDetails').hidden=!recs.length;$('recommendations').replaceChildren();recs.forEach(r=>{const el=document.createElement('div');el.className='item';const t=document.createElement('strong');t.textContent=r.title;const p=document.createElement('p');p.className='small muted';p.textContent=r.reason;const n=document.createElement('p');n.className='small';n.textContent=r.next_step;el.append(t,p,n);$('recommendations').append(el)});
 renderLocalZoning(d);
 renderCondoProgram(d);
