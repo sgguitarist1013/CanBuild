@@ -58,6 +58,8 @@ ARLINGTON = "https://services2.arcgis.com/s1Sh73K7qtP9JdrG/arcgis/rest/services/
 NORTHAMPTON = "https://services3.arcgis.com/rXBMAZhnkewHZIaE/arcgis/rest/services/Northampton_Zoning_and_Overlays_WFL2/FeatureServer"
 NEWTON = "https://gisweb.newtonma.gov/server/rest/services/Data/MapServer"
 WORCESTER = "https://services1.arcgis.com/j8dqo2DJE7mVUBU1/arcgis/rest/services"
+LYNN = "https://services8.arcgis.com/vFKGBS59j3zLGs8e/arcgis/rest/services/Lynn_s_Zoning_Map_251209_WFL1/FeatureServer"
+SPRINGFIELD = "https://maps.springfield-ma.gov/arcgis/rest/services/WebGIS/WebGISDynamicMap/MapServer"
 STOW = "https://services6.arcgis.com/bYxJFmZwD1DSkFy9/arcgis/rest/services"
 NMCOG = "https://services2.arcgis.com/8sfNXBvIUURUO8wz/arcgis/rest/services/NMCOG_Zoning_Districts_v20230106/FeatureServer/131"
 NMCOG_TOWNS = ("BILLERICA", "CHELMSFORD", "DRACUT", "DUNSTABLE", "LOWELL", "PEPPERELL", "TEWKSBURY", "TYNGSBOROUGH", "WESTFORD")
@@ -94,6 +96,30 @@ SNAPSHOT_CONNECTORS = {
         "code_url": "https://www.worcesterma.gov/planning-regulatory/zoning-ordinance-map",
         "priority": 2, "reason": "Downtown housing and adaptive reuse",
         "status": "City GIS base districts and overlays; current ordinance and amendments require confirmation",
+    },
+    "LYNN": {
+        "base": LYNN + "/11", "field": "ZONE", "description_field": None,
+        "updated": "2025-12-17", "amendments_through": "2025-12-09",
+        "screens": [
+            ("Mapped ground-floor commercial requirements", LYNN + "/9", None),
+            ("Mapped required thoroughfares", LYNN + "/10", None),
+        ],
+        "map_url": "https://cityoflynn.maps.arcgis.com/apps/instant/basic/index.html?appid=046e581adf6c4a93bbb4e997497df453",
+        "code_url": "https://www.lynnma.gov/city_government/departments/isd/zoning",
+        "priority": 2, "reason": "Downtown mixed-use redevelopment and transit",
+        "status": "City GIS zoning snapshot through December 9, 2025; later amendments and project requirements pending",
+    },
+    "SPRINGFIELD": {
+        "base": SPRINGFIELD + "/31", "field": "ZONING", "description_field": "ZONE_NAME",
+        "updated": None, "split_layer": SPRINGFIELD + "/32",
+        "screens": [
+            ("Springfield zoning overlays", SPRINGFIELD + "/30", "NAME"),
+            ("Springfield split zoning", SPRINGFIELD + "/32", "ZONE_NAME"),
+        ],
+        "map_url": "https://maps.springfield-ma.gov/gis/",
+        "code_url": "https://www.springfield-ma.gov/planning/planning/zoning-ordinances",
+        "priority": 2, "reason": "Downtown infill and mixed-use redevelopment",
+        "status": "City GIS base districts, overlays and split-zone screening; project rules pending",
     },
     "STOW": {
         "base": STOW + "/Base_Zoning_Districts/FeatureServer/0", "field": "Zone", "description_field": "Name",
@@ -366,6 +392,9 @@ async def lookup(client, city, parcel_geometry, latitude, parcel):
         hits = [row.get('attributes') or {} for row in rows]
         constraints.append({"name": name, "status": "unavailable" if failure else "mapped intersection" if hits else "no mapped intersection",
             "labels": list(dict.fromkeys(str(a.get(label)) for a in hits if label and a.get(label))), "source_url": url, "note": "Server-side parcel screening includes boundary touches. Absence of a mapped feature is not regulatory clearance."})
+        if snapshot and url == snapshot.get("split_layer") and (failure or hits):
+            district = None
+            error = "Split zoning screen unavailable; base district withheld" if failure else "Parcel intersects mapped split zoning; single district withheld"
         if city == "REVERE":
             codes = dict.fromkeys(a.get("zonetype") for a in hits)
             constraints[-1]["rule_references"] = [
@@ -385,8 +414,11 @@ async def lookup(client, city, parcel_geometry, latitude, parcel):
             if snapshot.get("historical_zoning_only"):
                 zoning["historical_reference"] = True
                 zoning["snapshot_note"] = snapshot["status"] + "."
+            if snapshot.get("amendments_through"):
+                zoning["amendment_date_reported"] = snapshot["amendments_through"]
+                zoning["snapshot_note"] = f"City viewer reports amendments through {snapshot['amendments_through']}. Confirm later changes and project requirements."
             if snapshot.get("code_url"):
-                zoning["regulatory_links"] = [{"name": f"{city.title()} zoning ordinance", "url": snapshot["code_url"]}]
+                zoning["regulatory_links"] = [{"name": f"{city.title()} zoning resources", "url": snapshot["code_url"]}]
         if city == 'BOSTON':
             zoning['reference_standards'] = {label: attrs[key] for label, key in (
                 ('Maximum FAR', 'Max_FAR'), ('Maximum height', 'Max_Height'), ('Front setback', 'Front_Setback'),

@@ -303,3 +303,28 @@ async def test_newton_distant_corrupt_ring_does_not_block_selected_parcel():
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         result = await lookup(client, "Newton", parcel, 42, {})
     assert result["zoning"]["district"] == "BU2/VC2"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("split_status", ["clear", "intersection", "unavailable"])
+async def test_springfield_single_district_requires_split_zone_screen(split_status):
+    parcel = to_ground(box(0, 0, 100, 100), 42)
+
+    def handler(request):
+        if request.url.path.endswith("/31/query"):
+            rows = [{"attributes": {"ZONING": "B1", "ZONE_NAME": "Business A"},
+                     "geometry": {"rings": [list(box(0, 0, 100, 100).exterior.coords)]}}]
+        elif request.url.path.endswith("/32/query") and split_status == "unavailable":
+            return httpx.Response(503)
+        elif request.url.path.endswith("/32/query") and split_status == "intersection":
+            rows = [{"attributes": {"ZONE_NAME": "Residence B"}}]
+        else:
+            rows = []
+        return httpx.Response(200, json={"features": rows})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await lookup(client, "Springfield", parcel, 42, {})
+    assert (result["zoning"] or {}).get("district") == ("B1" if split_status == "clear" else None)
+    assert result["constraints"][1]["status"] == {
+        "clear": "no mapped intersection", "intersection": "mapped intersection", "unavailable": "unavailable",
+    }[split_status]
