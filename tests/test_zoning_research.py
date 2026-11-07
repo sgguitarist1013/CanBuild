@@ -110,3 +110,15 @@ def test_unavailable_ordinance_retains_registered_link(monkeypatch):
     assert report["candidates"] == []
     assert report["sources"][0]["url"] == code
     assert report["sources"][0]["digest"] is None
+
+
+def test_somerville_ordinance_uses_fetchable_district_sections():
+    viewer = "https://online.encodeplus.com/regs/somerville-ma/doc-viewer.aspx"
+    links = [{"url": viewer + "#secid-540"}, {"url": viewer + "#unexpected"},
+             {"url": "https://example.org/regs/somerville-ma/doc-viewer.aspx#secid-540"}]
+    urls = zr.somerville_section_urls(links)
+    assert urls == ("https://online.encodeplus.com/regs/somerville-ma/doc-view.aspx?pn=0&ajax=0&secid=540",)
+    html = b"<title>Somerville Zoning Ordinance</title><div role='main'><h4>Development standards</h4><p>Maximum building height depends on the applicable building type.</p></div>"
+    doc = zr.parse_document(html, "text/html", urls[0], "SOMERVILLE")
+    assert "Development standards" in doc["title"]
+    assert zr.evidence([doc], "MR6")

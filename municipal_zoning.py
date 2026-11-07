@@ -7,6 +7,8 @@ from pathlib import Path
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
+from parcel_engine import requested_house_number, same_street
+
 import httpx
 from shapely import make_valid
 from shapely.errors import GEOSException
@@ -356,6 +358,60 @@ def reference_review(district, parcel):
         "next_step": "Obtain a survey showing the proposed addition, front/side/rear lot lines and current setbacks. Ask Chicopee Building Department to review §§ 275-22 and 275-37 and confirm any later amendments.",
         "limitations": "Single-family principal-building reference only. No permit, legal nonconformity, frontage, overlay, structural or amendment determination. No buildable area is calculated."}
 
+
+
+def somerville_street(address):
+    """Use the requested street even when Census substitutes another street type."""
+    match = re.fullmatch(r"(.+?)(?:,\s*|\s+)Somerville(?:,\s*|\s+)(?:MA|Massachusetts)(?:\s+\d{5}(?:-\d{4})?)?", address.strip(), re.I)
+    if not match:
+        return None
+    return re.split(r"\s+(?:#|unit\s+|apt\.?\s+)|,", match[1], maxsplit=1, flags=re.I)[0].strip()
+
+
+async def somerville_parcel(client, address):
+    """Match one parcel to an exact city GIS street address, without assuming tax ownership."""
+    street_line = somerville_street(address)
+    number = requested_house_number(street_line)
+    if not number:
+        return None
+    street = street_line.split(maxsplit=1)[1]
+    pairs = [("AddNum", "Street"), ("AddNum2", "Street2"), ("AddNum3", "Street3")]
+    url = SOMERVILLE + "/ZoningByParcel/MapServer/0"
+    params = {
+        "f": "json", "where": " OR ".join(f"{field} = '{number}'" for field, _ in pairs),
+        "outFields": "MBL,PolyType,AddNum,Street,AddNum2,Street2,AddNum3,Street3",
+        "outSR": 3857, "returnGeometry": "true", "resultRecordCount": 250,
+    }
+    response = await client.get(url + "/query", params=params, timeout=httpx.Timeout(10, connect=4))
+    response.raise_for_status()
+    data = response.json()
+    if data.get("error") or data.get("exceededTransferLimit") or not isinstance(data.get("features"), list):
+        return None
+    matches = {}
+    for feature in data["features"]:
+        attrs = feature.get("attributes") or {}
+        parcel_id = attrs.get("MBL")
+        if attrs.get("PolyType") != "PARCEL" or not parcel_id:
+            continue
+        for house_field, street_field in pairs:
+            if str(attrs.get(house_field)).strip().upper() != number or not same_street(attrs.get(street_field), street):
+                continue
+            geometry = esri_polygon(feature.get("geometry"))
+            if not geometry.is_empty:
+                matches.setdefault(parcel_id, (attrs[street_field], []))[1].append(geometry)
+            break
+    if len(matches) != 1:
+        return None
+    parcel_id, (street, geometries) = next(iter(matches.items()))
+    geometry = unary_union(geometries)
+    point = geometry.representative_point()
+    lat = math.degrees(math.atan(math.sinh(point.y / 6378137)))
+    lon = math.degrees(point.x / 6378137)
+    polygon = to_ground(geometry, lat)
+    area = round(polygon.area)
+    parcel = {"parcel_number": parcel_id, "gis_area_sqft_approx": area, "polygon_area_sqft_approx": area,
+              "area_source": "Somerville municipal GIS polygon, approximate", "recorded_owners": []}
+    return parcel, polygon, f"{number} {street}, Somerville, MA", lon, lat, url
 
 async def lookup(client, city, parcel_geometry, latitude, parcel):
     city = str(city).upper()

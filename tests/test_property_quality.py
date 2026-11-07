@@ -333,3 +333,25 @@ async def test_springfield_single_district_requires_split_zone_screen(split_stat
     assert result["constraints"][1]["status"] == {
         "clear": "no mapped intersection", "intersection": "mapped intersection", "unavailable": "unavailable",
     }[split_status]
+
+
+@pytest.mark.anyio
+async def test_somerville_municipal_fallback_uses_requested_street():
+    from municipal_zoning import somerville_parcel
+
+    geometry = {"rings": [list(box(-7917000, 5215000, -7916980, 5215020).exterior.coords)]}
+
+    def handler(request):
+        assert request.url.host == "cos-geoportal.somervillema.gov"
+        assert "AddNum = '50'" in request.url.params["where"]
+        return httpx.Response(200, json={"features": [
+            {"attributes": {"MBL": "wrong", "PolyType": "PARCEL", "AddNum": "50", "Street": "PROSPECT PL"}, "geometry": geometry},
+            {"attributes": {"MBL": "82-D-26A", "PolyType": "PARCEL", "AddNum2": "50", "Street2": "PROSPECT ST"}, "geometry": geometry},
+        ]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        parcel, polygon, address, lon, lat, _ = await somerville_parcel(client, "50 Prospect Street, Somerville, MA")
+    assert address == "50 PROSPECT ST, Somerville, MA"
+    assert parcel["parcel_number"] == "82-D-26A"
+    assert parcel["recorded_owners"] == []
+    assert polygon.area > 0 and -72 < lon < -71 and 42 < lat < 43
