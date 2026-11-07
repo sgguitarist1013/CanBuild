@@ -47,3 +47,41 @@ def test_registry_queue_deduplicates_and_resolves_seeded_matches(tmp_path):
     registry.enqueue(connect, "Somerville", leads)
     pending = registry.review_queue(connect, 40)
     assert [row["address"] for row in pending] == ["1 Unchecked St"]
+
+
+def test_property_endpoint_combines_local_zoning_research_and_registry_check(monkeypatch):
+    from unittest.mock import AsyncMock
+    import httpx
+    from fastapi.testclient import TestClient
+    import app as server
+
+    response = httpx.Response(200, request=httpx.Request("GET", server.CENSUS), json={
+        "result": {"addressMatches": [{
+            "matchedAddress": "9 GORHAM ST, SOMERVILLE, MA",
+            "addressComponents": {"city": "Somerville", "state": "MA"},
+            "coordinates": {"x": -71.125, "y": 42.4},
+        }]},
+    })
+
+    class CensusClient:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        async def get(self, url, **kwargs):
+            assert url == server.CENSUS
+            return response
+
+    parcel = {"parcel_number": "17-A-6", "assessor_site_address": "9 GORHAM ST",
+              "last_transfer": {"book": "80505", "page": "0062", "price_reported": 1650000}}
+    monkeypatch.setattr(server.httpx, "AsyncClient", CensusClient)
+    monkeypatch.setattr(server, "resolve_parcel", AsyncMock(return_value=(parcel, {"use_description": "Multiple houses on one parcel"}, None)))
+    monkeypatch.setattr(server.municipal_zoning, "somerville_parcel", AsyncMock(return_value=None))
+    monkeypatch.setattr(server.municipal_zoning, "lookup", AsyncMock(return_value={"zoning": None, "review": None, "constraints": []}))
+    monkeypatch.setattr(server.municipal_zoning, "multifamily_screen", AsyncMock(return_value={}))
+    monkeypatch.setattr(server.somerville, "subject_building", AsyncMock(return_value=None))
+    monkeypatch.setattr(server.somerville, "sales", AsyncMock(return_value={"candidates": []}))
+    monkeypatch.setattr(server, "search_zoning_sources", AsyncMock(return_value={"status": "Sources located"}))
+    response = TestClient(server.app).get("/api/property", params={"address": "9 Gorham St, Somerville, MA"})
+    assert response.status_code == 200
+    assert response.json()["on_demand_zoning_research"]["status"] == "Sources located"
+    assert response.json()["parcel"]["deed_verification"]["status"] == "verified"

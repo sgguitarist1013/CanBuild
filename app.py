@@ -29,7 +29,7 @@ import registry
 configure_monitoring()
 
 ROOT=Path(__file__).parent
-VERSION = "0.16.6"
+VERSION = "0.16.7"
 app=FastAPI(title="CanBuild Massachusetts",version=VERSION)
 app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
 CENSUS="https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress"
@@ -321,9 +321,9 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
             city = parts.get("city") or ""
             matched_zoning = result.get("zoning") or {}
             district = None if matched_zoning.get("historical_reference") else matched_zoning.get("district")
-            registry = municipal_zoning.REGISTRY.get(city.upper(), {})
+            zoning_sources = municipal_zoning.REGISTRY.get(city.upper(), {})
             sections = zoning_research.somerville_section_urls(matched_zoning.get("regulatory_links", ())) if city.upper() == "SOMERVILLE" else ()
-            result["on_demand_zoning_research"] = await search_zoning_sources(city, district, registry.get("code_url"), sections)
+            result["on_demand_zoning_research"] = await search_zoning_sources(city, district, zoning_sources.get("code_url"), sections)
         result["multifamily_screen"] = await atlas_task
         if sales_task:
             try:
