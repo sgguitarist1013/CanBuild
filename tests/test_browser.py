@@ -307,3 +307,35 @@ def test_verified_deed_and_pending_lead_stay_visibly_distinct(page, app_url, pro
     page.get_by_text("Sale leads awaiting registry confirmation", exact=True).click()
     expect(page.locator("#pendingRegistryList")).to_contain_text("Book 123, page 456")
     expect(page.locator("#pendingRegistryList")).to_contain_text("Awaiting MassLandRecords confirmation")
+
+
+def test_permit_history_loads_only_when_opened_and_keeps_city_links(page, app_url, property_record):
+    coverage = {"source_url": "https://data.cambridgema.gov/d/3wsm-e5jx",
+                "official_lookup_url": "https://www.cambridgema.gov/inspection/codesandmaps/recordsandarchives",
+                "coverage_note": "City permit dataset"}
+    property_record["coverage"] = {"municipality": "CAMBRIDGE"}
+    property_record["permit_coverage"] = coverage
+    calls = []
+
+    def respond(route):
+        calls.append(route.request.url)
+        route.fulfill(json={**coverage, "status": "found", "match_note": "Matched by map and lot.",
+                            "records": [{"permit_id": "138721", "permit_type": "Roof", "issued_on": "2021-08-23",
+                                         "reported_status": "Complete", "source_url": coverage["source_url"]}]})
+
+    page.route("**/api/property?*", lambda route: route.fulfill(json=property_record))
+    page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
+    page.route("**/api/permits?*", respond)
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.goto(app_url)
+    page.get_by_role("combobox").fill("95 Magazine St, Cambridge, MA")
+    page.get_by_role("button", name="Explore property").click()
+    page.get_by_text("Property records", exact=True).click()
+    assert not calls
+    page.get_by_text("Building permits and applications", exact=True).click()
+    expect(page.locator("#permitRecords")).to_contain_text("138721")
+    expect(page.get_by_role("link", name="City permit lookup")).to_have_attribute("href", coverage["official_lookup_url"])
+    page.get_by_text("Building permits and applications", exact=True).click()
+    page.get_by_text("Building permits and applications", exact=True).click()
+    expect(page.locator("#permitRecords")).to_contain_text("Issued 2021-08-23")
+    assert len(calls) == 1

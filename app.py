@@ -25,11 +25,12 @@ from redevelopment import analyze_redevelopment
 import zoning_research
 import somerville
 import registry
+import permit_research
 
 configure_monitoring()
 
 ROOT=Path(__file__).parent
-VERSION = "0.16.7"
+VERSION = "0.16.8"
 app=FastAPI(title="CanBuild Massachusetts",version=VERSION)
 app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
 CENSUS="https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress"
@@ -172,6 +173,17 @@ async def suggest(q:str=Query(min_length=2,max_length=150)):
             return {"configured":True,"provider":"ArcGIS","suggestions":matching_suggestions(vals,query)}
     except (httpx.HTTPError,ValueError):
         return {"configured":False,"suggestions":[]}
+@app.get("/api/permits")
+async def permit_history(municipality: str = Query(min_length=2, max_length=80, pattern=r"^[A-Za-z .'-]+$"),
+                         address: str = Query(min_length=3, max_length=240),
+                         parcel: str = Query(default="", max_length=40)):
+    try:
+        async with httpx.AsyncClient() as client:
+            return await permit_research.search(client, municipality, address, parcel)
+    except (httpx.HTTPError, ValueError, TypeError):
+        return {**(permit_research.coverage(municipality) or {}), "status": "unavailable", "records": []}
+
+
 @app.get("/api/property")
 async def property_lookup(address:str=Query(min_length=5,max_length=240), boston_pid:str|None=Query(default=None,pattern=r"^\d{10}$")):
     address=normalize_address(re.sub(r",\s*(?:USA|United States(?: of America)?)\s*$", "", address, flags=re.I))
@@ -338,6 +350,8 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
     district = zoning.get('district')
     city=parts.get("city") or ""
     result['coverage']=municipal_zoning.coverage(city)
+    if result.get('parcel'):
+        result['permit_coverage']=permit_research.coverage(city)
     local_sources=municipal_zoning.REGISTRY.get(city.upper(),{})
     for label,key in (('Municipal zoning map','map_url'),('Municipal planning department' if historical or local_sources.get('historical_zoning_only') else 'Municipal zoning ordinance','code_url')):
         if local_sources.get(key):
