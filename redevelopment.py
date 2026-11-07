@@ -41,8 +41,12 @@ def reserve_affordable(counts, required_area):
 
 def pricing(references):
     rates = []
-    for area, benchmark in zip(UNIT_SIZES, PRICE_BANDS):
-        rows = [row for row in references if .8 * area <= row["living_area_sqft"] <= 1.2 * area]
+    for beds, (area, benchmark) in enumerate(zip(UNIT_SIZES, PRICE_BANDS), 1):
+        rows = [
+            row for row in references
+            if .8 * area <= row["living_area_sqft"] <= 1.2 * area
+            and row.get("bedrooms_reported") in (None, beds)
+        ]
         # Only one observation per parcel/development proxy. Size is a comparison
         # filter, not a verified bedroom count or project identity.
         projects = {}
@@ -52,7 +56,8 @@ def pricing(references):
                 projects.setdefault(key, row["price_per_living_sqft"])
         if len(projects) >= 3:
             low, _, high = quantiles(list(projects.values()), n=4, method="inclusive")
-            rates.append((round(low), round(high), "Nearby recorded sales · similar living area", len(projects)))
+            scope = rows[0].get("market_scope", "Nearby recorded sales")
+            rates.append((round(low), round(high), scope + " · similar living area", len(projects)))
         else:
             rates.append((*benchmark, "Cambridge 2026 study · citywide submarket range", len(projects)))
     return rates

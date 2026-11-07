@@ -34,3 +34,39 @@ def test_new_build_sales_screen_excludes_repeat_projects_and_later_resales():
     ]
     result = reference_summary(rows, "https://example.org", new_build_only=True, radius_miles=3)
     assert [r["record_reference"] for r in result["candidates"]] == ["A"]
+
+
+def test_city_assessor_sales_use_shared_parcel_and_keep_unit_bedrooms():
+    import asyncio
+    from datetime import date
+
+    import httpx
+
+    from condo_analysis import cambridge_new_build_sales
+
+    row = {
+        "pid": "1001", "address": "10 Example St", "unit": "1", "gisid": "88-29",
+        "stateclasscode": "102", "saleprice": "1200000", "saledate": "2025-04-01T00:00:00",
+        "book_page": "83000/155", "condition_yearbuilt": "2025",
+        "interior_livingarea": "1120", "interior_bedrooms": "2",
+    }
+
+    def respond(request):
+        assert "stateclasscode = '102'" in request.url.params["$where"]
+        return httpx.Response(200, json=[
+            row,
+            dict(row, pid="1002", unit="2", book_page="83000/156"),
+            dict(row, pid="1003", unit="3", book_page="83000/157", interior_bedrooms="3"),
+            dict(row, pid="1004", gisid="88-30", book_page="83000/158", condition_yearbuilt="2023"),
+            dict(row, pid="1005", gisid="88-31", book_page="/"),
+        ])
+
+    async def load():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+            return await cambridge_new_build_sales(client, date(2026, 11, 7))
+
+    result = asyncio.run(load())
+    assert result["radius_miles"] is None
+    assert [(c["address"], c["bedrooms_reported"]) for c in result["candidates"]] == [
+        ("10 Example St Unit 1", 2), ("10 Example St Unit 3", 3),
+    ]

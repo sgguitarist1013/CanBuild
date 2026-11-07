@@ -15,7 +15,7 @@ import boston
 import ma_sales
 import municipal_zoning
 from data_quality import review_building
-from condo_analysis import CondoProgram, analyze_program, condo_sales
+from condo_analysis import CondoProgram, analyze_program, cambridge_new_build_sales, condo_sales
 from monitoring import configure_monitoring
 from redevelopment import analyze_redevelopment
 
@@ -269,9 +269,12 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
         references = None
         try:
             async with asyncio.timeout(13), httpx.AsyncClient(timeout=12, follow_redirects=True) as client:
-                coords = result["coordinates"]
-                references = await condo_sales(client, coords["lon"], coords["lat"], city,
-                    min_year_built=datetime.now().year - 4, radius_miles=3, new_build_only=True)
+                if city.upper() == "CAMBRIDGE":
+                    references = await cambridge_new_build_sales(client)
+                else:
+                    coords = result["coordinates"]
+                    references = await condo_sales(client, coords["lon"], coords["lat"], city,
+                        min_year_built=datetime.now().year - 4, radius_miles=3, new_build_only=True)
         except (TimeoutError, httpx.HTTPError, ValueError, TypeError):
             pass
         candidates = (references or {}).get("candidates", [])

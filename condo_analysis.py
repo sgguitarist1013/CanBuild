@@ -1,6 +1,7 @@
 """Explicit unit-mix scenarios and separately sourced condominium sale references."""
+import re
 from collections import Counter
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Annotated
 
@@ -9,6 +10,9 @@ from pydantic import BaseModel, Field, model_validator
 
 import boston
 import ma_sales
+
+CAMBRIDGE_ASSESSOR = "https://data.cambridgema.gov/d/waa7-ibdu"
+CAMBRIDGE_ASSESSOR_API = "https://data.cambridgema.gov/resource/waa7-ibdu.json"
 
 UnitCount = Annotated[int, Field(strict=True, ge=0, le=10000)]
 MoneyRate = Annotated[Decimal, Field(gt=0, le=10000, allow_inf_nan=False)]
@@ -78,7 +82,7 @@ def analyze_program(program):
         'limitations': 'Proposed unit counts are a user-defined building program, not an approved zoning capacity. Existing unit counts are observations supplied to the calculator. Gross sellout is before commissions, concessions, construction, financing, taxes and other costs; it is not profit. New-construction condition and inclusionary/affordable-housing compliance require separate verification.'}
 
 
-def reference_summary(candidates, source_url, truncated=False, min_year_built=None, *, new_build_only=False, radius_miles=1):
+def reference_summary(candidates, source_url, truncated=False, min_year_built=None, *, new_build_only=False, radius_miles=1, citywide=False):
     # A common recorded reference and price across multiple units can indicate a bundled deed.
     keys = [(c.get('record_reference'), c['sale_date'], c['sale_price']) for c in candidates]
     counts = Counter(key for key in keys if key[0])
@@ -92,9 +96,10 @@ def reference_summary(candidates, source_url, truncated=False, min_year_built=No
             if not c.get('project_key') or not c.get('record_reference') or not isinstance(year, (int, float)):
                 continue
             if 0 <= int(c['sale_date'][:4]) - year <= 1:
-                by_project.setdefault(c['project_key'], c)
+                key = (c['project_key'], c.get('bedrooms_reported')) if citywide else c['project_key']
+                by_project.setdefault(key, c)
         clean = list(by_project.values())
-    clean = sorted(clean, key=lambda c: c['sale_date'], reverse=True)[:10]
+    clean = sorted(clean, key=lambda c: c['sale_date'], reverse=True)[:30 if citywide else 10]
     rates = [c['price_per_living_sqft'] for c in clean]
     return {'status': f'{len(clean)} condominium sale reference(s)' if clean else 'No usable condominium sale references found',
         'candidates': clean, 'observed_price_per_sqft_low': min(rates) if len(rates) >= 3 else None,
@@ -103,7 +108,7 @@ def reference_summary(candidates, source_url, truncated=False, min_year_built=No
         'truncated': truncated, 'possible_bundled_records_excluded': len(candidates)-len([c for c,key in zip(candidates,keys) if not key[0] or counts[key]==1]),
         'min_year_built':min_year_built,
         'radius_miles': radius_miles, 'new_build_screen': new_build_only,
-        'method': f'Condominium records within approximately {radius_miles} mile(s), a sale reported within three years, and positive residential living area.'+(f' Reported year built is at least {min_year_built}.' if min_year_built else '')+' An observed min–max price/sq ft is shown only with at least three references.',
+        'method': ('Cambridge-wide assessor condominium records.' if citywide else f'Condominium records within approximately {radius_miles} mile(s).')+' Sale reported within three years and positive residential living area.'+(f' Reported year built is at least {min_year_built}.' if min_year_built else '')+' An observed min–max price/sq ft is shown only with at least three references.',
         'limitations': 'These are condominium sale references, not verified new-construction comps. Deed consideration, arm’s-length status, unit size, condition, parking, floor level, views and concessions need review before adopting a pricing assumption. An observed range is not a valuation.'}
 
 
@@ -115,6 +120,59 @@ def reference(attrs, price, sold, area, source_url):
         'record_reference':attrs.get('_record_reference'), 'source_url':source_url,
         'project_key':attrs.get('LOC_ID') or attrs.get('MAP_PAR_ID'),
         'new_construction_verified':False, 'arm_length_verified':False}
+
+
+async def cambridge_new_build_sales(client, today=None):
+    """Use the city assessor's condo records, including units without coordinates."""
+    today = today or date.today()
+    min_year = today.year - 4
+    cutoff = today - timedelta(days=1096)
+    response = await client.get(CAMBRIDGE_ASSESSOR_API, params={
+        "$select": "pid,address,unit,gisid,stateclasscode,saleprice,saledate,book_page,condition_yearbuilt,interior_livingarea,interior_bedrooms",
+        "$where": (
+            f"stateclasscode = '102' AND condition_yearbuilt between {min_year} and {today.year} "
+            f"AND saleprice >= 10000 AND saledate >= '{cutoff.isoformat()}T00:00:00'"
+        ),
+        "$order": "saledate DESC,pid",
+        "$limit": 251,
+    }, timeout=httpx.Timeout(8, connect=4))
+    response.raise_for_status()
+    records = response.json()
+    if not isinstance(records, list):
+        raise ValueError("Unexpected Cambridge assessor response")
+    rows = []
+    for row in records:
+        sold = boston.sale_date(row.get("saledate"))
+        book_page = re.fullmatch(r"([1-9][0-9]*)/([0-9]+)", row.get("book_page", "").strip())
+        if row.get("stateclasscode") != "102" or not sold or not cutoff <= sold <= today or not book_page:
+            continue
+        try:
+            price = int(row["saleprice"])
+            area = int(row["interior_livingarea"])
+            year = int(row["condition_yearbuilt"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if price < 10000 or area <= 0 or not min_year <= year <= today.year:
+            continue
+        address = row.get("address")
+        unit = row.get("unit")
+        project = row.get("gisid")
+        if not address or not project:
+            continue
+        attrs = {
+            "SITE_ADDR": f"{address} Unit {unit}" if unit else address,
+            "PROP_ID": row.get("pid"),
+            "LOC_ID": project,
+            "YEAR_BUILT": year,
+            "_record_reference": f"Book {book_page[1]}, page {book_page[2]}",
+        }
+        comp = reference(attrs, price, sold, area, CAMBRIDGE_ASSESSOR)
+        bedrooms = row.get("interior_bedrooms", "")
+        comp["bedrooms_reported"] = int(bedrooms) if bedrooms.isdecimal() else None
+        comp["market_scope"] = "Cambridge assessor · citywide"
+        rows.append(comp)
+    return reference_summary(rows, CAMBRIDGE_ASSESSOR, len(records) > 250, min_year,
+                             new_build_only=True, radius_miles=None, citywide=True)
 
 
 async def condo_sales(client, lon, lat, city, boston_pid=None, min_year_built=None, *, radius_miles=1, new_build_only=False):

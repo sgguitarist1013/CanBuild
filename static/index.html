@@ -119,11 +119,11 @@ function renderRedevelopment(d){
   for(const alt of screen.alternatives) paragraph(alt.name+': '+range(alt.surplus_low,alt.surplus_high)+(screen.acquisition_proxy?' modeled surplus.':' remaining before acquisition.'));
   const references=screen.sale_references;
   paragraph(references
-    ? 'Recorded nearby condo sales screened for a sale in the reported build year or the following year. First sale, condition, concessions and arm’s-length status require confirmation.'+
+    ? (references.radius_miles?'Nearby recorded condo sales':'Cambridge-wide recorded condo sales')+' screened for a sale in the reported build year or the following year. Confirm first sale, price restrictions, condition, concessions and arm’s-length status.'+
       (references.truncated?' The result set was incomplete, so city benchmarks were used.':'')
     : 'Recorded sale references were unavailable. Pricing uses the Cambridge study’s submarket ranges.');
   for(const comp of references?.candidates||[]){
-    const p=paragraph((comp.address||'Reported sale')+' · '+comp.sale_date+' · '+money(comp.sale_price)+' · '+fmt(comp.living_area_sqft)+' sq ft · '+money(comp.price_per_living_sqft)+'/sq ft · built '+comp.year_built_reported+' · '+comp.record_reference+' ');
+    const p=paragraph((comp.address||'Reported sale')+' · '+comp.sale_date+' · '+money(comp.sale_price)+' · '+fmt(comp.living_area_sqft)+' sq ft'+(comp.bedrooms_reported?' · '+comp.bedrooms_reported+' beds':'')+' · '+money(comp.price_per_living_sqft)+'/sq ft · built '+comp.year_built_reported+' · '+comp.record_reference+' ');
     const a=document.createElement('a');
     a.href=comp.source_url;a.target='_blank';a.rel='noopener noreferrer';a.textContent='Assessor source ↗';p.append(a);
   }
