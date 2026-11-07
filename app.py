@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from typing import Literal
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from parcel_engine import resolve_parcel, conceptual_massing, normalize_address
+from parcel_engine import resolve_parcel, conceptual_massing, normalize_address, same_street
 import boston
 import ma_sales
 import municipal_zoning
@@ -27,7 +27,7 @@ import zoning_research
 configure_monitoring()
 
 ROOT=Path(__file__).parent
-VERSION = "0.16.1"
+VERSION = "0.16.2"
 app=FastAPI(title="CanBuild Massachusetts",version=VERSION)
 app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
 CENSUS="https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress"
@@ -87,9 +87,9 @@ def decide_zoning_review(revision: int, decision: ZoningReviewDecision, authoriz
     return {"revision": revision, "decision": decision.decision}
 
 
-async def search_zoning_sources(city, district, registered_url):
+async def search_zoning_sources(city, district, registered_url, section_urls=()):
     try:
-        return await zoning_research.cache().search(city, district, registered_url)
+        return await zoning_research.cache().search(city, district, registered_url, section_urls)
     except (OSError, sqlite3.Error):
         return None
 
@@ -153,23 +153,43 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
     if not re.search(r"\b(MA|Massachusetts)\b",address,re.I): address=address.rstrip(", ") + ", MA"
     result={"query":address,"checked_at":now(),"parcel_candidates":[],"sales_research":{"status":"Sales connector not configured for this municipality","candidates":[]},"address":None,"coordinates":None,"parcel":None,"zoning":None,"existing_building":None,"zoning_potential":None,"recommendations":[],"constraints":[],"zoning_review":None,"verification":{"address":"unverified","parcel":"unverified","assessor":"not matched","zoning":"unverified","amendments":"not checked"},"warnings":[],"sources":[SOURCES[0].copy()]}
     async with httpx.AsyncClient(timeout=13,follow_redirects=True) as client:
+        somerville_street = municipal_zoning.somerville_street(address)
+        geocoding_failed = False
         try:
             resp=await client.get(CENSUS,params={"address":address,"benchmark":"Public_AR_Current","vintage":"Current_Current","format":"json"})
             resp.raise_for_status()
             matches=resp.json().get("result",{}).get("addressMatches",[])
-        except (httpx.HTTPError,ValueError):
-            raise HTTPException(503,"Census geocoding is temporarily unavailable.")
-        if not matches: raise HTTPException(404,"Address not matched. Check the street number and name.")
-        m=matches[0]; parts=m.get("addressComponents",{})
-        if parts.get("state","").upper()!="MA":
-            raise HTTPException(422,"CanBuild currently supports Massachusetts addresses.")
-        c=m.get("coordinates",{}); lon,lat=c.get("x"),c.get("y")
-        if not isinstance(lat,(int,float)) or not isinstance(lon,(int,float)): raise HTTPException(502,"Geocoder returned no coordinates.")
-        result["address"]=m.get("matchedAddress");result["coordinates"]={"lat":lat,"lon":lon}
-        result["verification"]["address"]="Census geocoded (not Google-confirmed)"
+        except (httpx.HTTPError, ValueError):
+            geocoding_failed = True
+            matches = []
+        if not matches and not somerville_street:
+            raise HTTPException(503 if geocoding_failed else 404,
+                "Census geocoding is temporarily unavailable." if geocoding_failed else
+                "Address not matched. Check the street number and name.")
+        m = matches[0] if matches else {}
+        parts = m.get("addressComponents") or {}
+        if parts and parts.get("state", "").upper() != "MA":
+            raise HTTPException(422, "CanBuild currently supports Massachusetts addresses.")
+        c = m.get("coordinates") or {}
+        lon, lat = c.get("x"), c.get("y")
+        geocoded = isinstance(lat, (int, float)) and isinstance(lon, (int, float))
+        if somerville_street:
+            matched_street = (m.get("matchedAddress") or "").split(",")[0].split(maxsplit=1)
+            requested_street = somerville_street.split(maxsplit=1)
+            geocoded = (geocoded and parts.get("city", "").upper() == "SOMERVILLE"
+                        and len(matched_street) == len(requested_street) == 2
+                        and same_street(matched_street[1], requested_street[1]))
+            if not geocoded:
+                parts = {"city": "Somerville", "state": "MA"}
+        elif not geocoded:
+            raise HTTPException(502, "Geocoder returned no coordinates.")
+        result["address"] = m.get("matchedAddress") if geocoded else address
+        if geocoded:
+            result["coordinates"] = {"lat": lat, "lon": lon}
+            result["verification"]["address"] = "Census geocoded (not Google-confirmed)"
         polygon=None
         try:
-            parcel,building,polygon=(None,None,None) if parts.get("city","").upper()=="BOSTON" else await resolve_parcel(client,lon,lat,parts,result["warnings"],address)
+            parcel,building,polygon=(None,None,None) if not geocoded or parts.get("city","").upper()=="BOSTON" else await resolve_parcel(client,lon,lat,parts,result["warnings"],address)
             if parcel:
                 result["parcel"]=parcel
                 result["existing_building"]=building
@@ -184,6 +204,26 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
         except Exception as exc:
             result["warnings"].append("Statewide parcel matcher unavailable: "+type(exc).__name__+".")
             print("Statewide parcel lookup failed:",type(exc).__name__,str(exc)[:200],flush=True)
+        if somerville_street and polygon is None:
+            try:
+                city_match = await municipal_zoning.somerville_parcel(client, address)
+            except (httpx.HTTPError, ValueError, TypeError):
+                city_match = None
+            if city_match:
+                city_parcel, polygon, city_address, lon, lat, source = city_match
+                existing = result["parcel"]
+                if not existing or existing.get("parcel_number") != city_parcel["parcel_number"]:
+                    result["parcel"] = city_parcel
+                    result["existing_building"] = None
+                    result["verification"]["assessor"] = "Assessor record unconfirmed"
+                    result["sales_research"] = {"status": "Comparable sales require a matched assessor record", "candidates": []}
+                result["address"] = city_address
+                result["coordinates"] = {"lat": lat, "lon": lon}
+                result["verification"]["address"] = "Exact Somerville municipal GIS address"
+                result["verification"]["parcel"] = "Somerville municipal parcel GIS; not a legal survey"
+                result["sources"].append({"name": "Somerville city parcel GIS", "url": source})
+            elif not geocoded:
+                result["warnings"].append("The municipal parcel search could not confirm the requested Somerville street address.")
         sales_task = None
         if parts.get("city","").upper()=="BOSTON":
             result["sources"]=[{"name":"Boston municipal assessor FY2026 and recorded sales","url":boston.SOURCE},{"name":"MassGIS statewide parcels","url":SOURCES[0]["url"]}]
@@ -204,7 +244,7 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
                     result["warnings"].append("Municipal records use different address labels here. Select and verify a candidate parcel before attributing ownership or sales.")
             except (httpx.HTTPError,ValueError,TypeError):
                 result["warnings"].append("Boston municipal records temporarily unavailable; retry the lookup.")
-        elif result.get("parcel"):
+        elif result.get("parcel") and result["verification"]["assessor"] != "Assessor record unconfirmed":
             sales_task = asyncio.create_task(ma_sales.search(
                 client, lon, lat, parts.get("city"), result["parcel"], result.get("existing_building"),
             ))
@@ -236,12 +276,13 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
                 result['warnings'].append('Municipal zoning: '+local.get('status','selected parcel geometry unavailable')+'.')
         else:
             result["warnings"].append("Live municipal zoning connector is not yet configured for "+str(parts.get("city"))+". Assessor zoning codes are not treated as verified current zoning.")
-        if result.get("parcel"):
+        if result.get("parcel") or somerville_street:
             city = parts.get("city") or ""
             matched_zoning = result.get("zoning") or {}
             district = None if matched_zoning.get("historical_reference") else matched_zoning.get("district")
             registry = municipal_zoning.REGISTRY.get(city.upper(), {})
-            result["on_demand_zoning_research"] = await search_zoning_sources(city, district, registry.get("code_url"))
+            sections = zoning_research.somerville_section_urls(matched_zoning.get("regulatory_links", ())) if city.upper() == "SOMERVILLE" else ()
+            result["on_demand_zoning_research"] = await search_zoning_sources(city, district, registry.get("code_url"), sections)
         result["multifamily_screen"] = await atlas_task
         if sales_task:
             try:
@@ -313,6 +354,13 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
         review=result['zoning_review']
         result['recommendations'].append({'title':'Prepare an addition review for '+result['zoning']['district'],
             'reason':review['lot_area_status'],'next_step':review['next_step'],'confidence':review['status']})
+    elif city.upper() == "SOMERVILLE" and not result.get("zoning_potential"):
+        result["recommendations"].append({
+            "title": "Review the " + district + " building types and standards",
+            "reason": "CanBuild matched the city zoning district. Somerville development capacity depends on the applicable building type and use.",
+            "next_step": "Open On-demand zoning research for the city ordinance sections. Confirm the building type, dimensional standards, overlays and approvals with Somerville Planning before estimating a buildout.",
+            "confidence": "Municipal GIS match; automated buildout estimate unavailable",
+        })
     elif not result.get("zoning_potential"):
         result["recommendations"].append({"title":"Check local expansion standards","reason":"The district is mapped, but a reviewed rule set for this district is not available in CanBuild.","next_step":"Confirm setbacks, height, lot coverage, open space, nonconforming-lot rules, overlays, and permit requirements with the municipality.","confidence":"District mapped; dimensional rules incomplete"})
     else:

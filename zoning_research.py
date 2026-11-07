@@ -99,6 +99,10 @@ def parse_document(data, media, url, city):
         text = clean(node.get_text(" ", strip=True))
         if 25 <= len(text) <= 2500:
             blocks.append(text)
+    if host(url) == "online.encodeplus.com" and urlsplit(url).path.endswith("/doc-view.aspx"):
+        heading = body.select("h2, h3, h4, h5")
+        if heading:
+            title = clean(heading[-1].get_text(" ", strip=True)) + " · " + title
     return {"url": url, "title": title[:200], "blocks": list(dict.fromkeys(blocks))[:1600], "links": links}
 
 
@@ -228,9 +232,20 @@ async def model_evidence(client, city, district, entries):
         return []
 
 
-async def discover(city, district, registered_url):
+
+def somerville_section_urls(links):
+    sections = []
+    for link in links:
+        url = urlsplit(link["url"])
+        match = re.fullmatch(r"secid-([0-9]+)", url.fragment)
+        if (match and url.scheme == "https" and url.netloc == "online.encodeplus.com"
+                and url.path == "/regs/somerville-ma/doc-viewer.aspx"):
+            sections.append("https://online.encodeplus.com/regs/somerville-ma/doc-view.aspx?pn=0&ajax=0&secid=" + match[1])
+    return tuple(dict.fromkeys(sections))
+
+async def discover(city, district, registered_url, section_urls=()):
     homepage = WEBSITES[city]
-    seeds = list(dict.fromkeys(filter(None, (registered_url, *PILOT_SOURCES.get(city, ()), homepage))))
+    seeds = list(dict.fromkeys(filter(None, (*section_urls, registered_url, *PILOT_SOURCES.get(city, ()), homepage))))
     municipal_hosts = {host(url) for url in seeds} - PUBLISHERS
     found = []
     attempted = set()
@@ -331,13 +346,13 @@ class ResearchCache:
             """, (city, district, revision, checked, int(failed)))
         return self.current(city, district)
 
-    async def refresh(self, city, district, registered_url):
+    async def refresh(self, city, district, registered_url, section_urls):
         async with self.slots:
             # A concurrent process may have populated the shared database.
             row = self.current(city, district)
             if self.fresh(row):
                 return row
-            report = await discover(city, district, registered_url)
+            report = await discover(city, district, registered_url, section_urls) if section_urls else await discover(city, district, registered_url)
             return self.save(city, district, report)
 
     @staticmethod
@@ -347,7 +362,7 @@ class ResearchCache:
         age = (datetime.now(timezone.utc) - datetime.fromisoformat(row["checked_at"])).total_seconds()
         return 0 <= age < (RETRY_SECONDS if row["refresh_failed"] else RECHECK_SECONDS)
 
-    async def search(self, city, district, registered_url):
+    async def search(self, city, district, registered_url, section_urls=()):
         city, district = city.upper(), clean(district or "").upper()[:100]
         if city not in WEBSITES:
             return None
@@ -359,7 +374,7 @@ class ResearchCache:
         if task is None:
             if len(self.inflight) >= 12:
                 return public_report(row, "cache") if row else None
-            task = asyncio.create_task(self.refresh(city, district, registered_url))
+            task = asyncio.create_task(self.refresh(city, district, registered_url, section_urls))
             self.inflight[key] = task
 
             def clear(completed):
