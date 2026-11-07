@@ -5,6 +5,15 @@ import re
 import httpx
 from parcel_engine import clean, same_street, requested_house_number
 
+async def selected_polygon(client, pid, latitude):
+    from municipal_zoning import esri_polygon, to_ground
+    data = await fetch(client, 0, {"where": f"PID = '{pid}'", "outFields": "PID", "returnGeometry": "true", "outSR": 3857, "resultRecordCount": 2})
+    features = data.get("features", [])
+    if len(features) != 1:
+        return None
+    polygon = to_ground(esri_polygon(features[0].get("geometry")), latitude)
+    return polygon if not polygon.is_empty else None
+
 BASE='https://gis.boston.gov/arcgis/rest/services/Assessing/properties_boston_gov/MapServer'
 SOURCE='https://properties.boston.gov/'
 FIELDS='OBJECTID,PID,CM_ID,MAP_PAR_ID,LOC_ID,FULL_ADDRESS,ST_NUM,ST_NUM2,ST_NAME,UNIT_NUM,OWNER,LU,LUC,LU_DESC,GROSS_AREA,LIVING_AREA,LAND_SF,RES_UNITS,COM_UNITS,NUM_BLDGS,TOTAL_VALUE,YR_BUILT'

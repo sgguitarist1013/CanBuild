@@ -49,9 +49,29 @@ def test_mobile_layout_and_input_validation(page, app_url):
     page.goto(app_url)
     page.get_by_role("button", name="Explore property").click()
     expect(page.locator("#status")).to_have_text("Enter a full Massachusetts address.")
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
     page.evaluate("window.scrollTo(1000, 0)")
     assert page.evaluate("window.scrollX === 0")
     assert page.evaluate("Array.from(document.body.querySelectorAll('*')).every(el => { const s=getComputedStyle(el), r=el.getBoundingClientRect(); return s.display === 'none' || s.visibility === 'hidden' || (r.left >= -1 && r.right <= window.innerWidth + 1) })")
+    expect(page.locator('body')).not_to_contain_text('async function jsonResponse')
+
+
+def test_property_conflicts_and_local_zoning_review(page, app_url, property_record):
+    page.set_viewport_size({'width':390,'height':844})
+    record=dict(property_record, existing_building={'units':None,'reported_units':0,'use_classification_units':1,'unit_count_status':'conflict','use_description':'Single Family Residential'},
+        zoning={'district':'ResB','source_updated_at':'2025-01-01'},
+        zoning_review={'section':'§ 275-53','standards':{'min_lot_sqft':7500,'frontage_ft':75,'front_ft':25,'side_ft':6,'rear_ft':20,'height_ft':40},'lot_area_status':'Below district minimum; nonconforming lot review needed','conditions':'Confirm ground-story exception.','limitations':'No permit approval.'},
+        constraints=[{'name':'Historic districts','status':'unavailable','labels':[],'note':'No regulatory clearance.'}])
+    page.route('**/api/property?*',lambda route:route.fulfill(json=record))
+    page.route('**/api/suggest?*',lambda route:route.fulfill(json={'suggestions':[]}))
+    page.goto(app_url)
+    page.get_by_role('combobox').fill('95 Magazine St, Cambridge, MA')
+    page.get_by_role('button',name='Explore property').click()
+    expect(page.locator('#facts')).to_contain_text('Unresolved: 0 reported / 1 from use classification')
+    expect(page.locator('#zoningStandards')).to_contain_text('7,500 sq ft')
+    expect(page.locator('#constraintChecks')).to_contain_text('unavailable')
+    assert not page.locator('details.research-card').evaluate('(el)=>el.open')
+    assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
 
 
 def test_alias_selection_owner_and_sales(page, app_url, property_record):
@@ -73,7 +93,7 @@ def test_alias_selection_owner_and_sales(page, app_url, property_record):
     page.goto(app_url)
     page.get_by_role('combobox').fill('One Lewis Wharf, Boston, MA')
     page.get_by_role('button',name='Explore property').click()
-    expect(page.locator('#ownerStatus')).to_contain_text('No recorded owner attributed')
+    expect(page.locator('#ownerStatus')).to_contain_text('No owner attributed')
     page.get_by_role('button',name='Review this assessor record').click()
     expect(page.locator('#propertyAddress')).to_have_text('38-34 ATLANTIC AV, BOSTON, MA 02110')
     expect(page.locator('#ownerStatus')).to_contain_text('ONE LEWIS WHARF LLC')

@@ -1,0 +1,125 @@
+from datetime import date, timedelta
+import json
+
+import httpx
+import pytest
+from shapely.geometry import box, mapping
+
+from data_quality import review_building
+from ma_sales import search
+from municipal_zoning import district_match, esri_polygon, lookup, reference_review, to_ground, cambridge_lookup, lonlat_geometry
+
+@pytest.fixture
+def anyio_backend():
+    return 'asyncio'
+
+
+def test_zero_units_remains_an_unresolved_observation():
+    building = {"units": 0, "use_description": "Single Family Residential"}
+    warnings = review_building(building)
+    assert building['units'] is None
+    assert building['reported_units'] == 0
+    assert building['use_classification_units'] == 1
+    assert building['unit_count_status'] == 'conflict'
+    assert warnings
+
+
+@pytest.mark.parametrize('raw,expected,status', [(2, 2, 'assessor reported'), (0, None, 'not reported'), (None, None, 'not reported'), (-1, None, 'not reported')])
+def test_units_without_residential_classification(raw, expected, status):
+    building = {'units': raw, 'use_description': 'Office'}
+    review_building(building)
+    assert building['units'] == expected
+    assert building['unit_count_status'] == status
+
+
+def test_zoning_coverage_unions_duplicates_and_rejects_split_parcels():
+    parcel = box(0, 0, 100, 100)
+    assert district_match([({'zone': 'A'}, parcel, parcel.area)] * 2, 'zone', parcel.area) == 'A'
+    split = [({'zone': 'A'}, box(0, 0, 60, 100), 6000), ({'zone': 'B'}, box(60, 0, 100, 100), 4000)]
+    assert district_match(split, 'zone', parcel.area) is None
+
+
+def test_esri_polygon_keeps_holes_and_disjoint_parts():
+    geometry = {'rings': [list(box(0, 0, 10, 10).exterior.coords), list(box(2, 2, 4, 4).exterior.coords), list(box(20, 20, 22, 22).exterior.coords)]}
+    assert esri_polygon(geometry).area == 100
+
+
+@pytest.mark.anyio
+async def test_municipal_zoning_uses_parcel_overlap_not_a_street_point():
+    latitude = 42
+    parcel = to_ground(box(0, 0, 100, 100), latitude)
+    def handler(request):
+        geometry = json.loads(request.url.params['geometry'])
+        assert request.url.params['geometryType'] == 'esriGeometryPolygon'
+        assert geometry['spatialReference']['wkid'] == 3857
+        rows = [{'attributes': {'ZoneCode': 'ResB'}, 'geometry': {'rings': [list(box(0, 0, 100, 100).exterior.coords)]}}] if '/4/query' in str(request.url) else []
+        return httpx.Response(200, json={'features': rows})
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await lookup(client, 'CHICOPEE', parcel, latitude, {'gis_area_sqft_approx': 7200})
+    assert result['zoning']['district'] == 'ResB'
+    assert result['zoning']['current_amendments_verified'] is False
+    assert result['review']['standards']['rear_ft'] == 20
+    assert 'nonconforming' in result['review']['lot_area_status']
+    assert all(c['status'] == 'no mapped intersection' for c in result['constraints'])
+
+
+@pytest.mark.anyio
+async def test_unavailable_municipal_service_is_not_clearance():
+    def handler(request):
+        return httpx.Response(503)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await lookup(client, 'BOSTON', box(0, 0, 100, 100), 42, {})
+    assert result['zoning'] is None
+    assert all(c['status'] == 'unavailable' for c in result['constraints'])
+
+
+@pytest.mark.anyio
+async def test_polygon_sales_candidates_use_same_area_and_property_type():
+    sold = (date.today() - timedelta(days=90)).strftime('%Y%m%d')
+    attrs = {'CITY': 'CHICOPEE', 'LOC_ID': 'candidate', 'MAP_PAR_ID': '2', 'SITE_ADDR': 'Test St', 'LS_DATE': sold, 'LS_PRICE': 300000, 'RES_AREA': 1200, 'BLD_AREA': 2400, 'USE_DESC': 'Single Family Residential'}
+    def feature(changes):
+        return {'attributes': dict(attrs, **changes), 'geometry': {'rings': [list(box(-72.6001, 42.1499, -72.5999, 42.1501).exterior.coords)]}}
+    rows = [feature({}), feature({'LOC_ID': 'multifamily', 'USE_DESC': 'Two Family Residential'}), feature({'LOC_ID': 'future', 'LS_DATE': (date.today()+timedelta(days=1)).strftime('%Y%m%d')}), feature({'LOC_ID': 'missing', 'RES_AREA': None}), feature({'LOC_ID': 'subject'})]
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200, json={'features': rows}))) as client:
+        result = await search(client, -72.6, 42.15, 'CHICOPEE', {'loc_id': 'subject'}, {'residential_area_sqft': 1204, 'building_area_sqft': 2412, 'use_description': 'Single Family Residential'})
+    assert len(result['candidates']) == 1
+    candidate = result['candidates'][0]
+    assert candidate['comparison_area_sqft'] == 1200
+    assert candidate['comparison_area_basis'] == 'residential living area'
+    assert candidate['gross_area_sqft'] == 2400
+    assert candidate['price_per_comparison_sqft'] == 250
+    assert candidate['price_per_gross_sqft'] == 125
+
+
+def test_unknown_district_has_no_invented_rules():
+    assert reference_review('Commercial', {'gis_area_sqft_approx': 7200}) is None
+
+
+@pytest.mark.anyio
+async def test_cambridge_matches_the_whole_parcel():
+    parcel = box(0, 0, 100, 100)
+    def handler(request):
+        assert 'POLYGON' in request.url.params['$where']
+        assert 'POINT' not in request.url.params['$where']
+        return httpx.Response(200,json=[{'zone_type':'C-1','the_geom':mapping(lonlat_geometry(parcel,42))}])
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await cambridge_lookup(client,parcel,42)
+    assert result['district'] == 'C-1'
+    assert result['current_amendments_verified'] is False
+
+
+@pytest.mark.anyio
+async def test_somerville_uses_current_city_map_host_and_safe_rule_links():
+    parcel = to_ground(box(0,0,100,100),42)
+    def handler(request):
+        assert request.url.host == 'cos-geoportal.somervillema.gov'
+        rows=[]
+        if '/ZoningByParcel/' in str(request.url):
+            assert 'COMMITMENT_OWNER' not in request.url.params['outFields']
+            rows=[{'attributes':{'ZONECODE':'MR4','ZONEDESC':'Mid Rise 4','Permitted_Building_Types':'https://online.encodeplus.com/regs/somerville-ma/doc-viewer.aspx#secid-470','Use_Provisions':'https://untrusted.example/rules'},'geometry':{'rings':[list(box(0,0,100,100).exterior.coords)]}}]
+        return httpx.Response(200,json={'features':rows})
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result=await lookup(client,'SOMERVILLE',parcel,42,{})
+    assert result['zoning']['district']=='MR4'
+    assert result['zoning']['source_updated_at']=='2025-06-17'
+    assert len(result['zoning']['regulatory_links'])==1

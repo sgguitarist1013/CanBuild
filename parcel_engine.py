@@ -11,7 +11,7 @@ from shapely.geometry import Polygon
 from shapely.ops import unary_union, transform
 
 SERVICE = "https://services1.arcgis.com/hGdibHYSPO59RG1h/ArcGIS/rest/services/Massachusetts_Property_Tax_Parcels/FeatureServer/0/query"
-FIELDS = "OBJECTID,MAP_PAR_ID,LOC_ID,POLY_TYPE,PROP_ID,SITE_ADDR,ADDR_NUM,FULL_STR,CITY,FY,LOT_SIZE,LOT_UNITS,BLD_AREA,RES_AREA,UNITS,YEAR_BUILT,STORIES,USE_DESC,ZONING,TOTAL_VAL,LAST_EDIT,OWNER1,USE_CODE,LS_DATE,LS_PRICE"
+FIELDS = "OBJECTID,MAP_PAR_ID,LOC_ID,POLY_TYPE,PROP_ID,SITE_ADDR,ADDR_NUM,FULL_STR,CITY,FY,LOT_SIZE,LOT_UNITS,BLD_AREA,RES_AREA,UNITS,YEAR_BUILT,STORIES,USE_DESC,ZONING,TOTAL_VAL,LAST_EDIT,OWNER1,USE_CODE,LS_DATE,LS_PRICE,LS_BOOK,LS_PAGE,REG_ID"
 
 # Rules here are municipality-specific; no city rules are applied statewide.
 SUPPORTED_RULES = {
@@ -206,12 +206,16 @@ async def resolve_parcel(client, lon, lat, components, warnings, requested_addre
     features=list(next(iter(by_parcel.values())).values())
     records=[f.get("attributes") or {} for f in features]
     x=records[0]
-    parcel={"parcel_number":x.get("MAP_PAR_ID"),
+    parcel={"parcel_number":x.get("MAP_PAR_ID") or x.get("LOC_ID"),
             "full_number":x.get("MAP_PAR_ID"),"loc_id":x.get("LOC_ID"),
             "type":x.get("POLY_TYPE"),"gis_area_sqft_approx":lot_area_sqft(x),
             "assessor_site_address":x.get("SITE_ADDR"),"fiscal_year":x.get("FY"),
             "last_edit":x.get("LAST_EDIT"),"recorded_owners":list(dict.fromkeys(r["OWNER1"] for r in records if r.get("OWNER1"))),
             "ownership_source":"https://www.mass.gov/info-details/massgis-data-property-tax-parcels","area_source":"MassGIS assessor LOT_SIZE"}
+    parcel["last_transfer"]={"sale_date_reported":x.get("LS_DATE"),"price_reported":x.get("LS_PRICE"),
+        "book":x.get("LS_BOOK"),"page":x.get("LS_PAGE"),"registered_reference":x.get("REG_ID"),
+        "status":"Assessor-reported reference; deed and latest ownership not checked",
+        "registry_url":"https://www.masslandrecords.com/"}
     building=None
     if len(records)==1:
         building={"building_area_sqft":x.get("BLD_AREA"),
