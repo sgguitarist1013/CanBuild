@@ -64,7 +64,7 @@ def street_tokens(value):
             parts[0] = DIRECTIONS.get(parts[0], parts[0])
             if parts[0] == "MT":
                 parts[0] = "MOUNT"
-    return parts
+    return ["MASSACHUSETTS", "AVENUE"] if parts == ["MASS", "AVENUE"] else parts
 
 
 def same_street(actual, requested):

@@ -10,7 +10,7 @@ The coverage endpoint lists all 351 cities and towns from [MassGIS municipal bou
 
 ## Municipality checkoff
 
-The coverage API reports a base-map status for all 351 municipalities. In this release there are eight municipal map connections, 11 historical references and 332 places awaiting a base-map connection. A connected map does not complete the municipality review. Check off local ordinance and amendment verification, overlay review, and parcel-specific capacity separately.
+The coverage API reports a base-map status for all 351 municipalities. In this release there are ten municipal map connections, 11 historical references and 330 places awaiting a base-map connection. A connected map does not complete the municipality review. Check off local ordinance and amendment verification, overlay review, and parcel-specific capacity separately.
 
 The February 10, 2026 [EOHLC Chapter 40R district table](https://www.mass.gov/info-details/chapter-40r-smart-growth-zoning) provides 67 named district leads across 53 municipalities. The tracker records only names and the snapshot date. It does not use the table to match a parcel, estimate a project or confirm current district boundaries.
 
@@ -21,6 +21,8 @@ Regional snapshots are kept as historical references. The [NMCOG layer](https://
 | --- | --- | --- |
 | Arlington | Town GIS base districts and mapped overlays; base layer edit date November 7, 2025. | Verify current bylaws, amendments and project rules. |
 | Northampton | City GIS base districts and mapped overlays; base layer edit date February 6, 2026. City planning links the zoning code. | Verify district-specific standards, amendments and parcel yield. |
+| Newton | Official city zoning and village center overlay layers. | Verify current code, overlay conditions and capacity. |
+| Worcester | City GIS base districts and overlays; base layer edit date April 28, 2025. | Verify district rules, amendments and project capacity. |
 | Stow | Historical 2022 town base map. | Verify current base districts, bylaws and overlays. |
 | Watertown | Watertown Square Section 3A atlas subdistricts paired with published §§ 5.08 and 5.09. Includes active-frontage screening and district table references. | Verify current citywide base-zoning geometry and amendments, then validate parcel-specific envelopes and unit scenarios. |
 | Everett | Historical 2019 parcel map and Commercial Triangle reference excerpt. | Verify the current map and amendments. |
@@ -31,8 +33,10 @@ Watertown's [city zoning page](https://www.watertown-ma.gov/zoning) links the Ma
 
 ## Published sources
 
-- [Arlington town GIS](https://www.arcgis.com/home/item.html?id=9916a97573ca40db9c817f478bf44c43): layers 1 (base district, `ZoneCode`) and 0 (overlays, `OverlayDistrict`). This item supersedes the separate reference map that states its amendments stop at the 2020 special town meeting.
+- [Arlington town GIS](https://www.arcgis.com/home/item.html?id=9916a97573ca40db9c817f478bf44c43): layers 1 (base district, `ZoneCode`) and 0 (overlays, `OverlayDistrict`). The area-preserving ring repair already used for Everett is enabled for Arlington after a live R1 parcel exposed a self-touching ring. This item supersedes the separate reference map that states its amendments stop at the 2020 special town meeting.
 - [Northampton city GIS](https://www.arcgis.com/home/item.html?id=60931800fa7c4fc2880b4c593af00b7a): layers 2 (base district, `NAME`) and 1 (overlays, `NAME1_`). [Planning & Sustainability](https://www.northamptonma.gov/924/Planning-Sustainability) links the [zoning code](https://ecode360.com/13265306).
+- [Newton city GIS](https://www.arcgis.com/home/item.html?id=a0903a1841634b3c8b7400f31bf9a8d7): layers 24 (`Zoning`) and 23 (`Name`). Composite codes such as `BU2/VC2` are kept as the publisher reports them. The overlay layer covers the 2023 village center districts only. For base overlap, distant parts of dissolved district features outside the selected parcel envelope are discarded before validation. Local rings still have to pass validation.
+- [Worcester city GIS](https://www.arcgis.com/home/item.html?id=318e135d47f842e2893ee44906db6749): layers 9 (`ZONE`) and 10 (`NAME`) of the respective zoning and overlay services. The city also publishes its [zoning ordinance and map](https://www.worcesterma.gov/planning-regulatory/zoning-ordinance-map).
 - [Stow town GIS](https://www.arcgis.com/home/item.html?id=8de93b19c6d342129fc1200a55e7f7c5): layer 0 (`Zone`, `Name`) is an August 2022 data snapshot. Dimensional values are not applied.
 
 

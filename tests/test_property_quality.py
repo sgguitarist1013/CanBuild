@@ -287,3 +287,19 @@ async def test_regional_map_requires_matching_town_and_stays_historical():
     assert result["zoning"]["historical_reference"]
     assert not result["zoning"]["current_amendments_verified"]
     assert not result["coverage"]["base_zoning_connected"]
+
+
+
+@pytest.mark.anyio
+async def test_newton_distant_corrupt_ring_does_not_block_selected_parcel():
+    parcel = to_ground(box(0, 0, 100, 100), 42)
+    near = list(box(0, 0, 100, 100).exterior.coords)
+    far = [(200, 200), (300, 300), (300, 200), (200, 300), (200, 200)]
+
+    def handler(request):
+        rows = [{"attributes": {"Zoning": "BU2/VC2"}, "geometry": {"rings": [near, far]}}] if request.url.path.endswith("/24/query") else []
+        return httpx.Response(200, json={"features": rows})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await lookup(client, "Newton", parcel, 42, {})
+    assert result["zoning"]["district"] == "BU2/VC2"
