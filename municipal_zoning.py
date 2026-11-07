@@ -82,7 +82,7 @@ SNAPSHOT_CONNECTORS = {
     },
     "NEWTON": {
         "base": NEWTON + "/24", "field": "Zoning", "description_field": None,
-        "updated": None, "screens": [("Newton village center overlays", NEWTON + "/23", "Name")],
+        "updated": None, "local_rings_only": True, "screens": [("Newton village center overlays", NEWTON + "/23", "Name")],
         "map_url": "https://www.arcgis.com/home/item.html?id=a0903a1841634b3c8b7400f31bf9a8d7",
         "priority": 2, "reason": "Village center and transit redevelopment",
         "status": "City GIS district codes and village center overlay screening; project rules pending",
@@ -151,12 +151,17 @@ def coverage(city):
     return result
 
 
-def esri_polygon(geometry, *, repair_ring=False):
+def esri_polygon(geometry, *, repair_ring=False, bounds=None):
     """Build shells/holes with a spatial index instead of repeated polygon XOR."""
     rings = (geometry or {}).get('rings', [])
     if sum(len(ring) for ring in rings) > 250000:
         raise ValueError('Municipal geometry exceeds processing limit')
     pieces = [Polygon(ring) for ring in rings if len(ring) >= 4]
+    if bounds is not None:
+        min_x, min_y, max_x, max_y = bounds
+        # Distant parts of a dissolved citywide district cannot affect parcel overlap.
+        pieces = [p for p in pieces if p.bounds[0] <= max_x and p.bounds[2] >= min_x
+                  and p.bounds[1] <= max_y and p.bounds[3] >= min_y]
     if not pieces:
         return Polygon()
     for index, piece in enumerate(pieces):
@@ -259,10 +264,12 @@ def cambridge_match(rows, parcel, latitude):
         "current_amendments_verified": False, "snapshot_note": "Municipal zoning GIS; overlays and amendments require separate review."}
 
 
-def overlap_features(features, parcel, latitude, *, repair_ring=False):
+def overlap_features(features, parcel, latitude, *, repair_ring=False, local_rings_only=False):
     matches = []
+    scale = 3.280839895 * math.cos(math.radians(latitude))
+    bounds = tuple(coordinate / scale for coordinate in parcel.bounds) if local_rings_only else None
     for feature in features:
-        geometry = to_ground(esri_polygon(feature.get("geometry"), repair_ring=repair_ring), latitude)
+        geometry = to_ground(esri_polygon(feature.get("geometry"), repair_ring=repair_ring, bounds=bounds), latitude)
         if geometry.is_empty:
             continue
         overlap = geometry.intersection(parcel).area
@@ -343,7 +350,10 @@ async def lookup(client, city, parcel_geometry, latitude, parcel):
     matches, district = [], None
     repair_ring = city == "EVERETT" or bool(snapshot and snapshot.get("repair_ring"))
     try:
-        matches = await asyncio.to_thread(overlap_features, features, parcel_geometry, latitude, repair_ring=repair_ring)
+        matches = await asyncio.to_thread(
+            overlap_features, features, parcel_geometry, latitude, repair_ring=repair_ring,
+            local_rings_only=bool(snapshot and snapshot.get("local_rings_only")),
+        )
         clipped = [(a, g.intersection(parcel_geometry), n) for a, g, n in matches]
         district = district_match(clipped, field, parcel_geometry.area)
     except (GEOSException, ValueError, TypeError):
