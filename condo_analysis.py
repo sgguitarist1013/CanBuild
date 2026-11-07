@@ -78,11 +78,22 @@ def analyze_program(program):
         'limitations': 'Proposed unit counts are a user-defined building program, not an approved zoning capacity. Existing unit counts are observations supplied to the calculator. Gross sellout is before commissions, concessions, construction, financing, taxes and other costs; it is not profit. New-construction condition and inclusionary/affordable-housing compliance require separate verification.'}
 
 
-def reference_summary(candidates, source_url, truncated=False, min_year_built=None):
+def reference_summary(candidates, source_url, truncated=False, min_year_built=None, *, new_build_only=False, radius_miles=1):
     # A common recorded reference and price across multiple units can indicate a bundled deed.
     keys = [(c.get('record_reference'), c['sale_date'], c['sale_price']) for c in candidates]
     counts = Counter(key for key in keys if key[0])
     clean = [c for c, key in zip(candidates, keys) if not key[0] or counts[key] == 1]
+    if new_build_only:
+        # Sales close to the assessor's reported completion year are proxies
+        # for first sales. Keep one representative record per project parcel.
+        by_project = {}
+        for c in sorted(clean, key=lambda c: c['sale_date'], reverse=True):
+            year = c.get('year_built_reported')
+            if not c.get('project_key') or not c.get('record_reference') or not isinstance(year, (int, float)):
+                continue
+            if 0 <= int(c['sale_date'][:4]) - year <= 1:
+                by_project.setdefault(c['project_key'], c)
+        clean = list(by_project.values())
     clean = sorted(clean, key=lambda c: c['sale_date'], reverse=True)[:10]
     rates = [c['price_per_living_sqft'] for c in clean]
     return {'status': f'{len(clean)} condominium sale reference(s)' if clean else 'No usable condominium sale references found',
@@ -91,7 +102,8 @@ def reference_summary(candidates, source_url, truncated=False, min_year_built=No
         'source_url': source_url, 'checked_at': datetime.now(timezone.utc).isoformat(),
         'truncated': truncated, 'possible_bundled_records_excluded': len(candidates)-len([c for c,key in zip(candidates,keys) if not key[0] or counts[key]==1]),
         'min_year_built':min_year_built,
-        'method': 'Condominium records within approximately one mile, a sale reported within three years, and positive residential living area.'+(f' Reported year built is at least {min_year_built}.' if min_year_built else '')+' An observed min–max price/sq ft is shown only with at least three references.',
+        'radius_miles': radius_miles, 'new_build_screen': new_build_only,
+        'method': f'Condominium records within approximately {radius_miles} mile(s), a sale reported within three years, and positive residential living area.'+(f' Reported year built is at least {min_year_built}.' if min_year_built else '')+' An observed min–max price/sq ft is shown only with at least three references.',
         'limitations': 'These are condominium sale references, not verified new-construction comps. Deed consideration, arm’s-length status, unit size, condition, parking, floor level, views and concessions need review before adopting a pricing assumption. An observed range is not a valuation.'}
 
 
@@ -101,13 +113,14 @@ def reference(attrs, price, sold, area, source_url):
         'sale_price':int(price), 'sale_date':sold.isoformat(), 'living_area_sqft':area,
         'price_per_living_sqft':round(price/area,2), 'year_built_reported':attrs.get('YEAR_BUILT') or attrs.get('YR_BUILT'),
         'record_reference':attrs.get('_record_reference'), 'source_url':source_url,
+        'project_key':attrs.get('LOC_ID') or attrs.get('MAP_PAR_ID'),
         'new_construction_verified':False, 'arm_length_verified':False}
 
 
-async def condo_sales(client, lon, lat, city, boston_pid=None, min_year_built=None):
+async def condo_sales(client, lon, lat, city, boston_pid=None, min_year_built=None, *, radius_miles=1, new_build_only=False):
     today=date.today()
     if city.upper()=='BOSTON':
-        params={'geometry':f'{lon},{lat}','geometryType':'esriGeometryPoint','inSR':4326,'distance':1609,
+        params={'geometry':f'{lon},{lat}','geometryType':'esriGeometryPoint','inSR':4326,'distance':1609 * radius_miles,
             'units':'esriSRUnit_Meter','spatialRel':'esriSpatialRelIntersects',
             'where':"UPPER(LU_DESC) LIKE '%CONDO%' AND LIVING_AREA > 0"+(f' AND YR_BUILT >= {min_year_built}' if min_year_built else ''),'resultRecordCount':250}
         if boston_pid:
@@ -137,7 +150,7 @@ async def condo_sales(client, lon, lat, city, boston_pid=None, min_year_built=No
         return reference_summary(rows,boston.SOURCE,bool(data.get('exceededTransferLimit') or sales.get('exceededTransferLimit')),min_year_built)
     response=await client.get(ma_sales.SERVICE,params={'f':'json',
         'where':"CITY = '"+city.upper().replace("'","''")+"' AND UPPER(USE_DESC) LIKE '%CONDO%' AND LS_PRICE >= 10000 AND RES_AREA > 0"+(f' AND YEAR_BUILT >= {min_year_built}' if min_year_built else ''),
-        'geometry':f'{lon},{lat}','geometryType':'esriGeometryPoint','inSR':4326,'distance':1609,'units':'esriSRUnit_Meter',
+        'geometry':f'{lon},{lat}','geometryType':'esriGeometryPoint','inSR':4326,'distance':1609 * radius_miles,'units':'esriSRUnit_Meter',
         'spatialRel':'esriSpatialRelIntersects','outFields':'OBJECTID,PROP_ID,MAP_PAR_ID,LOC_ID,SITE_ADDR,CITY,LS_DATE,LS_PRICE,LS_BOOK,LS_PAGE,RES_AREA,YEAR_BUILT,USE_DESC',
         'returnGeometry':'false','resultRecordCount':500,'orderByFields':'LS_DATE DESC'},timeout=httpx.Timeout(18,connect=4))
     response.raise_for_status();data=response.json()
@@ -155,4 +168,5 @@ async def condo_sales(client, lon, lat, city, boston_pid=None, min_year_built=No
         seen.add(key)
         a['_record_reference']=f"Book {a['LS_BOOK']}, page {a['LS_PAGE']}" if a.get('LS_BOOK') and a.get('LS_PAGE') else None
         rows.append(reference(a,price,sold,area,ma_sales.SOURCE))
-    return reference_summary(rows,ma_sales.SOURCE,bool(data.get('exceededTransferLimit')),min_year_built)
+    return reference_summary(rows,ma_sales.SOURCE,bool(data.get('exceededTransferLimit')),min_year_built,
+                             new_build_only=new_build_only,radius_miles=radius_miles)
