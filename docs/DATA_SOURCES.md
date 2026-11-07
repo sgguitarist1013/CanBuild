@@ -10,7 +10,7 @@ The coverage endpoint lists all 351 cities and towns from [MassGIS municipal bou
 
 ## Municipality checkoff
 
-The coverage API reports a base-map status for all 351 municipalities. In this release there are 12 municipal map connections, 11 historical references and 328 places awaiting a base-map connection. A connected map does not complete the municipality review. Check off local ordinance and amendment verification, overlay review, and parcel-specific capacity separately.
+The coverage API reports a base-map status for all 351 municipalities. In this release there are 14 municipal map connections, 11 historical references and 326 places awaiting a base-map connection. A connected map does not complete the municipality review. Check off local ordinance and amendment verification, overlay review, and parcel-specific capacity separately.
 
 The February 10, 2026 [EOHLC Chapter 40R district table](https://www.mass.gov/info-details/chapter-40r-smart-growth-zoning) provides 67 named district leads across 53 municipalities. The tracker records only names and the snapshot date. It does not use the table to match a parcel, estimate a project or confirm current district boundaries.
 
@@ -25,6 +25,8 @@ Regional snapshots are kept as historical references. The [NMCOG layer](https://
 | Springfield | City GIS base, overlay and split zoning layers plus published ordinance links. | Verify ordinance amendments against map and apply district-specific project rules. |
 | Newton | Official city zoning and village center overlay layers. | Verify current code, overlay conditions and capacity. |
 | Worcester | City GIS base districts and overlays; base layer edit date April 28, 2025. | Verify district rules, amendments and project capacity. |
+| Wellesley | Town GIS base districts and mapped overlays; both layers edited October 29, 2026. | Verify current bylaws, adopted boundaries and project rules. |
+| Salem | City viewer's July 2024 base layer and separate smart growth, coastal, waterfront industrial and historic district screens. | Check later base-map amendments and project-specific zoning rules. |
 | Stow | Historical 2022 town base map. | Verify current base districts, bylaws and overlays. |
 | Watertown | Watertown Square Section 3A atlas subdistricts paired with published §§ 5.08 and 5.09. Includes active-frontage screening and district table references. | Verify current citywide base-zoning geometry and amendments, then validate parcel-specific envelopes and unit scenarios. |
 | Everett | Historical 2019 parcel map and Commercial Triangle reference excerpt. | Verify the current map and amendments. |
@@ -34,6 +36,10 @@ Regional snapshots are kept as historical references. The [NMCOG layer](https://
 Watertown's [city zoning page](https://www.watertown-ma.gov/zoning) links the MapGeo viewer and code. The viewer's published CARTO legend still lists the older Central Business district and omits the Watertown Square districts, so it is not used for current parcel assignments. The report uses the distinct `314WSQ*_TODO` atlas records, including the active-frontage records, to select reference material. Reference heights and open-space percentages come from [§ 5.08](https://ecode360.com/37104064). Review path and partial-lot treatment come from [§ 5.09](https://ecode360.com/37104096). The screen does not resolve current map boundaries, frontage geometry, eligibility for bonus height, or buildable unit yield.
 
 ## Published sources
+
+- [Wellesley town GIS](https://www.arcgis.com/home/item.html?id=bba3b9e3352244fdbb3d4575aa1e348e) publishes base districts (layer 26, `ZoningCode`) and overlays (layer 25, `DISTRICT`) in its Open Data Layers service. The publisher provides the layers for general information. Confirm the [adopted map and bylaws](https://www.wellesleyma.gov/281/Zoning-Bylaws) separately.
+- [Salem city zoning viewer](https://salemma.maps.arcgis.com/apps/instant/interactivelegend/index.html?appid=15f63e4da223424db6adfff4ab641be6) uses web map `ebf846734ca24bf8aeb254993da15c18` and base zoning layer 0 (`ZONE_CODE`) of `Zoning_Districts_2024`. Separate viewer layers screen smart growth subzones, coastal resiliency, waterfront industrial zoning and local historic districts. These do not certify every overlay or later base amendment. The [city zoning page](https://www.salemma.gov/933/Zoning-Ordinance-Zoning-Maps) links the ordinance and adopted map.
+
 
 - [Lynn city zoning viewer](https://cityoflynn.maps.arcgis.com/apps/instant/basic/index.html?appid=046e581adf6c4a93bbb4e997497df453) reports amendments through December 9, 2025. Its published map uses layers 11 (`ZONE`), 9 (ground-floor commercial) and 10 (required thoroughfares). The base data edit date is December 17, 2025. The two frontage layers provide intersection screens only. Check the [city zoning resources](https://www.lynnma.gov/city_government/departments/isd/zoning) before applying the rules.
 - [Springfield city GIS](https://maps.springfield-ma.gov/gis/) publishes base zoning (layer 31, `ZONING`, `ZONE_NAME`), overlays (layer 30, `NAME`) and split zoning (layer 32). Unlabeled base polygons are excluded from district matching. If the split layer intersects the parcel or cannot be queried, the report withholds a single base district. [Springfield zoning ordinances](https://www.springfield-ma.gov/planning/planning/zoning-ordinances) lists code articles and the consolidated ordinance. Map and ordinance amendment dates are tracked separately.
