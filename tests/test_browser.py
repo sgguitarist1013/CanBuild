@@ -281,3 +281,29 @@ def test_nr_buildout_and_size_matched_sales_are_visible_on_mobile(page, app_url,
     page.get_by_text("Comparable sales", exact=True).click()
     expect(page.locator("#salesCandidates")).to_contain_text("+8% vs subject · 6 beds / 3 baths")
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+def test_verified_deed_and_pending_lead_stay_visibly_distinct(page, app_url, property_record):
+    from registry import check
+
+    deed = check("Somerville", "9 Gorham St", (80505, 62), 1650000)
+    pending = {"address": "1 Unchecked St", "deed_verification": check("Somerville", "1 Unchecked St", (123, 456))}
+    parcel = dict(property_record["parcel"], deed_verification=deed)
+    record = dict(property_record, address="9 GORHAM ST, SOMERVILLE, MA", parcel=parcel,
+                  sales_research={"candidates": [], "pending_registry_review": [pending]})
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.route("**/api/property?*", lambda route: route.fulfill(json=record))
+    page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
+    page.goto(app_url)
+    page.get_by_role("combobox").fill("9 Gorham St, Somerville, MA")
+    page.get_by_role("button", name="Explore property").click()
+    expect(page.locator("#deedSummary")).to_contain_text("Transfer confirmed in MassLandRecords")
+    expect(page.locator("#salePreview")).to_be_hidden()
+    page.get_by_text("Property records", exact=True).click()
+    expect(page.locator("#lastTransfer")).to_contain_text("$1,650,000 consideration")
+    expect(page.locator("#lastTransfer")).to_contain_text("Book 80505, page 62")
+    expect(page.locator("#lastTransfer").get_by_role("link")).to_have_attribute("href", deed["url"])
+    page.get_by_text("Comparable sales", exact=True).click()
+    page.get_by_text("Sale leads awaiting registry confirmation", exact=True).click()
+    expect(page.locator("#pendingRegistryList")).to_contain_text("Book 123, page 456")
+    expect(page.locator("#pendingRegistryList")).to_contain_text("Awaiting MassLandRecords confirmation")

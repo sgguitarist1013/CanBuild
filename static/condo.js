@@ -70,7 +70,14 @@ async function loadCondoReferences(){
     const d=await jsonResponse('/api/condo-sales?'+params.toString());if(last!==report)return;
     report.condo_sales_research=d;$('condoReferences').replaceChildren();
     $('condoCompStatus').textContent=d.status+'. '+d.method+' '+d.limitations+(d.truncated?' Source result limit reached; coverage is incomplete.':'')+(d.possible_bundled_records_excluded?' Possible bundled records excluded: '+d.possible_bundled_records_excluded+'.':'');
-    for(const c of d.candidates){const item=document.createElement('div');item.className='item';const title=document.createElement('strong');title.textContent=c.address||'Address unavailable';const text=document.createElement('p');text.className='small muted';text.textContent=c.sale_date+' · $'+fmt(c.sale_price)+' · '+fmt(c.living_area_sqft)+' interior sq ft · $'+Number(c.price_per_living_sqft).toFixed(2)+'/sq ft'+(c.year_built_reported?' · Year built (reported): '+c.year_built_reported:'')+(c.record_reference?' · '+c.record_reference:'');const link=document.createElement('a');link.href=c.source_url;link.target='_blank';link.rel='noopener noreferrer';link.textContent='Official sale-record source';item.append(title,text,link);$('condoReferences').append(item);}
+    for(const c of d.candidates){const item=document.createElement('div');item.className='item';const title=document.createElement('strong');title.textContent=c.address||'Address unavailable';const text=document.createElement('p');text.className='small muted';text.textContent=c.sale_date+' · $'+fmt(c.sale_price)+' · '+fmt(c.living_area_sqft)+' interior sq ft · $'+Number(c.price_per_living_sqft).toFixed(2)+'/sq ft'+(c.year_built_reported?' · Year built (reported): '+c.year_built_reported:'')+(c.record_reference?' · '+c.record_reference:'');const link=document.createElement('a');link.href=c.source_url;link.target='_blank';link.rel='noopener noreferrer';link.textContent='Official sale-record source';item.append(title,text,link);if(c.deed_verification){const deed=document.createElement('p');deed.className='small';appendDeed(deed,c.deed_verification);item.append(deed);}$('condoReferences').append(item);}
+    for(const lead of d.pending_registry_review||[]){
+      const line=document.createElement('p');
+      line.className='small';
+      line.textContent=(lead.address||'Address unavailable')+' · ';
+      appendDeed(line,lead.deed_verification);
+      $('condoReferences').append(line);
+    }
     $('applyCondoRange').disabled=!(d.observed_price_per_sqft_low>0&&d.observed_price_per_sqft_high>0);
   }catch(e){if(last===report)$('condoCompStatus').textContent=e.message;}
   finally{if(last===report)$('loadCondoSales').disabled=false;}

@@ -48,6 +48,7 @@
 <h3 id="potentialTitle">What can I do here?</h3>
 <p id="potentialAnswer" class="answer"></p>
 <p id="propertyFactsSummary" class="small muted" hidden></p>
+<p id="deedSummary" class="small muted" hidden></p>
 <p id="salePreview" class="small" hidden></p>
 <div class="grid estimate-summary" id="redevelopmentMetrics" hidden>
 <div class="metric"><small>Proposed units</small><strong id="autoUnits"></strong></div>
@@ -65,6 +66,7 @@
 <button class="secondary no-print" id="print">Print report</button></details>
 <details class="card research-card" id="salesDetails"><summary>Comparable sales</summary>
 <div id="salesResearch"><p id="salesStatus" class="small muted"></p><div id="salesCandidates"></div><p id="salesLimits" class="small muted"></p></div>
+<details id="pendingRegistrySales" hidden><summary>Sale leads awaiting registry confirmation</summary><div id="pendingRegistryList"></div></details>
 </details>
 <details class="card research-card" id="sourceDetails"><summary>Sources &amp; assumptions</summary><p class="muted small">Source dates and verification status</p><div class="links" id="links"></div>
 <details id="buildoutDetails" hidden><summary>Buildout summary</summary>
@@ -153,11 +155,15 @@ function renderOpportunity(d) {
   ].filter(Boolean):[];
   $('propertyFactsSummary').textContent=facts.join(' · ');
   $('propertyFactsSummary').hidden=!facts.length;
+  const deed=d.parcel?.deed_verification;
+  $('deedSummary').hidden=!deed;
+  $('deedSummary').textContent=deed?.status==='verified'?'Transfer confirmed in MassLandRecords · recorded '+deed.recorded_date
+    :deed?.status==='conflict'?'Registry and assessor figures differ · review the deed':'Transfer awaiting MassLandRecords confirmation';
   const sales=d.parcel&&d.sales_research?.candidates;
   const sale=sales?.[0];
   $('salePreview').hidden=!sale;
   $('salePreview').textContent=sale?[
-    sales.length+' nearby sale reference'+(sales.length===1?'':'s'),
+    sales.length+(sale.deed_verification?.status==='verified'?' registry-confirmed':' nearby')+' sale reference'+(sales.length===1?'':'s'),
     sale.address+' sold for $'+fmt(sale.sale_price),
     sale.comparison_area_sqft?fmt(sale.comparison_area_sqft)+' sq ft':null,
     sale.comparison_label||null,
@@ -267,6 +273,7 @@ function renderRedevelopment(d){
         Number(comp.distance_miles).toFixed(2)+' mi · built '+comp.year_built_reported+' · '+comp.record_reference+' ');
       const a=document.createElement('a');
       a.href=comp.source_url;a.target='_blank';a.rel='noopener noreferrer';a.textContent='Assessor source ↗';p.append(a);
+      if(comp.deed_verification){const evidence=paragraph('');appendDeed(evidence,comp.deed_verification);}
     }
   }
   for(const line of best.cost_lines){
@@ -322,6 +329,20 @@ function render(d) {
   $('propertyAddress').focus({preventScroll:true});
   $('results').scrollIntoView({block:'start'});
 }
+function appendDeed(container,deed){
+  if(!deed) return;
+  const line=document.createElement('span');
+  const reference=deed.book&&deed.page?'Book '+deed.book+', page '+deed.page:deed.registered_reference?'Registered reference '+deed.registered_reference:'Search by property address';
+  const status=deed.status==='verified'
+    ? 'Registry deed matched · recorded '+deed.recorded_date+' · $'+fmt(deed.consideration)+' consideration · checked '+deed.checked_on
+    : deed.status==='conflict'?'Registry and assessor figures differ · sale excluded'
+    : 'Awaiting MassLandRecords confirmation';
+  line.textContent=[status,deed.district,deed.office,reference].filter(Boolean).join(' · ')+'. ';
+  const link=document.createElement('a');
+  link.href=deed.url;link.target='_blank';link.rel='noopener noreferrer';link.textContent='Open MassLandRecords ↗';
+  container.append(line,link);
+}
+
 function renderResearch(d){
 const discovery=d.on_demand_zoning_research;
 $('onDemandZoning').classList.toggle('hide',!discovery);
@@ -339,8 +360,8 @@ for(const source of discovery?.sources||[]){
 }
 const p=d.parcel, owners=p?.recorded_owners||[];
 $('ownerStatus').textContent=owners.length?'Assessor-reported owner / entity: '+owners.join('; ')+'. Source: '+(p.data_source||'MassGIS assessor extract')+'. Latest deed and complete ownership must be checked.':'No owner attributed until the correct parcel is matched or selected.';
-const transfer=p?.last_transfer;$('lastTransfer').replaceChildren();
-if(transfer){const label=document.createElement('span');label.textContent='Assessor last-transfer reference: '+(transfer.sale_date_reported||'date unavailable')+(transfer.price_reported?' · $'+fmt(transfer.price_reported):'')+(transfer.book&&transfer.page?' · Book '+transfer.book+', page '+transfer.page:transfer.registered_reference?' · '+transfer.registered_reference:'')+'. '+transfer.status+'. ';const link=document.createElement('a');link.href=transfer.registry_url;link.target='_blank';link.rel='noopener noreferrer';link.textContent='Search the official registry';$('lastTransfer').append(label,link)}
+$('lastTransfer').replaceChildren();
+if(p?.deed_verification) appendDeed($('lastTransfer'),p.deed_verification);
 $('parcelCandidates').replaceChildren();
 (d.parcel_candidates||[]).forEach(c=>{const el=document.createElement('div');el.className='item';const title=document.createElement('strong');title.textContent=c.address;const note=document.createElement('p');note.className='small muted';note.textContent='Parcel '+c.parcel_number+' · '+(c.use_description||'Use unavailable')+' · Recorded owner: '+(c.recorded_owner||'Unavailable');const b=document.createElement('button');b.className='secondary';b.textContent='Review this assessor record';b.onclick=()=>lookup(c.parcel_number);el.append(title,note,b);$('parcelCandidates').append(el)});
 const sales=d.sales_research||{};
@@ -370,8 +391,25 @@ for(const c of sales.candidates||[]){
   link.href=c.source_url||sales.source_url||'#';link.target='_blank';link.rel='noopener noreferrer';
   link.textContent=c.source_name||'Official assessor sales source';
   el.append(title,note,link);
+  if(c.deed_verification){
+    const evidence=document.createElement('p');
+    evidence.className='small';
+    appendDeed(evidence,c.deed_verification);
+    el.append(evidence);
+  }
   $('salesCandidates').append(el);
 }
+const pending=sales.pending_registry_review||[];
+$('pendingRegistrySales').hidden=!pending.length;
+$('pendingRegistryList').replaceChildren();
+for(const lead of pending){
+  const item=document.createElement('p');
+  item.className='small';
+  item.textContent=(lead.address||'Address unavailable')+' · ';
+  appendDeed(item,lead.deed_verification);
+  $('pendingRegistryList').append(item);
+}
+
 const recs=d.recommendations||[];$('recommendationDetails').hidden=!recs.length;$('recommendations').replaceChildren();recs.forEach(r=>{const el=document.createElement('div');el.className='item';const t=document.createElement('strong');t.textContent=r.title;const p=document.createElement('p');p.className='small muted';p.textContent=r.reason;const n=document.createElement('p');n.className='small';n.textContent=r.next_step;el.append(t,p,n);$('recommendations').append(el)});
 renderLocalZoning(d);
 renderCondoProgram(d);
