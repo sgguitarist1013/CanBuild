@@ -350,7 +350,7 @@ async def test_somerville_municipal_fallback_uses_requested_street():
         ]})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        parcel, polygon, address, lon, lat, _ = await somerville_parcel(client, "50 Prospect Street, Somerville, MA")
+        parcel, polygon, address, lon, lat, _ = await somerville_parcel(client, "50 Prospect Street, Somerville, MA, 02143")
     assert address == "50 PROSPECT ST, Somerville, MA"
     assert parcel["parcel_number"] == "82-D-26A"
     assert parcel["recorded_owners"] == []

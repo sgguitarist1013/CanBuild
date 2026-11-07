@@ -41,17 +41,24 @@ def test_invalid_input():
 @pytest.mark.parametrize("query,expected", [
     ("95 Mag", ["95 Magazine St, Cambridge, MA"]),
     ("95", ["95 Magazine St, Cambridge, MA", "95 Main St, Cambridge, MA"]),
+    ("50 Prospect St", ["50 Prospect St, Cambridge, MA", "50 Prospect St, Somerville, MA"]),
+    ("50 Prospect St Somerville", ["50 Prospect St, Somerville, MA"]),
+    ("50 Prospect St, Somerville", ["50 Prospect St, Somerville, MA"]),
 ])
-def test_suggestions_never_substitute_neighbor(query, expected, monkeypatch):
+def test_suggestions_keep_the_requested_address(query, expected, monkeypatch):
     monkeypatch.delenv("GOOGLE_MAPS_API_KEY", raising=False)
     payload = {"suggestions": [{"text": x} for x in [
         "91 Magazine St, Cambridge, MA", "95 Magazine St, Cambridge, MA",
-        "195 Magazine St, Cambridge, MA", "95 Main St, Cambridge, MA"]]}
+        "195 Magazine St, Cambridge, MA", "95 Main St, Cambridge, MA",
+        "50 Prospect St, Cambridge, MA", "50 Prospect St, Somerville, MA",
+        "50 Prospect St, Providence, RI", "500 Prospect St, Somerville, MA",
+    ]]}
     class FakeClient:
         def __init__(self, **kwargs): pass
         async def __aenter__(self): return self
         async def __aexit__(self, *args): pass
         async def get(self, *args, **kwargs):
+            assert kwargs["params"]["text"] == query + ", MA"
             return httpx.Response(200, json=payload, request=httpx.Request("GET", "https://example.com"))
     with patch("app.httpx.AsyncClient", FakeClient):
         result = client.get("/api/suggest", params={"q": query})

@@ -36,7 +36,7 @@
 <header><div class="wrap nav"><div class="brand">can<b>build</b></div><small>Property intelligence · Massachusetts</small></div></header>
 <section class="hero"><div class="wrap"><div class="eyebrow">Know what is possible</div><h1>Find the potential in any property.</h1><p>For homeowners, investors and developers. Explore public property records, zoning and preliminary development economics—all from an address.</p>
 
-<div class="search"><input id="address" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" placeholder="Start typing any Massachusetts address" aria-label="Property address"><button id="go" class="primary">Explore property</button><div id="suggestions" class="suggestions hide"></div></div>
+<form class="search" id="propertySearch"><input id="address" enterkeyhint="search" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" placeholder="Start typing any Massachusetts address" aria-label="Property address"><button id="go" class="primary" type="submit">Explore property</button><div id="suggestions" class="suggestions hide"></div></form>
 <p class="hint" id="status" role="status">Public records, not paid MLS data. No account required.</p></div></section>
 <main class="wrap">
 <section id="intro" class="steps"><div class="step"><span>01 · Understand</span><b>What exists today?</b><span>Parcel, building characteristics, reported units and source dates.</span></div><div class="step"><span>02 · Explore</span><b>What might be possible?</b><span>Available zoning information, site constraints and scenarios.</span></div><div class="step"><span>03 · Evaluate</span><b>Would it be worth it?</b><span>Development budgets and break-even economics when inputs are supportable.</span></div></section>
@@ -403,9 +403,47 @@ if(screen){
 }
 }
 async function jsonResponse(url,options={}){const r=await fetch(url,{...options,headers:{Accept:'application/json',...(options.headers||{})}});if(!(r.headers.get('content-type')||'').includes('json'))throw Error('The server returned an error page instead of property data. Please try again shortly.');const d=await r.json();if(!r.ok)throw Error(typeof d.detail==='string'?d.detail:Array.isArray(d.detail)?d.detail.map(x=>x.msg).join('; '):'The property service is unavailable.');return d}
-async function lookup(selectedPid=null){const q=$('address').value.trim();clearTimeout(delay);seq++;$('suggestions').classList.add('hide');if(q.length<5){$('status').textContent='Enter a full Massachusetts address.';return}const b=$('go');b.disabled=true;$('status').textContent='Checking public property records…';try{const d=await jsonResponse('/api/property?address='+encodeURIComponent(q)+(selectedPid?'&boston_pid='+encodeURIComponent(selectedPid):''));render(d)}catch(e){$('status').textContent=e.message}finally{b.disabled=false}}
-$('go').onclick=()=>lookup();$('address').onkeydown=e=>{if(e.key==='Enter')lookup()};$('print').onclick=()=>window.print();
-$('address').addEventListener('input',()=>{clearTimeout(delay);const n=++seq,q=$('address').value.trim();$('suggestions').classList.add('hide');if(q.length<2)return;delay=setTimeout(async()=>{try{const d=await jsonResponse('/api/suggest?q='+encodeURIComponent(q));if(n!==seq||q!==$('address').value.trim())return;const el=$('suggestions');el.replaceChildren();(d.suggestions||[]).forEach(x=>{const b=document.createElement('button');b.type='button';b.textContent=x;b.onmousedown=e=>e.preventDefault();b.onclick=()=>{$('address').value=x;el.classList.add('hide');lookup()};el.append(b)});el.classList.toggle('hide',!el.children.length);$('address').setAttribute('aria-expanded',String(!!el.children.length));if(!el.children.length)$('status').textContent='No address matches yet — keep typing or enter the full address.';else $('status').textContent='Choose a suggested address, or keep typing.'}catch(e){if(n===seq)$('status').textContent='Address suggestions temporarily unavailable. You can still enter the complete address and click Explore property.'}},200)});
+async function lookup(selectedPid=null) {
+  const button=$('go'), input=$('address'), status=$('status');
+  if(button.disabled) return;
+  const query=input.value.trim();
+  clearTimeout(delay);
+  seq++;
+  $('suggestions').classList.add('hide');
+  input.setAttribute('aria-expanded','false');
+  if(query.length<5){
+    status.textContent='Enter a full Massachusetts address.';
+    return;
+  }
+  const controller=new AbortController();
+  button.disabled=true;
+  button.textContent='Searching…';
+  input.readOnly=true;
+  status.textContent='Checking public property records…';
+  if(!selectedPid) $('results').classList.add('hide');
+  const slow=setTimeout(()=>{
+    status.textContent='Still checking parcel and zoning sources. This can take up to a minute.';
+  },7000);
+  const deadline=setTimeout(()=>controller.abort(),75000);
+  try {
+    const url='/api/property?address='+encodeURIComponent(query)+(selectedPid?'&boston_pid='+encodeURIComponent(selectedPid):'');
+    render(await jsonResponse(url,{signal:controller.signal}));
+  } catch(error) {
+    status.textContent=controller.signal.aborted?'The lookup took too long. Try the address again.':error.message;
+  } finally {
+    clearTimeout(slow);
+    clearTimeout(deadline);
+    button.disabled=false;
+    button.textContent='Explore property';
+    input.readOnly=false;
+  }
+}
+$('propertySearch').addEventListener('submit',event=>{
+  event.preventDefault();
+  lookup();
+});
+$('print').onclick=()=>window.print();
+$('address').addEventListener('input',()=>{clearTimeout(delay);const n=++seq,q=$('address').value.trim();$('suggestions').classList.add('hide');if(q.length<2)return;delay=setTimeout(async()=>{try{const d=await jsonResponse('/api/suggest?q='+encodeURIComponent(q));if(n!==seq||q!==$('address').value.trim())return;const el=$('suggestions');el.replaceChildren();(d.suggestions||[]).forEach(x=>{const b=document.createElement('button');b.type='button';b.textContent=x;b.onmousedown=e=>e.preventDefault();b.onclick=()=>{$('address').value=x;el.classList.add('hide');lookup()};el.append(b)});el.classList.toggle('hide',!el.children.length);$('address').setAttribute('aria-expanded',String(!!el.children.length));if(!el.children.length)$('status').textContent='Keep typing, or enter the street and city and select Explore property.';else $('status').textContent='Choose a suggested address, or keep typing.'}catch(e){if(n===seq)$('status').textContent='Address suggestions temporarily unavailable. You can still enter the complete address and click Explore property.'}},200)});
 document.addEventListener('click',e=>{if(!e.target.closest('.search'))$('suggestions').classList.add('hide')});
 let printPanels=[];
 window.addEventListener('beforeprint',()=>{

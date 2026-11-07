@@ -27,7 +27,7 @@ import zoning_research
 configure_monitoring()
 
 ROOT=Path(__file__).parent
-VERSION = "0.16.3"
+VERSION = "0.16.4"
 app=FastAPI(title="CanBuild Massachusetts",version=VERSION)
 app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
 CENSUS="https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress"
@@ -107,10 +107,29 @@ async def condo_references(municipality:str=Query(min_length=2,max_length=80,pat
             return await condo_sales(client,lon,lat,municipality,boston_pid,min_year_built)
     except (httpx.HTTPError,ValueError,TypeError):
         raise HTTPException(503,'Condominium sale references are temporarily unavailable. Your scenario inputs are preserved; try again later.')
+def matching_suggestions(values, query):
+    # Ignore commas when matching a typed city. A state-only suffix is a search
+    # boundary rather than part of the street prefix.
+    prefix = re.sub(r",\s*(?:MA|Massachusetts)\s*$", "", query, flags=re.I)
+    prefix = " ".join(prefix.upper().replace(",", " ").split())
+    number = re.match(r"^\d+[A-Z]?(?=\s|$)", prefix)
+    results = []
+    for value in values:
+        if not re.search(r",\s*(?:MA|Massachusetts)(?:\s|,|$)", value, re.I):
+            continue
+        candidate = " ".join(value.upper().replace(",", " ").split())
+        if not candidate.startswith(prefix):
+            continue
+        if number and candidate.split()[0] != number[0]:
+            continue
+        results.append(value)
+    return list(dict.fromkeys(results))[:8]
+
+
 @app.get("/api/suggest")
 async def suggest(q:str=Query(min_length=2,max_length=150)):
     """Massachusetts address suggestions, updated for each typed prefix."""
-    query=q.strip()
+    query=normalize_address(q.strip())
     if len(query)<2:
         return {"suggestions":[]}
     key=os.getenv("GOOGLE_MAPS_API_KEY","")
@@ -120,36 +139,23 @@ async def suggest(q:str=Query(min_length=2,max_length=150)):
                 r=await client.post("https://places.googleapis.com/v1/places:autocomplete",json={"input":query,"includedRegionCodes":["us"],"includedPrimaryTypes":["street_address","route","premise","subpremise"],"locationBias":{"rectangle":{"low":{"latitude":41.2,"longitude":-73.6},"high":{"latitude":42.9,"longitude":-69.9}}}},headers={"X-Goog-Api-Key":key,"X-Goog-FieldMask":"suggestions.placePrediction.text.text"})
                 r.raise_for_status()
                 vals=[x.get("placePrediction",{}).get("text",{}).get("text","") for x in r.json().get("suggestions",[])]
-                vals=[v for v in vals if re.search(r"\b(MA|Massachusetts)\b",v,re.I)]
-                if vals:return {"configured":True,"provider":"Google Places","suggestions":list(dict.fromkeys(vals))[:8]}
+                vals=matching_suggestions(vals,query)
+                if vals:return {"configured":True,"provider":"Google Places","suggestions":vals}
         except (httpx.HTTPError,ValueError):
             pass
     try:
         async with httpx.AsyncClient(timeout=9) as client:
-            r=await client.get("https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/suggest",params={"f":"json","text":query if re.search(r"\b(MA|Massachusetts|Cambridge|Somerville|Boston)\b",query,re.I) else query+", Cambridge, MA","searchExtent":"-73.6,41.2,-69.9,42.9","location":"-71.06,42.36","maxSuggestions":15,"category":"Address","countryCode":"USA"})
+            r=await client.get("https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/suggest",params={"f":"json","text":query if re.search(r"\b(MA|Massachusetts)\b",query,re.I) else query+", MA","searchExtent":"-73.6,41.2,-69.9,42.9","location":"-71.06,42.36","maxSuggestions":15,"category":"Address","countryCode":"USA"})
             r.raise_for_status()
             data=r.json()
             if "error" in data:raise ValueError("ArcGIS suggestion error")
             vals=[x.get("text","") for x in data.get("suggestions",[]) if x.get("text")]
-            # Require a literal house-number and street-prefix match; geocoder rank alone is insufficient.
-            parsed=re.match(r"^\s*(\d+[A-Za-z]?)\s+([A-Za-z][A-Za-z0-9 .'-]*)",query)
-            if parsed:
-                number=parsed.group(1).upper()
-                prefix=parsed.group(2).strip().upper()
-                def matching(value):
-                    candidate=value.upper().strip()
-                    candidate=re.sub(r"^\s*"+re.escape(number)+r"\s+","",candidate)
-                    return candidate.startswith(prefix) and re.match(r"^\s*"+re.escape(number)+r"\b",value.upper()) is not None
-                vals=[v for v in vals if matching(v)]
-            elif re.match(r"^\s*\d+\s*$",query):
-                vals=[v for v in vals if re.match(r"^\s*"+re.escape(query.strip())+r"\b",v)]
-
-            return {"configured":True,"provider":"ArcGIS","suggestions":list(dict.fromkeys(vals))[:8]}
+            return {"configured":True,"provider":"ArcGIS","suggestions":matching_suggestions(vals,query)}
     except (httpx.HTTPError,ValueError):
         return {"configured":False,"suggestions":[]}
 @app.get("/api/property")
 async def property_lookup(address:str=Query(min_length=5,max_length=240), boston_pid:str|None=Query(default=None,pattern=r"^\d{10}$")):
-    address=normalize_address(address)
+    address=normalize_address(re.sub(r",\s*(?:USA|United States(?: of America)?)\s*$", "", address, flags=re.I))
     if not re.search(r"\b(MA|Massachusetts)\b",address,re.I): address=address.rstrip(", ") + ", MA"
     result={"query":address,"checked_at":now(),"parcel_candidates":[],"sales_research":{"status":"Sales connector not configured for this municipality","candidates":[]},"address":None,"coordinates":None,"parcel":None,"zoning":None,"existing_building":None,"zoning_potential":None,"recommendations":[],"constraints":[],"zoning_review":None,"verification":{"address":"unverified","parcel":"unverified","assessor":"not matched","zoning":"unverified","amendments":"not checked"},"warnings":[],"sources":[SOURCES[0].copy()]}
     async with httpx.AsyncClient(timeout=13,follow_redirects=True) as client:
