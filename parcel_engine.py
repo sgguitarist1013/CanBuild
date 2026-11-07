@@ -40,19 +40,40 @@ def requested_house_number(address):
 def clean(s):
     return re.sub(r"[^A-Z0-9]+", " ", str(s or "").upper()).strip()
 
+STREET_TYPES = {
+    "ST": "STREET", "RD": "ROAD", "AVE": "AVENUE", "AV": "AVENUE",
+    "BLVD": "BOULEVARD", "DR": "DRIVE", "LN": "LANE", "CT": "COURT",
+    "PL": "PLACE", "TER": "TERRACE", "PKWY": "PARKWAY", "CIR": "CIRCLE",
+    "HWY": "HIGHWAY", "SQ": "SQUARE", "WH": "WHARF",
+}
+ORDINALS = dict(zip(
+    ("1ST", "2ND", "3RD", "4TH", "5TH", "6TH", "7TH", "8TH", "9TH", "10TH"),
+    ("FIRST", "SECOND", "THIRD", "FOURTH", "FIFTH", "SIXTH", "SEVENTH", "EIGHTH", "NINTH", "TENTH"),
+))
+DIRECTIONS = {"N": "NORTH", "NO": "NORTH", "S": "SOUTH", "SO": "SOUTH", "E": "EAST", "W": "WEST"}
+
+
 def street_tokens(value):
-    """Normalize common assessor/geocoder street-type abbreviations statewide."""
-    aliases={"ST":"STREET","RD":"ROAD","AVE":"AVENUE","AV":"AVENUE",
-             "BLVD":"BOULEVARD","DR":"DRIVE","LN":"LANE","CT":"COURT",
-             "PL":"PLACE","TER":"TERRACE","PKWY":"PARKWAY","CIR":"CIRCLE",
-             "HWY":"HIGHWAY","SQ":"SQUARE","WH":"WHARF"}
-    parts=clean(value).split()
-    return [aliases.get(x,x) for x in parts]
+    parts = clean(value).split()
+    if not parts:
+        return parts
+    parts[0] = ORDINALS.get(parts[0], parts[0])
+    if len(parts) > 1:
+        parts[-1] = STREET_TYPES.get(parts[-1], parts[-1])
+        if len(parts) > 2 or parts[-1] not in STREET_TYPES.values():
+            parts[0] = DIRECTIONS.get(parts[0], parts[0])
+            if parts[0] == "MT":
+                parts[0] = "MOUNT"
+    return parts
+
 
 def same_street(actual, requested):
-    a,b=street_tokens(actual),street_tokens(requested)
-    if not a or not b:return False
-    return a==b or (len(b)==1 and len(a)==2 and a[0]==b[0]) or (len(a)==1 and len(b)==2 and a[0]==b[0])
+    a, b = street_tokens(actual), street_tokens(requested)
+    if not a or not b:
+        return False
+    types = STREET_TYPES.values()
+    return a == b or (a[-1] in types and a[:-1] == b) or (b[-1] in types and b[:-1] == a)
+
 
 def exact_address_match(feature, house, street, city):
     """Reject a nearby parcel unless its assessor address matches all supplied components."""
@@ -150,7 +171,9 @@ async def selected_geometry(client, features, warnings, latitude):
 
 async def resolve_parcel(client, lon, lat, components, warnings, requested_address):
     house = requested_house_number(requested_address)
-    street = str(components.get("streetName") or "").strip()
+    street = " ".join(str(components.get(key) or "").strip() for key in (
+        "preQualifier", "preDirection", "preType", "streetName", "suffixType", "suffixDirection", "suffixQualifier",
+    )).strip() if components.get("streetName") else ""
     city = str(components.get("city") or "").strip()
     if not all((house,street,city)):
         warnings.append("Geocoder did not provide enough address components to verify the parcel.")

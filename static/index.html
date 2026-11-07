@@ -16,7 +16,7 @@
 <div class="grid"><div class="metric"><small>Lot area (reported)</small><strong id="lotArea">—</strong></div><div class="metric"><small>Existing residential area</small><strong id="buildingArea">—</strong></div><div class="metric"><small>Mapped zoning</small><strong id="zone">—</strong></div></div>
 <div class="alert" id="verification"></div><div class="details" id="facts"></div></div>
 <div class="card" id="parcelResearch"><h2>Ownership &amp; parcel identity</h2><p id="ownerStatus" class="small muted"></p><p id="lastTransfer" class="small muted"></p><div id="parcelCandidates" class="details"></div></div>
-<div class="card" id="localZoning"><h2>Local zoning &amp; expansion review</h2><p id="zoningStatus" class="small muted"></p><div id="zoningStandards" class="details"></div><p id="zoningConditions" class="small muted"></p><div id="constraintChecks" class="details"></div></div>
+<div class="card" id="localZoning"><h2>Local zoning &amp; expansion review</h2><p id="zoningStatus" class="small muted"></p><div id="zoningStandards" class="details"></div><p id="zoningConditions" class="small muted"></p><div id="constraintChecks" class="details"></div><div id="multifamilyScreen" class="item hide"></div></div>
 <div class="card" id="condoProgram"><h2>Dwelling units &amp; potential condo sellout</h2><p id="dwellingStatus" class="small muted"></p>
 <div class="grid"><div class="metric"><small>Existing dwelling units · assessor reported</small><strong id="existingDwellingUnits">Unresolved</strong></div><div class="metric"><small>Total proposed dwelling units · scenario</small><strong id="proposedDwellingUnits">Define unit mix</strong></div><div class="metric dark"><small>Total potential condo sellout · gross</small><strong id="condoSellout">Needs pricing</strong></div></div><p id="unitTotalsNote" class="small muted">Proposed unit counts require a building program and local review.</p>
 <details open><summary>Build a condo sales scenario</summary><p class="small muted">Enter the completed project's condo unit mix. Units retained outside the sellout count toward the proposed dwelling total but produce no condo-sale revenue. These assumptions do not establish permitted unit capacity.</p>
@@ -78,12 +78,43 @@ renderCondoProgram(d);
 }
 function renderLocalZoning(d){
 const z=d.zoning,review=d.zoning_review,coverage=d.coverage||{};
-$('zoningStatus').textContent=z?'Mapped district: '+z.district+(z.article?' · Zoning article '+z.article:'')+' · '+(z.match_method||'Municipal map lookup')+(z.source_updated_at?' · Published GIS date: '+z.source_updated_at:' · GIS update date not supplied')+'. '+(z.snapshot_note||'Current amendments and full overlay coverage require confirmation.'):(coverage.status||'Municipal zoning is not connected')+'. A mapped district is required before applying local dimensional rules.';
+$('zoningStatus').textContent=z?'Mapped district: '+z.district+(z.district_description?' · '+z.district_description:'')+(z.article?' · Zoning article '+z.article:'')+' · '+(z.match_method||'Municipal map lookup')+(z.source_updated_at?' · Published GIS date: '+z.source_updated_at:' · GIS update date not supplied')+'. '+(z.snapshot_note||'Current amendments and full overlay coverage require confirmation.'):(coverage.status||'Municipal zoning is not connected')+'. A mapped district is required before applying local dimensional rules.';
 $('zoningStandards').replaceChildren();$('zoningConditions').textContent='';
 if(review){const rules=review.standards;const values=[['Reference section',review.section],['Minimum single-family lot',fmt(rules.min_lot_sqft)+' sq ft'],['Minimum frontage',rules.frontage_ft+' ft'],['Foundation front setback',rules.front_ft+' ft'],['Side / rear yard',rules.side_ft+' / '+rules.rear_ft+' ft'],['Principal-building height',rules.height_ft+' ft']];values.forEach(([label,value])=>{const item=document.createElement('div');item.className='item';const s=document.createElement('span');s.textContent=label;const b=document.createElement('strong');b.textContent=value;item.append(s,b);$('zoningStandards').append(item)});$('zoningConditions').textContent=review.lot_area_status+'. '+review.conditions+' '+review.limitations;}
 else if(z?.reference_standards){Object.entries(z.reference_standards).forEach(([label,value])=>{const item=document.createElement('div');item.className='item';const s=document.createElement('span');s.textContent=label+' · GIS reference';const b=document.createElement('strong');b.textContent=String(value);item.append(s,b);$('zoningStandards').append(item)});$('zoningConditions').textContent='Values are displayed as supplied by the municipal GIS. Check the linked zoning article, dimensional-table units, use-specific rules and footnotes before applying them. '+(z.reference_conditions||'');}
 (z?.regulatory_links||[]).forEach(link=>{const a=document.createElement('a');a.href=link.url;a.target='_blank';a.rel='noopener noreferrer';a.textContent=link.name+' ↗';a.style.marginRight='14px';$('zoningConditions').append(a)});
 $('constraintChecks').replaceChildren();(d.constraints||[]).forEach(c=>{const item=document.createElement('div');item.className='item';const s=document.createElement('span');s.textContent=c.name;const b=document.createElement('strong');b.textContent=c.status;const p=document.createElement('p');p.className='small muted';p.textContent=(c.labels||[]).join(', ')+(c.labels?.length?'. ':'')+c.note;item.append(s,b,p);$('constraintChecks').append(item)});
+const screen=d.multifamily_screen, box=$('multifamilyScreen');
+box.replaceChildren();
+box.classList.toggle('hide',!screen);
+if(screen){
+  const title=document.createElement('strong');
+  title.textContent='Multifamily zoning · Section 3A';
+  const note=document.createElement('p');
+  note.className='small muted';
+  note.textContent=screen.status+'.';
+  box.append(title,note);
+  for(const district of screen.districts||[]){
+    const row=document.createElement('p');
+    row.className='small';
+    row.textContent=district.name+' · '+district.parcel_overlap_pct+'% of parcel'+
+      (district.municipal_submission_date?' · Municipal submission '+district.municipal_submission_date:'')+
+      (district.district_cap_reported>0?' · District-wide cap reported: '+fmt(district.district_cap_reported)+' units':'');
+    box.append(row);
+  }
+  if(screen.modeled_units!=null){
+    const units=document.createElement('p');
+    units.className='small';
+    units.textContent=fmt(screen.modeled_units)+' total dwellings in the state compliance model. Confirm the project-specific unit count with local planning before using it in a condo scenario.';
+    box.append(units);
+  }
+  const link=document.createElement('a');
+  link.href=screen.source_url;
+  link.target='_blank';
+  link.rel='noopener noreferrer';
+  link.textContent='MassGIS District Atlas ↗';
+  box.append(link);
+}
 }
 async function jsonResponse(url,options={}){const r=await fetch(url,{...options,headers:{Accept:'application/json',...(options.headers||{})}});if(!(r.headers.get('content-type')||'').includes('json'))throw Error('The server returned an error page instead of property data. Please try again shortly.');const d=await r.json();if(!r.ok)throw Error(typeof d.detail==='string'?d.detail:Array.isArray(d.detail)?d.detail.map(x=>x.msg).join('; '):'The property service is unavailable.');return d}
 async function lookup(selectedPid=null){const q=$('address').value.trim();clearTimeout(delay);seq++;$('suggestions').classList.add('hide');if(q.length<5){$('status').textContent='Enter a full Massachusetts address.';return}const b=$('go');b.disabled=true;$('status').textContent='Checking public property records…';try{const d=await jsonResponse('/api/property?address='+encodeURIComponent(q)+(selectedPid?'&boston_pid='+encodeURIComponent(selectedPid):''));render(d)}catch(e){$('status').textContent=e.message}finally{b.disabled=false}}
