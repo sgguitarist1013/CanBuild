@@ -10,7 +10,7 @@ The coverage endpoint lists all 351 cities and towns from [MassGIS municipal bou
 
 ## Municipality checkoff
 
-The coverage API reports a base-map status for all 351 municipalities. In this release there are ten municipal map connections, 11 historical references and 330 places awaiting a base-map connection. A connected map does not complete the municipality review. Check off local ordinance and amendment verification, overlay review, and parcel-specific capacity separately.
+The coverage API reports a base-map status for all 351 municipalities. In this release there are 12 municipal map connections, 11 historical references and 328 places awaiting a base-map connection. A connected map does not complete the municipality review. Check off local ordinance and amendment verification, overlay review, and parcel-specific capacity separately.
 
 The February 10, 2026 [EOHLC Chapter 40R district table](https://www.mass.gov/info-details/chapter-40r-smart-growth-zoning) provides 67 named district leads across 53 municipalities. The tracker records only names and the snapshot date. It does not use the table to match a parcel, estimate a project or confirm current district boundaries.
 
@@ -21,6 +21,8 @@ Regional snapshots are kept as historical references. The [NMCOG layer](https://
 | --- | --- | --- |
 | Arlington | Town GIS base districts and mapped overlays; base layer edit date November 7, 2025. | Verify current bylaws, amendments and project rules. |
 | Northampton | City GIS base districts and mapped overlays; base layer edit date February 6, 2026. City planning links the zoning code. | Verify district-specific standards, amendments and parcel yield. |
+| Lynn | City viewer's December 2025 zoning layer and mapped frontage screens. | Verify later amendments, frontage obligations and capacity. |
+| Springfield | City GIS base, overlay and split zoning layers plus published ordinance links. | Verify ordinance amendments against map and apply district-specific project rules. |
 | Newton | Official city zoning and village center overlay layers. | Verify current code, overlay conditions and capacity. |
 | Worcester | City GIS base districts and overlays; base layer edit date April 28, 2025. | Verify district rules, amendments and project capacity. |
 | Stow | Historical 2022 town base map. | Verify current base districts, bylaws and overlays. |
@@ -32,6 +34,10 @@ Regional snapshots are kept as historical references. The [NMCOG layer](https://
 Watertown's [city zoning page](https://www.watertown-ma.gov/zoning) links the MapGeo viewer and code. The viewer's published CARTO legend still lists the older Central Business district and omits the Watertown Square districts, so it is not used for current parcel assignments. The report uses the distinct `314WSQ*_TODO` atlas records, including the active-frontage records, to select reference material. Reference heights and open-space percentages come from [§ 5.08](https://ecode360.com/37104064). Review path and partial-lot treatment come from [§ 5.09](https://ecode360.com/37104096). The screen does not resolve current map boundaries, frontage geometry, eligibility for bonus height, or buildable unit yield.
 
 ## Published sources
+
+- [Lynn city zoning viewer](https://cityoflynn.maps.arcgis.com/apps/instant/basic/index.html?appid=046e581adf6c4a93bbb4e997497df453) reports amendments through December 9, 2025. Its published map uses layers 11 (`ZONE`), 9 (ground-floor commercial) and 10 (required thoroughfares). The base data edit date is December 17, 2025. The two frontage layers provide intersection screens only. Check the [city zoning resources](https://www.lynnma.gov/city_government/departments/isd/zoning) before applying the rules.
+- [Springfield city GIS](https://maps.springfield-ma.gov/gis/) publishes base zoning (layer 31, `ZONING`, `ZONE_NAME`), overlays (layer 30, `NAME`) and split zoning (layer 32). Unlabeled base polygons are excluded from district matching. If the split layer intersects the parcel or cannot be queried, the report withholds a single base district. [Springfield zoning ordinances](https://www.springfield-ma.gov/planning/planning/zoning-ordinances) lists code articles and the consolidated ordinance. Map and ordinance amendment dates are tracked separately.
+
 
 - [Arlington town GIS](https://www.arcgis.com/home/item.html?id=9916a97573ca40db9c817f478bf44c43): layers 1 (base district, `ZoneCode`) and 0 (overlays, `OverlayDistrict`). The area-preserving ring repair already used for Everett is enabled for Arlington after a live R1 parcel exposed a self-touching ring. This item supersedes the separate reference map that states its amendments stop at the 2020 special town meeting.
 - [Northampton city GIS](https://www.arcgis.com/home/item.html?id=60931800fa7c4fc2880b4c593af00b7a): layers 2 (base district, `NAME`) and 1 (overlays, `NAME1_`). [Planning & Sustainability](https://www.northamptonma.gov/924/Planning-Sustainability) links the [zoning code](https://ecode360.com/13265306).
