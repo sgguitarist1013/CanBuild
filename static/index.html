@@ -73,8 +73,9 @@ function renderRedevelopment(d){
   const screen=d.redevelopment, best=screen?.best;
   $('automaticRedevelopment').hidden=!screen;
   $('envelopeCard').hidden=!!best;
+  $('condoProgram').hidden=!!best;
   $('redevelopmentMetrics').hidden=!best;
-  $('redevelopmentStatus').textContent=best?best.name+' · '+best.stories+' stories. '+screen.ranking:screen?.status||'';
+  $('redevelopmentStatus').textContent=best?best.name+' · '+best.stories+' stories. '+screen.ranking+' Confirm zoning and project-specific costs before relying on this estimate.':screen?.status||'';
   $('redevelopmentAreas').textContent='';
   $('redevelopmentMix').replaceChildren();
   $('redevelopmentEvidence').replaceChildren();

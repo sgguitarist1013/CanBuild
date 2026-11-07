@@ -1,6 +1,6 @@
 # Automatic redevelopment screen
 
-The property endpoint populates a preliminary for-sale redevelopment screen for Cambridge C-1 parcels where the existing geometric rule engine can produce an envelope. Other zoning coverage does not imply a usable development envelope. The default report requires no inputs. An optional manual condo tool remains separate for user-provided scenarios.
+The property endpoint populates a preliminary for-sale redevelopment screen for Cambridge C-1 parcels where the existing geometric rule engine can produce an envelope. Other zoning coverage does not imply a usable development envelope. The default report requires no inputs. An optional manual condo tool is available on reports without an automatic estimate.
 
 ## Program and revenue
 
