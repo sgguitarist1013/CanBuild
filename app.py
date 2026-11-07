@@ -4,10 +4,14 @@ from pathlib import Path
 from datetime import datetime, timezone
 import asyncio
 import os, math, re
+from secrets import compare_digest
+import sqlite3
 import httpx
 from shapely.geometry import shape
 from shapely.ops import unary_union, transform
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query
+from pydantic import BaseModel, Field
+from typing import Literal
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from parcel_engine import resolve_parcel, conceptual_massing, normalize_address
@@ -18,11 +22,13 @@ from data_quality import review_building
 from condo_analysis import CondoProgram, analyze_program, cambridge_new_build_sales, condo_sales
 from monitoring import configure_monitoring
 from redevelopment import analyze_redevelopment
+import zoning_research
 
 configure_monitoring()
 
 ROOT=Path(__file__).parent
-app=FastAPI(title="CanBuild Massachusetts",version="0.15.0")
+VERSION = "0.16.0"
+app=FastAPI(title="CanBuild Massachusetts",version=VERSION)
 app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
 CENSUS="https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress"
 PARCELS="https://services1.arcgis.com/hGdibHYSPO59RG1h/ArcGIS/rest/services/Massachusetts_Property_Tax_Parcels/FeatureServer/0/query"
@@ -39,7 +45,7 @@ def now(): return datetime.now(timezone.utc).isoformat()
 @app.get("/")
 def home(): return FileResponse(ROOT/"static"/"index.html")
 @app.get("/api/health")
-def health(): return {"ok":True,"version":"0.15.0","time":now()}
+def health(): return {"ok":True,"version":VERSION,"time":now()}
 @app.get("/api/coverage")
 def coverage():
     rows = [municipal_zoning.coverage(city) for city in municipal_zoning.MUNICIPALITIES]
@@ -50,6 +56,44 @@ def sources(municipality:str|None=None):
     local=municipal_zoning.REGISTRY.get((municipality or '').upper(),{})
     return {"sources":[SOURCES[0], {"name":"MassGIS Section 3A District Atlas","url":municipal_zoning.ATLAS_SOURCE}]+[{"name":label,"url":local[key]} for label,key in (('Municipal zoning map','map_url'),('Municipal planning department' if local.get('historical_zoning_only') else 'Municipal zoning ordinance','code_url')) if local.get(key)],
         "coverage":municipal_zoning.coverage(municipality or ''),"note":"Source links and coverage status; no automatic amendment certification."}
+class ZoningReviewDecision(BaseModel):
+    decision: Literal["reviewed", "rejected"]
+    note: str = Field(min_length=1, max_length=2000)
+
+
+def require_reviewer(authorization):
+    token = os.getenv("ZONING_REVIEW_TOKEN")
+    if not token:
+        raise HTTPException(404, "Reviewer access is not configured.")
+    if not compare_digest((authorization or "").encode(), f"Bearer {token}".encode()):
+        raise HTTPException(401, "Reviewer token required.")
+
+
+@app.get("/api/internal/zoning-review", include_in_schema=False)
+def zoning_review_queue(authorization: str | None = Header(default=None), limit: int = Query(default=40, ge=1, le=100)):
+    require_reviewer(authorization)
+    return {"pending": zoning_research.cache().queue(limit)}
+
+
+@app.post("/api/internal/zoning-review/{revision}", include_in_schema=False)
+def decide_zoning_review(revision: int, decision: ZoningReviewDecision, authorization: str | None = Header(default=None)):
+    require_reviewer(authorization)
+    try:
+        updated = zoning_research.cache().review(revision, decision.decision, decision.note)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if not updated:
+        raise HTTPException(409, "The revision has changed, could not be refreshed, or was already reviewed.")
+    return {"revision": revision, "decision": decision.decision}
+
+
+async def search_zoning_sources(city, district, registered_url):
+    try:
+        return await zoning_research.cache().search(city, district, registered_url)
+    except (OSError, sqlite3.Error):
+        return None
+
+
 @app.post('/api/condo-scenario')
 def condo_scenario(program:CondoProgram):
     return analyze_program(program)
@@ -140,6 +184,7 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
         except Exception as exc:
             result["warnings"].append("Statewide parcel matcher unavailable: "+type(exc).__name__+".")
             print("Statewide parcel lookup failed:",type(exc).__name__,str(exc)[:200],flush=True)
+        sales_task = None
         if parts.get("city","").upper()=="BOSTON":
             result["sources"]=[{"name":"Boston municipal assessor FY2026 and recorded sales","url":boston.SOURCE},{"name":"MassGIS statewide parcels","url":SOURCES[0]["url"]}]
             try:
@@ -154,18 +199,15 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
                         polygon=await boston.selected_polygon(client,record['PID'],lat)
                     except (httpx.HTTPError,ValueError,TypeError):
                         result['warnings'].append('Selected Boston parcel polygon unavailable; zoning lookup withheld.')
-                    try:result["sales_research"]=await boston.sales_research(client,record)
-                    except (httpx.HTTPError,ValueError,TypeError):
-                        result["sales_research"]={"status":"Boston sales service temporarily unavailable","candidates":[]}
+                    sales_task = asyncio.create_task(boston.sales_research(client, record))
                 elif candidates:
                     result["warnings"].append("Municipal records use different address labels here. Select and verify a candidate parcel before attributing ownership or sales.")
             except (httpx.HTTPError,ValueError,TypeError):
                 result["warnings"].append("Boston municipal records temporarily unavailable; retry the lookup.")
         elif result.get("parcel"):
-            try:
-                result["sales_research"]=await ma_sales.search(client,lon,lat,parts.get("city"),result["parcel"],result.get("existing_building"))
-            except (httpx.HTTPError,ValueError,TypeError):
-                result["sales_research"]={"status":"Statewide assessor sale lookup temporarily unavailable","candidates":[],"source_url":ma_sales.SOURCE}
+            sales_task = asyncio.create_task(ma_sales.search(
+                client, lon, lat, parts.get("city"), result["parcel"], result.get("existing_building"),
+            ))
         atlas_task = asyncio.create_task(municipal_zoning.multifamily_screen(
             client, parts.get("city") or "", polygon, lat, (result.get("parcel") or {}).get("loc_id"),
         ))
@@ -194,7 +236,18 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
                 result['warnings'].append('Municipal zoning: '+local.get('status','selected parcel geometry unavailable')+'.')
         else:
             result["warnings"].append("Live municipal zoning connector is not yet configured for "+str(parts.get("city"))+". Assessor zoning codes are not treated as verified current zoning.")
+        if result.get("parcel"):
+            city = parts.get("city") or ""
+            matched_zoning = result.get("zoning") or {}
+            district = None if matched_zoning.get("historical_reference") else matched_zoning.get("district")
+            registry = municipal_zoning.REGISTRY.get(city.upper(), {})
+            result["on_demand_zoning_research"] = await search_zoning_sources(city, district, registry.get("code_url"))
         result["multifamily_screen"] = await atlas_task
+        if sales_task:
+            try:
+                result["sales_research"] = await sales_task
+            except (httpx.HTTPError, ValueError, TypeError):
+                result["sales_research"] = {"status": "Comparable sales service temporarily unavailable", "candidates": []}
     zoning = result.get('zoning') or {}
     historical = zoning.get('historical_reference')
     district = zoning.get('district')

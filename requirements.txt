@@ -5,3 +5,6 @@ pydantic>=2,<3
 
 shapely>=2.0,<3
 sentry-sdk[fastapi]>=2.74,<3
+
+beautifulsoup4>=4.13,<5
+pypdf>=6,<7
