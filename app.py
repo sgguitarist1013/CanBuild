@@ -13,12 +13,13 @@ import boston
 import ma_sales
 import municipal_zoning
 from data_quality import review_building
+from condo_analysis import CondoProgram, analyze_program, condo_sales
 from monitoring import configure_monitoring
 
 configure_monitoring()
 
 ROOT=Path(__file__).parent
-app=FastAPI(title="CanBuild Massachusetts",version="0.9.0")
+app=FastAPI(title="CanBuild Massachusetts",version="0.10.0")
 app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
 CENSUS="https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress"
 PARCELS="https://services1.arcgis.com/hGdibHYSPO59RG1h/ArcGIS/rest/services/Massachusetts_Property_Tax_Parcels/FeatureServer/0/query"
@@ -35,7 +36,7 @@ def now(): return datetime.now(timezone.utc).isoformat()
 @app.get("/")
 def home(): return FileResponse(ROOT/"static"/"index.html")
 @app.get("/api/health")
-def health(): return {"ok":True,"version":"0.9.0","time":now()}
+def health(): return {"ok":True,"version":"0.10.0","time":now()}
 @app.get("/api/coverage")
 def coverage():
     return {"municipalities":[municipal_zoning.coverage(city) for city in municipal_zoning.REGISTRY],
@@ -45,6 +46,19 @@ def sources(municipality:str|None=None):
     local=municipal_zoning.REGISTRY.get((municipality or '').upper(),{})
     return {"sources":[SOURCES[0]]+[{"name":label,"url":local[key]} for label,key in (('Municipal zoning map','map_url'),('Municipal zoning ordinance','code_url')) if local.get(key)],
         "coverage":municipal_zoning.coverage(municipality or ''),"note":"Source links and coverage status; no automatic amendment certification."}
+@app.post('/api/condo-scenario')
+def condo_scenario(program:CondoProgram):
+    return analyze_program(program)
+
+@app.get('/api/condo-sales')
+async def condo_references(municipality:str=Query(min_length=2,max_length=80,pattern=r"^[A-Za-z .'-]+$"),
+        lon:float=Query(ge=-73.6,le=-69.8),lat:float=Query(ge=41,le=43),
+        boston_pid:str|None=Query(default=None,pattern=r'^\d{10}$'),min_year_built:int|None=Query(default=None,ge=1800,le=datetime.now().year)):
+    try:
+        async with httpx.AsyncClient(timeout=25,follow_redirects=True) as client:
+            return await condo_sales(client,lon,lat,municipality,boston_pid,min_year_built)
+    except (httpx.HTTPError,ValueError,TypeError):
+        raise HTTPException(503,'Condominium sale references are temporarily unavailable. Your scenario inputs are preserved; try again later.')
 @app.get("/api/suggest")
 async def suggest(q:str=Query(min_length=2,max_length=150)):
     """Massachusetts address suggestions, updated for each typed prefix."""
@@ -179,6 +193,10 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
             result['sources'].append({'name':city.title()+' '+label,'url':local_sources[key]})
     result['sources'].append({'name':'Massachusetts Registry of Deeds search','url':'https://www.masslandrecords.com/'})
     result['warnings'] += review_building(result.get('existing_building'))
+    observed=result.get('existing_building') or {}
+    result['dwelling_unit_summary']={'existing_reported_total':observed.get('units'),
+        'status':observed.get('unit_count_status','not reported'),'note':observed.get('unit_count_note'),
+        'potential_total':None,'potential_status':'A defined unit mix and local approvals are required; a geometric floor-area scenario is not a permitted dwelling-unit count.'}
     if (result.get('existing_building') or {}).get('unit_count_status')=='conflict':
         result['recommendations'].append({'title':'Resolve the legal dwelling count','reason':result['existing_building']['unit_count_note'],
             'next_step':'Check the municipal property card, certificates of occupancy and permit history before evaluating a conversion or additional units.','confidence':'Source conflict'})

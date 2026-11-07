@@ -99,3 +99,72 @@ def test_alias_selection_owner_and_sales(page, app_url, property_record):
     expect(page.locator('#ownerStatus')).to_contain_text('ONE LEWIS WHARF LLC')
     expect(page.locator('#salesCandidates')).to_contain_text('$12,000,000')
     assert any('boston_pid=0303029000' in url for url in requests)
+
+
+def test_condo_program_totals_sellout_and_property_reset(page,app_url,property_record):
+    first=dict(property_record,existing_building={'units':3})
+    second=dict(property_record,address='Another property',existing_building={'units':None,'unit_count_status':'conflict'})
+    calls=[]
+    def respond(route):
+        calls.append(1)
+        route.fulfill(json=first if len(calls)==1 else second)
+    page.route('**/api/property?*',respond)
+    page.route('**/api/suggest?*',lambda route:route.fulfill(json={'suggestions':[]}))
+    page.goto(app_url)
+    page.get_by_role('combobox').fill('95 Magazine St, Cambridge, MA')
+    page.get_by_role('button',name='Explore property').click()
+    expect(page.locator('#existingDwellingUnits')).to_have_text('3')
+    rows=page.locator('.unit-mix-row')
+    for i,values in enumerate([('2','1000','800','1000'),('1','1200','900','1100')]):
+        for field,value in zip(['units','area_sqft','low_price_per_sqft','high_price_per_sqft'],values):
+            rows.nth(i).locator('[data-field="'+field+'"]').fill(value)
+    page.locator('#retainedUnits').fill('2')
+    page.locator('#restrictedUnits').fill('1')
+    page.locator('#restrictedUnitPrice').fill('250000')
+    page.get_by_role('button',name='Calculate unit totals & sellout').click()
+    expect(page.locator('#proposedDwellingUnits')).to_have_text('6')
+    expect(page.locator('#condoSellout')).to_have_text('$2,930,000–$3,570,000')
+    expect(page.locator('#unitTotalsNote')).to_contain_text('4 condos in sellout')
+    expect(page.locator('#condoScenarioLimits')).to_contain_text('not profit')
+    page.get_by_role('combobox').fill('Another property, Cambridge, MA')
+    page.get_by_role('button',name='Explore property').click()
+    expect(page.locator('#existingDwellingUnits')).to_have_text('Unresolved')
+    expect(page.locator('#condoSellout')).to_have_text('Needs pricing')
+    expect(page.locator('#proposedDwellingUnits')).to_have_text('Define unit mix')
+
+
+def test_condo_sale_range_is_an_explicit_assumption(page,app_url,property_record):
+    record=dict(property_record,coordinates={'lat':42.36,'lon':-71.1},coverage={'municipality':'CAMBRIDGE'})
+    refs={'status':'3 condominium sale references','method':'Reported living area.','limitations':'New-construction condition is not verified.','observed_price_per_sqft_low':700,'observed_price_per_sqft_high':900,
+        'candidates':[{'address':'Test condo '+str(i),'sale_date':'2026-10-01','sale_price':p,'living_area_sqft':1000,'price_per_living_sqft':p/1000,'source_url':'https://www.mass.gov/'} for i,p in enumerate([700000,800000,900000])]}
+    page.route('**/api/property?*',lambda route:route.fulfill(json=record))
+    page.route('**/api/suggest?*',lambda route:route.fulfill(json={'suggestions':[]}))
+    calls=[]
+    def pricing_response(route):
+        calls.append(1)
+        route.fulfill(status=503,json={'detail':'Condo source temporarily unavailable'}) if len(calls)==1 else route.fulfill(json=refs)
+    page.route('**/api/condo-sales?*',pricing_response)
+    page.goto(app_url)
+    page.get_by_role('combobox').fill('95 Magazine St, Cambridge, MA')
+    page.get_by_role('button',name='Explore property').click()
+    row=page.locator('.unit-mix-row').first
+    row.locator('[data-field="units"]').fill('3')
+    row.locator('[data-field="area_sqft"]').fill('1000')
+    page.get_by_text('Condominium sale references for pricing',exact=True).click()
+    expect(page.get_by_role('button',name='Use observed range as assumptions')).to_be_disabled()
+    page.get_by_role('button',name='Find nearby condo sales').click()
+    expect(page.locator('#condoCompStatus')).to_contain_text('temporarily unavailable')
+    expect(row.locator('[data-field="units"]')).to_have_value('3')
+    expect(row.locator('[data-field="area_sqft"]')).to_have_value('1000')
+    page.get_by_role('button',name='Find nearby condo sales').click()
+    expect(page.locator('#condoReferences')).to_contain_text('Test condo 0')
+    expect(page.locator('#condoCompStatus')).to_contain_text('not verified')
+    page.get_by_role('button',name='Use observed range as assumptions').click()
+    row=page.locator('.unit-mix-row').first
+    expect(row.locator('[data-field="low_price_per_sqft"]')).to_have_value('700')
+    expect(row.locator('[data-field="high_price_per_sqft"]')).to_have_value('900')
+    row.locator('[data-field="units"]').fill('3')
+    row.locator('[data-field="area_sqft"]').fill('1000')
+    page.get_by_role('button',name='Calculate unit totals & sellout').click()
+    expect(page.locator('#condoSellout')).to_have_text('$2,100,000–$2,700,000')
+    expect(page.locator('#restrictedUnitPrice')).to_have_value('')
