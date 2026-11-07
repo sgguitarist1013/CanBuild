@@ -114,6 +114,7 @@ def test_condo_program_totals_sellout_and_property_reset(page,app_url,property_r
     page.get_by_role('combobox').fill('95 Magazine St, Cambridge, MA')
     page.get_by_role('button',name='Explore property').click()
     expect(page.locator('#existingDwellingUnits')).to_have_text('3')
+    page.get_by_text('Optional manual condo scenario',exact=True).click()
     rows=page.locator('.unit-mix-row')
     for i,values in enumerate([('2','1000','800','1000'),('1','1200','900','1100')]):
         for field,value in zip(['units','area_sqft','low_price_per_sqft','high_price_per_sqft'],values):
@@ -147,6 +148,7 @@ def test_condo_sale_range_is_an_explicit_assumption(page,app_url,property_record
     page.goto(app_url)
     page.get_by_role('combobox').fill('95 Magazine St, Cambridge, MA')
     page.get_by_role('button',name='Explore property').click()
+    page.get_by_text('Optional manual condo scenario',exact=True).click()
     row=page.locator('.unit-mix-row').first
     row.locator('[data-field="units"]').fill('3')
     row.locator('[data-field="area_sqft"]').fill('1000')
@@ -168,3 +170,21 @@ def test_condo_sale_range_is_an_explicit_assumption(page,app_url,property_record
     page.get_by_role('button',name='Calculate unit totals & sellout').click()
     expect(page.locator('#condoSellout')).to_have_text('$2,100,000–$2,700,000')
     expect(page.locator('#restrictedUnitPrice')).to_have_value('')
+
+
+def test_automatic_redevelopment_shows_default_estimate_without_input(page, app_url, property_record):
+    from redevelopment import analyze_redevelopment
+
+    redevelopment = analyze_redevelopment({"gross_area_high_sqft": 12000, "stories": 4},
+                                          {"assessed_value": 900000, "building_area_sqft": 3000})
+    record = dict(property_record, redevelopment=redevelopment)
+    page.route("**/api/property?*", lambda route: route.fulfill(json=record))
+    page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
+    page.goto(app_url)
+    page.get_by_role("combobox").fill("95 Magazine St, Cambridge, MA")
+    page.get_by_role("button", name="Explore property").click()
+    expect(page.locator("#autoSellout")).to_contain_text("$")
+    expect(page.locator("#autoCost")).to_contain_text("$")
+    expect(page.locator("#redevelopmentAreas")).to_contain_text("restricted")
+    expect(page.locator("#redevelopmentMix")).to_contain_text("Cambridge 2026 study")
+    assert not page.get_by_text("Optional manual condo scenario", exact=True).evaluate("(el) => el.parentElement.open")

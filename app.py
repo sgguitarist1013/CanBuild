@@ -15,13 +15,14 @@ import boston
 import ma_sales
 import municipal_zoning
 from data_quality import review_building
-from condo_analysis import CondoProgram, analyze_program, condo_sales
+from condo_analysis import CondoProgram, analyze_program, cambridge_new_build_sales, condo_sales
 from monitoring import configure_monitoring
+from redevelopment import analyze_redevelopment
 
 configure_monitoring()
 
 ROOT=Path(__file__).parent
-app=FastAPI(title="CanBuild Massachusetts",version="0.14.3")
+app=FastAPI(title="CanBuild Massachusetts",version="0.15.0")
 app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
 CENSUS="https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress"
 PARCELS="https://services1.arcgis.com/hGdibHYSPO59RG1h/ArcGIS/rest/services/Massachusetts_Property_Tax_Parcels/FeatureServer/0/query"
@@ -38,7 +39,7 @@ def now(): return datetime.now(timezone.utc).isoformat()
 @app.get("/")
 def home(): return FileResponse(ROOT/"static"/"index.html")
 @app.get("/api/health")
-def health(): return {"ok":True,"version":"0.14.3","time":now()}
+def health(): return {"ok":True,"version":"0.15.0","time":now()}
 @app.get("/api/coverage")
 def coverage():
     rows = [municipal_zoning.coverage(city) for city in municipal_zoning.MUNICIPALITIES]
@@ -263,6 +264,25 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
         result["recommendations"].append({"title":"Check local expansion standards","reason":"The district is mapped, but a reviewed rule set for this district is not available in CanBuild.","next_step":"Confirm setbacks, height, lot coverage, open space, nonconforming-lot rules, overlays, and permit requirements with the municipality.","confidence":"District mapped; dimensional rules incomplete"})
     else:
         result["recommendations"].append({"title":"Review the preliminary zoning scenario","reason":"A district-specific scenario is available, subject to its stated assumptions and limitations.","next_step":"Have the city review a current survey and proposed footprint before paying for design work.","confidence":result["zoning_potential"].get("confidence")})
+    result["redevelopment"] = analyze_redevelopment(result.get("zoning_potential"), result.get("existing_building"))
+    if result["redevelopment"].get("best"):
+        references = None
+        try:
+            async with asyncio.timeout(13), httpx.AsyncClient(timeout=12, follow_redirects=True) as client:
+                if city.upper() == "CAMBRIDGE":
+                    references = await cambridge_new_build_sales(client)
+                else:
+                    coords = result["coordinates"]
+                    references = await condo_sales(client, coords["lon"], coords["lat"], city,
+                        min_year_built=datetime.now().year - 4, radius_miles=3, new_build_only=True)
+        except (TimeoutError, httpx.HTTPError, ValueError, TypeError):
+            pass
+        candidates = (references or {}).get("candidates", [])
+        result["redevelopment"] = analyze_redevelopment(
+            result["zoning_potential"], result.get("existing_building"),
+            candidates if references and not references["truncated"] else [],
+        )
+        result["redevelopment"]["sale_references"] = references
     return result
 
 # Regression tests run with every deployment. A failing suite prevents startup.
