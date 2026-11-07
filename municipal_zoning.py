@@ -2,10 +2,13 @@
 import asyncio
 import json
 import math
+import re
+from pathlib import Path
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 import httpx
+from shapely.errors import GEOSException
 from shapely.geometry import Polygon, shape
 from shapely.ops import transform, unary_union
 from shapely.strtree import STRtree
@@ -13,20 +16,29 @@ from shapely.strtree import STRtree
 CHICOPEE = "https://hostingdata3.tighebond.com/arcgis/rest/services/ChicopeeMA/ChicopeeDynamic/MapServer"
 BOSTON = "https://gis.boston.gov/arcgis/rest/services/Basemaps/basemap_IPS/MapServer"
 SOMERVILLE = "https://cos-geoportal.somervillema.gov/server/rest/services/enCodePlus"
+CHELSEA = "https://services9.arcgis.com/diuwWhOq89A0FdTw/arcgis/rest/services/City_of_Chelsea_Map_Layers/FeatureServer"
+ATLAS = "https://services1.arcgis.com/hGdibHYSPO59RG1h/arcgis/rest/services/MBTA_Communities_3A_District_Atlas/FeatureServer"
+ATLAS_SOURCE = "https://www.mass.gov/info-details/massgis-data-mbta-communities-3a-district-atlas"
+MUNICIPALITIES = json.loads((Path(__file__).parent / "docs/massachusetts_municipalities.json").read_text())
+LOCAL_CONNECTORS = {"BOSTON", "SOMERVILLE", "CHICOPEE", "CHELSEA"}
 REGISTRY = {
     "CAMBRIDGE": {"priority": 1, "reason": "Multifamily and inclusionary housing capacity", "status": "District connector and C-1 conceptual rules", "map_url": "https://www.cambridgema.gov/gis/gisdatadictionary/cdd/cdd_zoningdistricts", "code_url": "https://www.cambridgema.gov/cdd/zoninganddevelopment/zoning/ordinance"},
     "SOMERVILLE": {"priority": 1, "reason": "Building type, density, and mixed-use redevelopment", "status": "Published June 2025 parcel zoning and official district-rule links; later amendments require review", "map_url": "https://map.viewprogis.com/ecp/somerville-test?widget=9efa8bb5-3de1-4ff7-86b1-f698d0d6fb0d", "code_url": "https://online.encodeplus.com/regs/somerville-ma/doc-viewer.aspx"},
     "BOSTON": {"priority": 1, "reason": "Subdistrict, overlays, and redevelopment capacity", "status": "Municipal subdistrict GIS connector; project rules require review", "map_url": "https://www.bostonplans.org/zoning/zoning-viewer", "code_url": "https://www.bostonplans.org/zoning/zoning-code"},
-    "WATERTOWN": {"priority": 2, "reason": "Corridor and mixed-use redevelopment", "status": "Queued for municipal source verification", "map_url": "https://www.watertown-ma.gov/", "code_url": "https://www.watertown-ma.gov/"},
+    "WATERTOWN": {"priority": 2, "reason": "Corridor and mixed-use redevelopment", "status": "Queued for municipal source verification", "map_url": "https://www.watertown-ma.gov/zoning", "code_url": "https://ecode360.com/36825722"},
     "EVERETT": {"priority": 2, "reason": "Industrial and commercial redevelopment", "status": "Queued for municipal source verification", "map_url": "https://cityofeverett.com/", "code_url": "https://cityofeverett.com/"},
-    "CHELSEA": {"priority": 2, "reason": "Density and conversion opportunities", "status": "Queued for municipal source verification", "map_url": "https://www.chelseama.gov/", "code_url": "https://www.chelseama.gov/"},
-    "REVERE": {"priority": 2, "reason": "Transit and corridor redevelopment", "status": "Queued for municipal source verification", "map_url": "https://www.revere.org/", "code_url": "https://www.revere.org/"},
+    "CHELSEA": {"priority": 2, "reason": "Density and conversion opportunities", "status": "City GIS snapshot from March 2023; confirm current base zoning and overlays", "map_url": "https://www.arcgis.com/home/item.html?id=ba933034c3eb41ebad0d14ba0c6ea3b1", "code_url": "https://library.municode.com/ma/chelsea/codes/code_of_ordinances"},
+    "REVERE": {"priority": 2, "reason": "Transit and corridor redevelopment", "status": "Queued for municipal source verification", "map_url": "https://www.revere.org/gis", "code_url": "https://ecode360.com/RE6867"},
     "CHICOPEE": {"priority": 3, "reason": "Addition and nonconforming-lot reference case", "status": "Parcel zoning, constraint screening and residential A/B reference standards", "map_url": "https://chicopeema.gov/566/Geographic-Information-Systems-GIS", "code_url": "https://chicopeema.gov/383/Zoning-Ordinances"},
 }
 
 
 def coverage(city):
-    return {"municipality": city, **REGISTRY.get(str(city).upper(), {"priority": None, "status": "Municipal zoning source not connected"})}
+    return {
+        "municipality": city, **REGISTRY.get(str(city).upper(), {"priority": None, "status": "Municipal base zoning source not connected"}),
+        "base_zoning_connected": str(city).upper() in LOCAL_CONNECTORS or str(city).upper() == "CAMBRIDGE",
+        "multifamily_screen_source": ATLAS_SOURCE,
+    }
 
 
 def esri_polygon(geometry):
@@ -74,15 +86,15 @@ def esri_query_geometry(parcel, latitude):
     return json.dumps({"rings": rings, "spatialReference": {"wkid": 3857}})
 
 
-async def fetch_layer(client, url, geometry, fields='*', include_geometry=True):
+async def fetch_layer(client, url, geometry, fields='*', include_geometry=True, *, where='1=1', timeout=18):
     try:
-        response = await client.get(url + "/query", params={"f": "json", "geometry": geometry,
+        response = await client.get(url + "/query", params={"f": "json", "where": where, "geometry": geometry,
             "geometryType": "esriGeometryPolygon", "inSR": 3857, "outSR": 3857,
             "spatialRel": "esriSpatialRelIntersects", "outFields": fields, "returnGeometry": str(include_geometry).lower(), "resultRecordCount": 250},
-            timeout=httpx.Timeout(18, connect=4))
+            timeout=httpx.Timeout(timeout, connect=4))
         response.raise_for_status()
         data = await asyncio.to_thread(response.json)
-        if data.get("error") or data.get("exceededTransferLimit"):
+        if not isinstance(data, dict) or not isinstance(data.get("features"), list) or data.get("error") or data.get("exceededTransferLimit"):
             raise ValueError("Incomplete municipal spatial response")
         return data.get("features", []), None
     except (httpx.HTTPError, ValueError, TypeError):
@@ -170,7 +182,7 @@ def reference_review(district, parcel):
 
 async def lookup(client, city, parcel_geometry, latitude, parcel):
     city = str(city).upper()
-    if parcel_geometry is None or city not in ("BOSTON", "SOMERVILLE", "CHICOPEE"):
+    if parcel_geometry is None or city not in LOCAL_CONNECTORS:
         return {"coverage": coverage(city), "zoning": None, "constraints": [], "review": None}
     if city == "CHICOPEE":
         base, field, updated = CHICOPEE + "/4", "ZoneCode", "2025-01-01"
@@ -178,6 +190,15 @@ async def lookup(client, city, parcel_geometry, latitude, parcel):
     elif city == "BOSTON":
         base, field, updated = BOSTON + "/28", "Zoning_Subdistrict", None
         screens = [("Planned development areas", BOSTON + "/41", None), ("Groundwater conservation", BOSTON + "/35", None), ("Interim planning overlays", BOSTON + "/38", None)]
+    elif city == "CHELSEA":
+        base, field, updated = CHELSEA + "/12", "ZONE_CODE", "2023-03-13"
+        screens = [
+            ("Airport overlay", CHELSEA + "/7", None),
+            ("Floodplain overlay", CHELSEA + "/8", None),
+            ("Gerrish Avenue smart growth overlay", CHELSEA + "/9", None),
+            ("Mixed-use overlay", CHELSEA + "/13", None),
+            ("Mapped FEMA flood hazards", CHELSEA + "/14", "FLD_ZONE"),
+        ]
     else:
         base, field, updated = SOMERVILLE + "/ZoningByParcel/MapServer/0", "ZONECODE", "2025-06-17"
         screens = [("Zoning overlays", SOMERVILLE + "/OverlayDistricts/MapServer/0", 'District'), ("Historic districts", SOMERVILLE + "/LocalHistoricDistricts/MapServer/0", 'LHD'), ('Transit area context', SOMERVILLE + '/TransitAreas/MapServer/0', 'WALKSHED')]
@@ -207,6 +228,10 @@ async def lookup(client, city, parcel_geometry, latitude, parcel):
                 ('Maximum FAR', 'Max_FAR'), ('Maximum height', 'Max_Height'), ('Front setback', 'Front_Setback'),
                 ('Side setback', 'Side_Setback'), ('Rear setback', 'Rear_Setback')) if attrs.get(key) is not None}
             zoning['reference_conditions'] = attrs.get('Condition_Text') or attrs.get('Additional_Restrictions_or_Foot')
+        if city == 'CHELSEA':
+            zoning['district_description'] = attrs.get('ZONE_NAME')
+            zoning['snapshot_note'] = 'City GIS layer last edited in March 2023. Confirm current zoning and later overlays against the city ordinance.'
+            zoning['regulatory_links'] = [{'name': 'Chelsea zoning ordinance', 'url': REGISTRY[city]['code_url']}]
         if city == 'SOMERVILLE':
             zoning['district_description'] = attrs.get('ZONEDESC')
             zoning['amendment_date_reported'] = '2025-05-22'
@@ -218,3 +243,67 @@ async def lookup(client, city, parcel_geometry, latitude, parcel):
     return {"coverage": coverage(city), "zoning": zoning, "constraints": constraints,
         "status": error or ("Parcel crosses zoning boundaries or GIS coverage is incomplete" if matches and not district else "No zoning polygon matched" if not district else "Municipal GIS snapshot matched"),
         "review": reference_review(district, parcel) if city == "CHICOPEE" else None}
+
+
+async def multifamily_screen(client, city, polygon, latitude, loc_id):
+    """Keep the state compliance model separate from base zoning and permitted yield."""
+    city = city.upper()
+    result = {"status": "Parcel geometry unavailable", "districts": [], "modeled_units": None, "source_url": ATLAS_SOURCE}
+    if polygon is None or polygon.is_empty or not re.fullmatch(r"[A-Z .'-]+", city):
+        return result
+
+    where = "UPPER(MUNI) = '" + city.replace("'", "''") + "' AND STATUS = 'Compliant'"
+    geometry = esri_query_geometry(polygon, latitude)
+    rows, error = await fetch_layer(
+        client, ATLAS + "/0", geometry, "MUNI,ZONECOD,ZONENAM,DATE_,DU_CAP",
+        where=where, timeout=8,
+    )
+    if error:
+        return {**result, "status": "State atlas temporarily unavailable"}
+    try:
+        matches = await asyncio.to_thread(overlap_features, rows, polygon, latitude)
+    except (GEOSException, ValueError, TypeError):
+        return {**result, "status": "State atlas geometry could not be validated"}
+    by_code = {}
+    for attrs, shape_, _ in matches:
+        code = attrs.get("ZONECOD")
+        if code and str(attrs.get("MUNI")).upper() == city:
+            by_code.setdefault(code, []).append((attrs, shape_.intersection(polygon)))
+    if not by_code:
+        return {**result, "status": "No district matched in the published state atlas"}
+
+    shares = {}
+    for code, group in by_code.items():
+        attrs = group[0][0]
+        share = unary_union([geometry for _, geometry in group]).area / polygon.area
+        shares[code] = share
+        date = attrs.get("DATE_")
+        result["districts"].append({
+            "code": code, "name": " ".join((attrs.get("ZONENAM") or code).split()),
+            "parcel_overlap_pct": round(100 * share, 1),
+            "municipal_submission_date": datetime.fromtimestamp(date / 1000, timezone.utc).date().isoformat() if date else None,
+            "district_cap_reported": attrs.get("DU_CAP"),
+        })
+    result["status"] = "Mapped Section 3A district intersection"
+    district = result["districts"][0]
+    # Withhold the model if the parcel spans multiple districts, has shifted, or lacks an exact ID.
+    if len(by_code) != 1 or shares[district["code"]] < .98 or not re.fullmatch(r"[FM]_\d+_\d+", str(loc_id)):
+        return result
+    rows, error = await fetch_layer(
+        client, ATLAS + "/1", geometry, "LOC_ID,MUNI,ZONECOD,F_L_M__",
+        where=where + f" AND LOC_ID = '{loc_id}'", timeout=8,
+    )
+    if error or len(rows) != 1:
+        return result
+    attrs = rows[0].get("attributes") or {}
+    if (attrs.get("LOC_ID"), str(attrs.get("MUNI")).upper(), attrs.get("ZONECOD")) != (loc_id, city, district["code"]):
+        return result
+    try:
+        matches = await asyncio.to_thread(overlap_features, rows, polygon, latitude)
+    except (GEOSException, ValueError, TypeError):
+        return result
+    units = attrs.get("F_L_M__")
+    if matches and matches[0][2] >= .98 * max(polygon.area, matches[0][1].area):
+        if type(units) in (int, float) and math.isfinite(units) and units >= 0 and int(units) == units:
+            result["modeled_units"] = int(units)
+    return result

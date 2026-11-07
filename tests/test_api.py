@@ -19,6 +19,11 @@ def test_development_zoning_rollout_is_explicit():
     data = client.get('/api/coverage').json()
     first = {r['municipality'] for r in data['municipalities'] if r['priority'] == 1}
     assert first == {'BOSTON', 'CAMBRIDGE', 'SOMERVILLE'}
+    by_city = {r['municipality']: r for r in data['municipalities']}
+    assert len(by_city) == 351
+    assert by_city['CHELSEA']['base_zoning_connected']
+    assert not by_city['WATERTOWN']['base_zoning_connected']
+    assert by_city['WATERTOWN']['multifamily_screen_source'].startswith('https://www.mass.gov/')
 
 
 def test_invalid_input():

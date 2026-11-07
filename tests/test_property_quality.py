@@ -7,7 +7,7 @@ from shapely.geometry import box, mapping
 
 from data_quality import review_building
 from ma_sales import search
-from municipal_zoning import district_match, esri_polygon, lookup, reference_review, to_ground, cambridge_lookup, lonlat_geometry
+from municipal_zoning import district_match, esri_polygon, lookup, reference_review, to_ground, cambridge_lookup, lonlat_geometry, multifamily_screen
 
 @pytest.fixture
 def anyio_backend():
@@ -146,3 +146,44 @@ async def test_constraint_screening_does_not_download_large_geometry():
 def test_geometry_size_limit_is_enforced():
     with pytest.raises(ValueError,match='processing limit'):
         esri_polygon({'rings':[[[0,0]]*250001]})
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("district_width,atlas_id,units", [
+    (100, "M_100_200", 24),
+    (97.99, "M_100_200", None),
+    (100, "M_100_201", None),
+])
+async def test_atlas_capacity_requires_full_district_and_exact_parcel(district_width, atlas_id, units):
+    parcel = to_ground(box(0, 0, 100, 100), 42)
+    paths = []
+
+    def handler(request):
+        paths.append(request.url.path)
+        where = request.url.params['where']
+        assert "UPPER(MUNI) = 'WATERTOWN'" in where
+        if request.url.path.endswith('/0/query'):
+            attrs = {'MUNI': 'Watertown', 'ZONECOD': 'TOD', 'ZONENAM': 'Transit district'}
+            geometry = box(0, 0, district_width, 100)
+        else:
+            assert "LOC_ID = 'M_100_200'" in where
+            attrs = {'MUNI': 'Watertown', 'ZONECOD': 'TOD', 'LOC_ID': atlas_id, 'F_L_M__': 24}
+            geometry = box(0, 0, 100, 100)
+        return httpx.Response(200, json={'features': [
+            {'attributes': attrs, 'geometry': {'rings': [list(geometry.exterior.coords)]}},
+        ]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await multifamily_screen(client, 'Watertown', parcel, 42, 'M_100_200')
+    assert result['districts'][0]['name'] == 'Transit district'
+    assert result['modeled_units'] == units
+    assert len(paths) == (1 if district_width < 98 else 2)
+
+
+@pytest.mark.anyio
+async def test_atlas_incomplete_response_is_not_an_outside_district_result():
+    response = {'features': [], 'exceededTransferLimit': True}
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200, json=response))) as client:
+        result = await multifamily_screen(client, 'Chelsea', box(0, 0, 100, 100), 42, 'F_100_200')
+    assert result['status'] == 'State atlas temporarily unavailable'
+    assert result['modeled_units'] is None
