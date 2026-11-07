@@ -63,6 +63,14 @@
 <div id="parcelResearch"><h3>Ownership &amp; parcel identity</h3><p id="ownerStatus" class="small muted"></p><p id="lastTransfer" class="small muted"></p><div id="parcelCandidates" class="details"></div></div>
 <p id="sourceStatus" class="small muted"></p>
 <p id="verification" class="small muted"></p><div class="details" id="facts"></div>
+<details id="permitDetails" hidden>
+<summary>Building permits and applications</summary>
+<p id="permitStatus" class="small muted" role="status"></p>
+<div id="permitRecords"></div>
+<div id="permitSources" class="links"></div>
+<p class="small muted">A permit record does not establish completion, legal occupancy, or approval for a future project.</p>
+<button id="retryPermits" type="button" class="secondary no-print" hidden>Retry permit search</button>
+</details>
 <button class="secondary no-print" id="print">Print report</button></details>
 <details class="card research-card" id="salesDetails"><summary>Comparable sales</summary>
 <div id="salesResearch"><p id="salesStatus" class="small muted"></p><div id="salesCandidates"></div><p id="salesLimits" class="small muted"></p></div>
@@ -311,6 +319,7 @@ function render(d) {
   addFact('Building area',e.building_area_sqft?fmt(e.building_area_sqft)+' sq ft':null);
   addFact('Assessed value',e.assessed_value?'$'+fmt(e.assessed_value):null);
   renderResearch(d);
+  resetPermits(d);
   renderOpportunity(d);
   renderRedevelopment(d);
   $('warnings').replaceChildren();
@@ -329,6 +338,74 @@ function render(d) {
   $('propertyAddress').focus({preventScroll:true});
   $('results').scrollIntoView({block:'start'});
 }
+function permitLink(container, label, url) {
+  if(!url?.startsWith('https://')) return;
+  const link=document.createElement('a');
+  link.href=url;
+  link.target='_blank';
+  link.rel='noopener noreferrer';
+  link.textContent=label+' ↗';
+  container.append(link);
+}
+
+function resetPermits(report) {
+  const coverage=report.permit_coverage;
+  $('permitDetails').hidden=!coverage;
+  $('permitRecords').replaceChildren();
+  $('permitSources').replaceChildren();
+  $('retryPermits').hidden=true;
+  $('permitStatus').textContent=coverage?.coverage_note||'';
+  if(!coverage) return;
+  permitLink($('permitSources'),'City open-data source',coverage.source_url);
+  permitLink($('permitSources'),'City permit lookup',coverage.official_lookup_url);
+}
+
+async function loadPermits() {
+  const report=last;
+  if(!report?.permit_coverage||report.permitLookup) return;
+  report.permitLookup='loading';
+  $('retryPermits').hidden=true;
+  $('permitStatus').textContent='Checking city permit records…';
+  const query=new URLSearchParams({
+    municipality:report.coverage.municipality,
+    address:report.assessor_address||report.parcel.assessor_site_address||report.address,
+    parcel:report.parcel.parcel_number||'',
+  });
+  try {
+    const data=await jsonResponse('/api/permits?'+query);
+    if(last!==report) return;
+    if(data.status==='unavailable') throw Error('The city permit source is temporarily unavailable.');
+    report.permitLookup='done';
+    const message=data.status==='found' ? data.records.length+' permit record(s) shown.'
+      : data.status==='no_matches' ? 'No matching records returned by this dataset.'
+      : 'A reliable permit match is unavailable for this property.';
+    $('permitStatus').textContent=[message,data.match_note,data.coverage_note].filter(Boolean).join(' ');
+    for(const entry of data.records){
+      const row=document.createElement('div');
+      row.className='item';
+      const title=document.createElement('strong');
+      title.textContent=entry.permit_type||'Permit';
+      const meta=document.createElement('p');
+      meta.className='small muted';
+      meta.textContent=[entry.permit_id,entry.address,entry.issued_on?'Issued '+entry.issued_on:'Issue date unavailable',
+        entry.reported_status?'City status: '+entry.reported_status:null,entry.description].filter(Boolean).join(' · ');
+      row.append(title,meta);
+      if(entry.source_url!==data.source_url) permitLink(row,'Source record',entry.source_url);
+      $('permitRecords').append(row);
+    }
+  } catch(error) {
+    report.permitLookup=null;
+    if(last!==report) return;
+    $('permitStatus').textContent=error.message+' '+report.permit_coverage.coverage_note;
+    $('retryPermits').hidden=false;
+  }
+}
+
+$('permitDetails').addEventListener('toggle',()=>{
+  if($('permitDetails').open) loadPermits();
+});
+$('retryPermits').onclick=loadPermits;
+
 function appendDeed(container,deed){
   if(!deed) return;
   const line=document.createElement('span');
@@ -556,7 +633,7 @@ document.addEventListener('click',e=>{if(!e.target.closest('.search'))$('suggest
 let printPanels=[];
 window.addEventListener('beforeprint',()=>{
   printPanels=[...$('results').querySelectorAll('details:not([hidden]):not(.hide):not([open])')]
-    .filter(panel=>!panel.closest('#advancedDetails'));
+    .filter(panel=>!panel.closest('#advancedDetails')&&panel.id!=='permitDetails');
   printPanels.forEach(panel=>{panel.open=true});
 });
 window.addEventListener('afterprint',()=>{printPanels.forEach(panel=>{panel.open=false});printPanels=[];});
