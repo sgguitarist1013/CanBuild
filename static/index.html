@@ -50,7 +50,7 @@
 <div class="grid estimate-summary" id="redevelopmentMetrics" hidden>
 <div class="metric"><small>Proposed units</small><strong id="autoUnits"></strong></div>
 <div class="metric"><small>Estimated project cost</small><strong id="autoCost"></strong></div>
-<div class="metric"><small>Estimated condo sellout</small><strong id="autoSellout"></strong></div>
+<div class="metric"><small>Estimated market-rate sellout</small><strong id="autoSellout"></strong></div>
 </div>
 <p id="surplusSummary" class="small" hidden>Modeled surplus / loss <strong id="autoSurplus"></strong></p>
 <p id="potentialLimit" class="small muted" hidden></p>
@@ -153,8 +153,11 @@ function renderOpportunity(d) {
   };
 
   $('envelopeDetails').hidden=!envelope;
+  const additional=envelope?.additional_area_high_sqft!=null
+    ? ' About '+fmt(envelope.additional_area_low_sqft)+'–'+fmt(envelope.additional_area_high_sqft)+' sq ft above reported building area.'
+    : '';
   $('opportunityNote').textContent=envelope
-    ? 'Indicative '+envelope.stories+'-story envelope: '+fmt(envelope.gross_area_low_sqft)+'–'+fmt(envelope.gross_area_high_sqft)+' gross sq ft. '+(envelope.limitations||'')
+    ? 'Indicative '+envelope.stories+'-story envelope: '+fmt(envelope.gross_area_low_sqft)+'–'+fmt(envelope.gross_area_high_sqft)+' gross sq ft.'+additional+' '+(envelope.limitations||'')
     : '';
   const inc=envelope?.inclusionary_scenario;
   const conditional=$('inclusionaryScenario');
