@@ -3,6 +3,7 @@ import re
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
+from math import asin, cos, radians, sin, sqrt
 from typing import Annotated
 
 import httpx
@@ -13,6 +14,7 @@ import ma_sales
 
 CAMBRIDGE_ASSESSOR = "https://data.cambridgema.gov/d/waa7-ibdu"
 CAMBRIDGE_ASSESSOR_API = "https://data.cambridgema.gov/resource/waa7-ibdu.json"
+CAMBRIDGE_PARCELS = "https://services1.arcgis.com/WnzC35krSYGuYov4/ArcGIS/rest/services/Parcels/FeatureServer/0/query"
 
 UnitCount = Annotated[int, Field(strict=True, ge=0, le=10000)]
 MoneyRate = Annotated[Decimal, Field(gt=0, le=10000, allow_inf_nan=False)]
@@ -82,7 +84,7 @@ def analyze_program(program):
         'limitations': 'Proposed unit counts are a user-defined building program, not an approved zoning capacity. Existing unit counts are observations supplied to the calculator. Gross sellout is before commissions, concessions, construction, financing, taxes and other costs; it is not profit. New-construction condition and inclusionary/affordable-housing compliance require separate verification.'}
 
 
-def reference_summary(candidates, source_url, truncated=False, min_year_built=None, *, new_build_only=False, radius_miles=1, citywide=False):
+def reference_summary(candidates, source_url, truncated=False, min_year_built=None, *, new_build_only=False, radius_miles=1, citywide=False, retain_unit_layouts=False):
     # A common recorded reference and price across multiple units can indicate a bundled deed.
     keys = [(c.get('record_reference'), c['sale_date'], c['sale_price']) for c in candidates]
     counts = Counter(key for key in keys if key[0])
@@ -96,10 +98,13 @@ def reference_summary(candidates, source_url, truncated=False, min_year_built=No
             if not c.get('project_key') or not c.get('record_reference') or not isinstance(year, (int, float)):
                 continue
             if 0 <= int(c['sale_date'][:4]) - year <= 1:
-                key = (c['project_key'], c.get('bedrooms_reported')) if citywide else c['project_key']
+                if retain_unit_layouts:
+                    key = (c['project_key'], c.get('bedrooms_reported'), c.get('bathrooms_reported'), c['living_area_sqft'])
+                else:
+                    key = (c['project_key'], c.get('bedrooms_reported')) if citywide else c['project_key']
                 by_project.setdefault(key, c)
         clean = list(by_project.values())
-    clean = sorted(clean, key=lambda c: c['sale_date'], reverse=True)[:30 if citywide else 10]
+    clean = sorted(clean, key=lambda c: c['sale_date'], reverse=True)[:250 if retain_unit_layouts else 30 if citywide else 10]
     rates = [c['price_per_living_sqft'] for c in clean]
     return {'status': f'{len(clean)} condominium sale reference(s)' if clean else 'No usable condominium sale references found',
         'candidates': clean, 'observed_price_per_sqft_low': min(rates) if len(rates) >= 3 else None,
@@ -122,13 +127,13 @@ def reference(attrs, price, sold, area, source_url):
         'new_construction_verified':False, 'arm_length_verified':False}
 
 
-async def cambridge_new_build_sales(client, today=None):
+async def cambridge_new_build_sales(client, today=None, *, lon=None, lat=None):
     """Use the city assessor's condo records, including units without coordinates."""
     today = today or date.today()
     min_year = today.year - 4
     cutoff = today - timedelta(days=1096)
     response = await client.get(CAMBRIDGE_ASSESSOR_API, params={
-        "$select": "pid,address,unit,gisid,stateclasscode,saleprice,saledate,book_page,condition_yearbuilt,interior_livingarea,interior_bedrooms",
+        "$select": "pid,address,unit,gisid,stateclasscode,saleprice,saledate,book_page,condition_yearbuilt,interior_livingarea,interior_bedrooms,interior_fullbaths,interior_halfbaths",
         "$where": (
             f"stateclasscode = '102' AND condition_yearbuilt between {min_year} and {today.year} "
             f"AND saleprice >= 10000 AND saledate >= '{cutoff.isoformat()}T00:00:00'"
@@ -169,10 +174,46 @@ async def cambridge_new_build_sales(client, today=None):
         comp = reference(attrs, price, sold, area, CAMBRIDGE_ASSESSOR)
         bedrooms = row.get("interior_bedrooms", "")
         comp["bedrooms_reported"] = int(bedrooms) if bedrooms.isdecimal() else None
+        full, half = row.get("interior_fullbaths", ""), row.get("interior_halfbaths", "")
+        comp["bathrooms_reported"] = int(full) + int(half or "0") / 2 if full.isdecimal() and (not half or half.isdecimal()) else None
         comp["market_scope"] = "Cambridge assessor · citywide"
         rows.append(comp)
-    return reference_summary(rows, CAMBRIDGE_ASSESSOR, len(records) > 250, min_year,
-                             new_build_only=True, radius_miles=None, citywide=True)
+    summary = reference_summary(rows, CAMBRIDGE_ASSESSOR, len(records) > 250, min_year,
+                                new_build_only=True, radius_miles=None, citywide=True, retain_unit_layouts=lon is not None and lat is not None)
+    if lon is not None and lat is not None:
+        await attach_cambridge_distances(client, summary["candidates"], lon, lat)
+    return summary
+
+
+async def attach_cambridge_distances(client, candidates, lon, lat):
+    # Condo unit records can lack coordinates. Join the city parcel map by its
+    # published map-lot ID, then measure from the recorded parcel centroid.
+    keys = sorted({r["project_key"] for r in candidates if re.fullmatch(r"[0-9A-Za-z-]+", r["project_key"])})
+    if not keys:
+        return
+    response = await client.get(CAMBRIDGE_PARCELS, params={"f": "json",
+        "where": "ML IN (" + ",".join(f"'{key}'" for key in keys) + ")",
+        "outFields": "ML", "outSR": 4326, "returnGeometry": "true", "returnCentroid": "true",
+        "geometryPrecision": 6, "resultRecordCount": 250}, timeout=httpx.Timeout(6, connect=3))
+    response.raise_for_status()
+    data = response.json()
+    if data.get("error") or data.get("exceededTransferLimit"):
+        return
+    points = {}
+    for feature in data.get("features", []):
+        key = feature.get("attributes", {}).get("ML")
+        point = ma_sales.candidate_point(feature)
+        if key and point:
+            points.setdefault(key, set()).add(point)
+    for comp in candidates:
+        matches = points.get(comp["project_key"], set())
+        if len(matches) != 1:
+            continue
+        x, y = next(iter(matches))
+        dx, dy = radians(x-lon), radians(y-lat)
+        hav = sin(dy/2)**2 + cos(radians(lat)) * cos(radians(y)) * sin(dx/2)**2
+        comp["distance_miles"] = 2 * 3958.8 * asin(sqrt(min(1, hav)))
+        comp["market_scope"] = "Cambridge assessor sales"
 
 
 async def condo_sales(client, lon, lat, city, boston_pid=None, min_year_built=None, *, radius_miles=1, new_build_only=False):

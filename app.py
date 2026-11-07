@@ -23,11 +23,12 @@ from condo_analysis import CondoProgram, analyze_program, cambridge_new_build_sa
 from monitoring import configure_monitoring
 from redevelopment import analyze_redevelopment
 import zoning_research
+import somerville
 
 configure_monitoring()
 
 ROOT=Path(__file__).parent
-VERSION = "0.16.4"
+VERSION = "0.16.5"
 app=FastAPI(title="CanBuild Massachusetts",version=VERSION)
 app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
 CENSUS="https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress"
@@ -230,6 +231,18 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
                 result["sources"].append({"name": "Somerville city parcel GIS", "url": source})
             elif not geocoded:
                 result["warnings"].append("The municipal parcel search could not confirm the requested Somerville street address.")
+        if parts.get("city", "").upper() == "SOMERVILLE" and result.get("parcel"):
+            try:
+                municipal_building = await somerville.subject_building(client, result["parcel"]["parcel_number"])
+            except (httpx.HTTPError, ValueError, TypeError):
+                municipal_building = None
+            if municipal_building:
+                existing = result.get("existing_building")
+                if existing:
+                    existing.update({key: municipal_building[key] for key in ("bedrooms_reported", "bathrooms_reported")})
+                else:
+                    result["existing_building"] = municipal_building
+                    result["verification"]["assessor"] = "Somerville municipal GIS assessor attributes; ownership and dwelling count unconfirmed"
         sales_task = None
         if parts.get("city","").upper()=="BOSTON":
             result["sources"]=[{"name":"Boston municipal assessor FY2026 and recorded sales","url":boston.SOURCE},{"name":"MassGIS statewide parcels","url":SOURCES[0]["url"]}]
@@ -250,6 +263,10 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
                     result["warnings"].append("Municipal records use different address labels here. Select and verify a candidate parcel before attributing ownership or sales.")
             except (httpx.HTTPError,ValueError,TypeError):
                 result["warnings"].append("Boston municipal records temporarily unavailable; retry the lookup.")
+        elif result.get("parcel") and parts.get("city", "").upper() == "SOMERVILLE" and somerville.assessor_class(result["existing_building"]):
+            sales_task = asyncio.create_task(somerville.sales(
+                client, lon, lat, result["parcel"], result["existing_building"],
+            ))
         elif result.get("parcel") and result["verification"]["assessor"] != "Assessor record unconfirmed":
             sales_task = asyncio.create_task(ma_sales.search(
                 client, lon, lat, parts.get("city"), result["parcel"], result.get("existing_building"),
@@ -335,6 +352,8 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
     if hits:
         result['recommendations'].append({'title':'Review mapped site constraints','reason':', '.join(hits)+' intersect the selected parcel in the listed municipal layers.',
             'next_step':'Review each mapped layer and its governing rules with the municipality before planning excavation, foundations, demolition or a larger building. A map intersection is a screening flag, not a permit determination.','confidence':'Mapped screening intersection'})
+    if result.get("parcel") and city.upper() == "SOMERVILLE" and district == "NR" and not historical:
+        result["buildout_review"] = somerville.buildout(result["parcel"], result.get("existing_building"))
     if result.get("parcel") and district and not historical:
         potential=conceptual_massing(polygon,result["parcel"],result.get("existing_building"),city,district)
         if potential:
@@ -342,7 +361,7 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
             result["warnings"].append("Buildable area is an indicative geometric scenario, not a zoning-compliant building design.")
         elif polygon is None:
             result["warnings"].append("Cannot calculate buildable envelope until selected parcel polygon is available.")
-        else:
+        elif not result.get("buildout_review"):
             result["warnings"].append("No verified zoning calculation rules configured for this municipality and district.")
     result["warnings"] += ["MassGIS assessor extracts can be stale; BLD_AREA and RES_AREA use different measurement conventions and may not equal zoning gross floor area.","Parcel maps are not legal surveys; legal units and additions require independent confirmation.","Only listed municipal layers are screened. Additional overlays, zoning amendments, site constraints and legal buildability remain unverified."]
     if not result.get("zoning"):
@@ -377,7 +396,8 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
         try:
             async with asyncio.timeout(13), httpx.AsyncClient(timeout=12, follow_redirects=True) as client:
                 if city.upper() == "CAMBRIDGE":
-                    references = await cambridge_new_build_sales(client)
+                    coords = result["coordinates"]
+                    references = await cambridge_new_build_sales(client, lon=coords["lon"], lat=coords["lat"])
                 else:
                     coords = result["coordinates"]
                     references = await condo_sales(client, coords["lon"], coords["lat"], city,
@@ -385,9 +405,11 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
         except (TimeoutError, httpx.HTTPError, ValueError, TypeError):
             pass
         candidates = (references or {}).get("candidates", [])
+        subject_parcel = (result.get("parcel") or {}).get("parcel_number")
+        comparable = [candidate for candidate in candidates if candidate.get("project_key") != subject_parcel]
         result["redevelopment"] = analyze_redevelopment(
             result["zoning_potential"], result.get("existing_building"),
-            candidates if references and not references["truncated"] else [],
+            comparable if references and not references["truncated"] else [],
         )
         result["redevelopment"]["sale_references"] = references
     return result

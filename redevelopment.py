@@ -8,6 +8,7 @@ LENDING = "https://www.occ.gov/publications-and-resources/publications/comptroll
 # RKG table 33: range across Cambridge submarket averages, by bedroom count.
 PRICE_BANDS = ((840, 1250), (912, 1128), (735, 1165))
 UNIT_SIZES = (700, 1050, 1400)
+UNIT_BATHS = (1, 2, 2)
 TARGET_MIX = (.20, .50, .30)  # RKG table 34
 COMMON_FRACTION = .18
 
@@ -39,27 +40,31 @@ def reserve_affordable(counts, required_area):
     return reserved
 
 
+def matching_condos(references, beds, baths, area):
+    """Select nearby finished-condo proxies without relaxing the unit match."""
+    ranked = sorted((
+        row for row in references
+        if row.get("project_key") and row.get("distance_miles") is not None
+        and abs(row["living_area_sqft"] - area) <= .15 * area
+        and row.get("bedrooms_reported") == beds and row.get("bathrooms_reported") == baths
+    ), key=lambda row: (row["distance_miles"], abs(row["living_area_sqft"] - area)))
+    projects = {}
+    for row in ranked:
+        projects.setdefault(row["project_key"], row)
+    ranked = list(projects.values())
+    nearby = [row for row in ranked if row["distance_miles"] <= .5]
+    return nearby[:4] if len(nearby) >= 3 else ranked[:3]
+
+
 def pricing(references):
     rates = []
-    for beds, (area, benchmark) in enumerate(zip(UNIT_SIZES, PRICE_BANDS), 1):
-        rows = [
-            row for row in references
-            if .8 * area <= row["living_area_sqft"] <= 1.2 * area
-            and row.get("bedrooms_reported") in (None, beds)
-        ]
-        # Only one observation per parcel/development proxy. Size is a comparison
-        # filter, not a verified bedroom count or project identity.
-        projects = {}
-        for row in rows:
-            key = row.get("project_key")
-            if key:
-                projects.setdefault(key, row["price_per_living_sqft"])
-        if len(projects) >= 3:
-            low, _, high = quantiles(list(projects.values()), n=4, method="inclusive")
-            scope = rows[0].get("market_scope", "Nearby recorded sales")
-            rates.append((round(low), round(high), scope + " · similar living area", len(projects)))
+    for beds, (area, baths, benchmark) in enumerate(zip(UNIT_SIZES, UNIT_BATHS, PRICE_BANDS), 1):
+        rows = matching_condos(references, beds, baths, area)
+        if len(rows) >= 3:
+            low, _, high = quantiles([r["price_per_living_sqft"] for r in rows], n=4, method="inclusive")
+            rates.append((round(low), round(high), "Matched Cambridge assessor sales", rows))
         else:
-            rates.append((*benchmark, "Cambridge 2026 study · citywide submarket range", len(projects)))
+            rates.append((*benchmark, "Cambridge 2026 study · citywide submarket range", rows))
     return rates
 
 
@@ -124,7 +129,8 @@ def analyze_redevelopment(massing, building, references=()):
             if count:
                 mix.append({"bedrooms": i, "area_sqft": area, "market_units": count - affordable,
                             "restricted_units": affordable, "price_per_sqft_low": price[0],
-                            "price_per_sqft_high": price[1], "pricing_basis": price[2], "comparable_projects": price[3]})
+                            "price_per_sqft_high": price[1], "pricing_basis": price[2], "comparable_projects": len(price[3]),
+                            "bathrooms_assumed": UNIT_BATHS[i-1], "sale_matches": price[3]})
         sale_low, sale_high = (
             sum(row["market_units"] * row["area_sqft"] * row[f"price_per_sqft_{band}"] for row in mix)
             for band in ("low", "high")
