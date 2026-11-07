@@ -22,7 +22,10 @@ def candidate_point(feature):
     geometry = feature.get('centroid') or feature.get('geometry') or {}
     if all(isinstance(geometry.get(k), (int, float)) for k in ('x', 'y')):
         return geometry['x'], geometry['y']
-    polygon = esri_polygon(feature.get('geometry'))
+    try:
+        polygon = esri_polygon(feature.get('geometry'))
+    except ValueError:
+        return None
     if not polygon.is_empty:
         point = polygon.centroid
         return point.x, point.y
