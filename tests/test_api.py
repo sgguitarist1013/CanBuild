@@ -10,6 +10,15 @@ client = TestClient(app)
 def test_health_and_home():
     assert client.get("/api/health").json()["ok"] is True
     assert "Property address" in client.get("/").text
+    html = client.get('/').text.strip()
+    assert html.endswith('</html>')
+    assert html.count('</html>') == 1
+
+
+def test_development_zoning_rollout_is_explicit():
+    data = client.get('/api/coverage').json()
+    first = {r['municipality'] for r in data['municipalities'] if r['priority'] == 1}
+    assert first == {'BOSTON', 'CAMBRIDGE', 'SOMERVILLE'}
 
 
 def test_invalid_input():
