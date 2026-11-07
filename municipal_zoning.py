@@ -111,7 +111,7 @@ SNAPSHOT_CONNECTORS = {
     },
     "SPRINGFIELD": {
         "base": SPRINGFIELD + "/31", "field": "ZONING", "description_field": "ZONE_NAME",
-        "updated": None, "split_layer": SPRINGFIELD + "/32",
+        "updated": None, "base_where": "ZONING IS NOT NULL", "split_layer": SPRINGFIELD + "/32",
         "screens": [
             ("Springfield zoning overlays", SPRINGFIELD + "/30", "NAME"),
             ("Springfield split zoning", SPRINGFIELD + "/32", "ZONE_NAME"),
@@ -368,11 +368,13 @@ async def lookup(client, city, parcel_geometry, latitude, parcel):
     geometry = esri_query_geometry(parcel_geometry, latitude)
     fields='ZONECODE,ZONEDESC,Permitted_Building_Types,Use_Provisions,Development_Standards,Standards_and_Measurements,Parking_and_Mobility' if city=='SOMERVILLE' else '*'
     town_field = snapshot.get("town_field") if snapshot else None
-    where = f"UPPER({town_field}) = '{city}'" if town_field else "1=1"
+    where = f"UPPER({town_field}) = '{city}'" if town_field else (snapshot or {}).get("base_where", "1=1")
     results = await asyncio.gather(fetch_layer(client, base, geometry, fields, where=where), *(fetch_layer(client, url, geometry, include_geometry=False) for _, url, _ in screens))
     features, error = results[0]
     if town_field:
         features = [f for f in features if str((f.get("attributes") or {}).get(town_field)).upper() == city]
+    # Features without a district code cannot contribute to a district match.
+    features = [f for f in features if (f.get("attributes") or {}).get(field)]
     matches, district = [], None
     repair_ring = city == "EVERETT" or bool(snapshot and snapshot.get("repair_ring"))
     try:

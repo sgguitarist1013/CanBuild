@@ -312,8 +312,13 @@ async def test_springfield_single_district_requires_split_zone_screen(split_stat
 
     def handler(request):
         if request.url.path.endswith("/31/query"):
-            rows = [{"attributes": {"ZONING": "B1", "ZONE_NAME": "Business A"},
-                     "geometry": {"rings": [list(box(0, 0, 100, 100).exterior.coords)]}}]
+            assert request.url.params["where"] == "ZONING IS NOT NULL"
+            rows = [
+                {"attributes": {"ZONING": "B1", "ZONE_NAME": "Business A"},
+                 "geometry": {"rings": [list(box(0, 0, 100, 100).exterior.coords)]}},
+                {"attributes": {"ZONING": None},
+                 "geometry": {"rings": [[(0, 0), (100, 100), (0, 100), (100, 0), (0, 0)]]}},
+            ]
         elif request.url.path.endswith("/32/query") and split_status == "unavailable":
             return httpx.Response(503)
         elif request.url.path.endswith("/32/query") and split_status == "intersection":
