@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 import httpx
+from shapely import make_valid
 from shapely.errors import GEOSException
 from shapely.geometry import Polygon, shape
 from shapely.ops import transform, unary_union
@@ -17,16 +18,18 @@ CHICOPEE = "https://hostingdata3.tighebond.com/arcgis/rest/services/ChicopeeMA/C
 BOSTON = "https://gis.boston.gov/arcgis/rest/services/Basemaps/basemap_IPS/MapServer"
 SOMERVILLE = "https://cos-geoportal.somervillema.gov/server/rest/services/enCodePlus"
 CHELSEA = "https://services9.arcgis.com/diuwWhOq89A0FdTw/arcgis/rest/services/City_of_Chelsea_Map_Layers/FeatureServer"
+EVERETT = "https://services2.arcgis.com/xJ0MjVdyImL1ajyn/arcgis/rest/services/Zoning_2019/FeatureServer/0"
+EVERETT_TRIANGLE_CODE = "https://www.arcgis.com/sharing/rest/content/items/40748ac8f93344daa21a0a3023dd42f3/data"
 ATLAS = "https://services1.arcgis.com/hGdibHYSPO59RG1h/arcgis/rest/services/MBTA_Communities_3A_District_Atlas/FeatureServer"
 ATLAS_SOURCE = "https://www.mass.gov/info-details/massgis-data-mbta-communities-3a-district-atlas"
 MUNICIPALITIES = json.loads((Path(__file__).parent / "docs/massachusetts_municipalities.json").read_text())
-LOCAL_CONNECTORS = {"BOSTON", "SOMERVILLE", "CHICOPEE", "CHELSEA"}
+LOCAL_CONNECTORS = {"BOSTON", "SOMERVILLE", "CHICOPEE", "CHELSEA", "EVERETT"}
 REGISTRY = {
     "CAMBRIDGE": {"priority": 1, "reason": "Multifamily and inclusionary housing capacity", "status": "District connector and C-1 conceptual rules", "map_url": "https://www.cambridgema.gov/gis/gisdatadictionary/cdd/cdd_zoningdistricts", "code_url": "https://www.cambridgema.gov/cdd/zoninganddevelopment/zoning/ordinance"},
     "SOMERVILLE": {"priority": 1, "reason": "Building type, density, and mixed-use redevelopment", "status": "Published June 2025 parcel zoning and official district-rule links; later amendments require review", "map_url": "https://map.viewprogis.com/ecp/somerville-test?widget=9efa8bb5-3de1-4ff7-86b1-f698d0d6fb0d", "code_url": "https://online.encodeplus.com/regs/somerville-ma/doc-viewer.aspx"},
     "BOSTON": {"priority": 1, "reason": "Subdistrict, overlays, and redevelopment capacity", "status": "Municipal subdistrict GIS connector; project rules require review", "map_url": "https://www.bostonplans.org/zoning/zoning-viewer", "code_url": "https://www.bostonplans.org/zoning/zoning-code"},
     "WATERTOWN": {"priority": 2, "reason": "Corridor and mixed-use redevelopment", "status": "Queued for municipal source verification", "map_url": "https://www.watertown-ma.gov/zoning", "code_url": "https://ecode360.com/36825722"},
-    "EVERETT": {"priority": 2, "reason": "Industrial and commercial redevelopment", "status": "Queued for municipal source verification", "map_url": "https://cityofeverett.com/", "code_url": "https://cityofeverett.com/"},
+    "EVERETT": {"priority": 2, "reason": "Commercial Triangle and Lower Broadway redevelopment", "status": "Historical city zoning map available (July 2019); current district requires confirmation", "map_url": "https://www.arcgis.com/home/item.html?id=53ba373249404bae80dbb1e5366bd9b5", "code_url": "https://cityofeverett.com/city-hall/departments/planning-development/", "historical_zoning_only": True},
     "CHELSEA": {"priority": 2, "reason": "Density and conversion opportunities", "status": "City GIS snapshot from March 2023; confirm current base zoning and overlays", "map_url": "https://www.arcgis.com/home/item.html?id=ba933034c3eb41ebad0d14ba0c6ea3b1", "code_url": "https://library.municode.com/ma/chelsea/codes/code_of_ordinances"},
     "REVERE": {"priority": 2, "reason": "Transit and corridor redevelopment", "status": "Queued for municipal source verification", "map_url": "https://www.revere.org/gis", "code_url": "https://ecode360.com/RE6867"},
     "CHICOPEE": {"priority": 3, "reason": "Addition and nonconforming-lot reference case", "status": "Parcel zoning, constraint screening and residential A/B reference standards", "map_url": "https://chicopeema.gov/566/Geographic-Information-Systems-GIS", "code_url": "https://chicopeema.gov/383/Zoning-Ordinances"},
@@ -36,12 +39,12 @@ REGISTRY = {
 def coverage(city):
     return {
         "municipality": city, **REGISTRY.get(str(city).upper(), {"priority": None, "status": "Municipal base zoning source not connected"}),
-        "base_zoning_connected": str(city).upper() in LOCAL_CONNECTORS or str(city).upper() == "CAMBRIDGE",
+        "base_zoning_connected": str(city).upper() in (LOCAL_CONNECTORS - {"EVERETT"}) or str(city).upper() == "CAMBRIDGE",
         "multifamily_screen_source": ATLAS_SOURCE,
     }
 
 
-def esri_polygon(geometry):
+def esri_polygon(geometry, *, repair_ring=False):
     """Build shells/holes with a spatial index instead of repeated polygon XOR."""
     rings = (geometry or {}).get('rings', [])
     if sum(len(ring) for ring in rings) > 250000:
@@ -49,7 +52,17 @@ def esri_polygon(geometry):
     pieces = [Polygon(ring) for ring in rings if len(ring) >= 4]
     if not pieces:
         return Polygon()
-    if any(not p.is_valid for p in pieces):
+    for index, piece in enumerate(pieces):
+        if piece.is_valid:
+            continue
+        # Everett's historical layer includes a self-touching ring. Accept only
+        # a polygon repair that preserves its area. Retain repaired holes.
+        if repair_ring:
+            repaired = make_valid(piece)
+            if (repaired.geom_type == "Polygon"
+                    and math.isclose(repaired.area, piece.area, rel_tol=1e-9, abs_tol=.0001)):
+                pieces[index] = repaired
+                continue
         raise ValueError('Municipal geometry contains an invalid ring')
     if len(pieces) == 1:
         return pieces[0]
@@ -67,7 +80,7 @@ def esri_polygon(geometry):
     shells = []
     for i, piece in enumerate(pieces):
         if depth[i] % 2 == 0:
-            shells.append(Polygon(piece.exterior.coords, children.get(i, [])))
+            shells.append(Polygon(piece.exterior.coords, [h.coords for h in piece.interiors] + children.get(i, [])))
     return unary_union(shells)
 
 
@@ -139,10 +152,10 @@ def cambridge_match(rows, parcel, latitude):
         "current_amendments_verified": False, "snapshot_note": "Municipal zoning GIS; overlays and amendments require separate review."}
 
 
-def overlap_features(features, parcel, latitude):
+def overlap_features(features, parcel, latitude, *, repair_ring=False):
     matches = []
     for feature in features:
-        geometry = to_ground(esri_polygon(feature.get("geometry")), latitude)
+        geometry = to_ground(esri_polygon(feature.get("geometry"), repair_ring=repair_ring), latitude)
         if geometry.is_empty:
             continue
         overlap = geometry.intersection(parcel).area
@@ -190,6 +203,9 @@ async def lookup(client, city, parcel_geometry, latitude, parcel):
     elif city == "BOSTON":
         base, field, updated = BOSTON + "/28", "Zoning_Subdistrict", None
         screens = [("Planned development areas", BOSTON + "/41", None), ("Groundwater conservation", BOSTON + "/35", None), ("Interim planning overlays", BOSTON + "/38", None)]
+    elif city == "EVERETT":
+        base, field, updated = EVERETT, "Zoning2018", "2019-07-18"
+        screens = []
     elif city == "CHELSEA":
         base, field, updated = CHELSEA + "/12", "ZONE_CODE", "2023-03-13"
         screens = [
@@ -206,7 +222,7 @@ async def lookup(client, city, parcel_geometry, latitude, parcel):
     fields='ZONECODE,ZONEDESC,Permitted_Building_Types,Use_Provisions,Development_Standards,Standards_and_Measurements,Parking_and_Mobility' if city=='SOMERVILLE' else '*'
     results = await asyncio.gather(fetch_layer(client, base, geometry, fields), *(fetch_layer(client, url, geometry, include_geometry=False) for _, url, _ in screens))
     features, error = results[0]
-    matches = await asyncio.to_thread(overlap_features, features, parcel_geometry, latitude)
+    matches = await asyncio.to_thread(overlap_features, features, parcel_geometry, latitude, repair_ring=city == "EVERETT")
     clipped = [(a, g.intersection(parcel_geometry), n) for a, g, n in matches]
     district = district_match(clipped, field, parcel_geometry.area)
     constraints = []
@@ -228,6 +244,13 @@ async def lookup(client, city, parcel_geometry, latitude, parcel):
                 ('Maximum FAR', 'Max_FAR'), ('Maximum height', 'Max_Height'), ('Front setback', 'Front_Setback'),
                 ('Side setback', 'Side_Setback'), ('Rear setback', 'Rear_Setback')) if attrs.get(key) is not None}
             zoning['reference_conditions'] = attrs.get('Condition_Text') or attrs.get('Additional_Restrictions_or_Foot')
+        if city == 'EVERETT':
+            zoning["historical_reference"] = True
+            zoning["district_description"] = attrs.get("ZoningName")
+            zoning["snapshot_note"] = "Historical Everett city map from July 2019. Confirm the current district, overlays and amendments with the city."
+            if district == "EDD":
+                zoning["reference_conditions"] = "The published Section 33 excerpt describes a mixed-use path with a commercial-space requirement and site plan review. Confirm the current text and whether it applies to this parcel."
+                zoning["regulatory_links"] = [{"name": "City-published Section 33 excerpt", "url": EVERETT_TRIANGLE_CODE}]
         if city == 'CHELSEA':
             zoning['district_description'] = attrs.get('ZONE_NAME')
             zoning['snapshot_note'] = 'City GIS layer last edited in March 2023. Confirm current zoning and later overlays against the city ordinance.'

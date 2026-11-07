@@ -20,7 +20,7 @@ from monitoring import configure_monitoring
 configure_monitoring()
 
 ROOT=Path(__file__).parent
-app=FastAPI(title="CanBuild Massachusetts",version="0.11.0")
+app=FastAPI(title="CanBuild Massachusetts",version="0.11.1")
 app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
 CENSUS="https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress"
 PARCELS="https://services1.arcgis.com/hGdibHYSPO59RG1h/ArcGIS/rest/services/Massachusetts_Property_Tax_Parcels/FeatureServer/0/query"
@@ -37,7 +37,7 @@ def now(): return datetime.now(timezone.utc).isoformat()
 @app.get("/")
 def home(): return FileResponse(ROOT/"static"/"index.html")
 @app.get("/api/health")
-def health(): return {"ok":True,"version":"0.11.0","time":now()}
+def health(): return {"ok":True,"version":"0.11.1","time":now()}
 @app.get("/api/coverage")
 def coverage():
     return {"municipalities":[municipal_zoning.coverage(city) for city in municipal_zoning.MUNICIPALITIES],
@@ -45,7 +45,7 @@ def coverage():
 @app.get("/api/sources")
 def sources(municipality:str|None=None):
     local=municipal_zoning.REGISTRY.get((municipality or '').upper(),{})
-    return {"sources":[SOURCES[0], {"name":"MassGIS Section 3A District Atlas","url":municipal_zoning.ATLAS_SOURCE}]+[{"name":label,"url":local[key]} for label,key in (('Municipal zoning map','map_url'),('Municipal zoning ordinance','code_url')) if local.get(key)],
+    return {"sources":[SOURCES[0], {"name":"MassGIS Section 3A District Atlas","url":municipal_zoning.ATLAS_SOURCE}]+[{"name":label,"url":local[key]} for label,key in (('Municipal zoning map','map_url'),('Municipal planning department' if local.get('historical_zoning_only') else 'Municipal zoning ordinance','code_url')) if local.get(key)],
         "coverage":municipal_zoning.coverage(municipality or ''),"note":"Source links and coverage status; no automatic amendment certification."}
 @app.post('/api/condo-scenario')
 def condo_scenario(program:CondoProgram):
@@ -182,18 +182,23 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
                 local={'zoning':None,'constraints':[],'review':None,'status':'Municipal spatial response could not be validated'}
             result['zoning']=local['zoning'];result['constraints']=local['constraints'];result['zoning_review']=local['review']
             if local['zoning']:
-                result['verification']['zoning']='Municipal GIS selected-parcel polygon snapshot; amendments and full overlay coverage not verified'
+                result['verification']['zoning'] = (
+                    'Historical city map match; current zoning unverified' if local['zoning'].get('historical_reference')
+                    else 'Municipal GIS selected-parcel polygon snapshot; amendments and full overlay coverage not verified'
+                )
                 result['warnings'].append(local['zoning']['snapshot_note'])
             else:
                 result['warnings'].append('Municipal zoning: '+local.get('status','selected parcel geometry unavailable')+'.')
         else:
             result["warnings"].append("Live municipal zoning connector is not yet configured for "+str(parts.get("city"))+". Assessor zoning codes are not treated as verified current zoning.")
         result["multifamily_screen"] = await atlas_task
-    district=(result.get("zoning") or {}).get("district")
+    zoning = result.get('zoning') or {}
+    historical = zoning.get('historical_reference')
+    district = zoning.get('district')
     city=parts.get("city") or ""
     result['coverage']=municipal_zoning.coverage(city)
     local_sources=municipal_zoning.REGISTRY.get(city.upper(),{})
-    for label,key in (('Municipal zoning map','map_url'),('Municipal zoning ordinance','code_url')):
+    for label,key in (('Municipal zoning map','map_url'),('Municipal planning department' if historical or local_sources.get('historical_zoning_only') else 'Municipal zoning ordinance','code_url')):
         if local_sources.get(key):
             result['sources'].append({'name':city.title()+' '+label,'url':local_sources[key]})
     result['sources'].append({'name':'Massachusetts Registry of Deeds search','url':'https://www.masslandrecords.com/'})
@@ -218,7 +223,7 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
     if hits:
         result['recommendations'].append({'title':'Review mapped site constraints','reason':', '.join(hits)+' intersect the selected parcel in the listed municipal layers.',
             'next_step':'Review each mapped layer and its governing rules with the municipality before planning excavation, foundations, demolition or a larger building. A map intersection is a screening flag, not a permit determination.','confidence':'Mapped screening intersection'})
-    if result.get("parcel") and district:
+    if result.get("parcel") and district and not historical:
         potential=conceptual_massing(polygon,result["parcel"],result.get("existing_building"),city,district)
         if potential:
             result["zoning_potential"]=potential
@@ -230,6 +235,15 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
     result["warnings"] += ["MassGIS assessor extracts can be stale; BLD_AREA and RES_AREA use different measurement conventions and may not equal zoning gross floor area.","Parcel maps are not legal surveys; legal units and additions require independent confirmation.","Only listed municipal layers are screened. Additional overlays, zoning amendments, site constraints and legal buildability remain unverified."]
     if not result.get("zoning"):
         result["recommendations"].append({"title":"Verify the property's zoning district","reason":"CanBuild could not confirm a base district for the selected parcel. Base district standards are needed to evaluate expansion.","next_step":"Use the municipality's official zoning map and confirm the parcel's base and overlay districts with its planning or building department.","confidence":"Not yet verified"})
+    elif historical:
+        triangle = district == "EDD"
+        result["recommendations"].append({
+            "title": "Check the Commercial Triangle mixed-use path" if triangle else "Confirm current Everett zoning",
+            "reason": f"The July 2019 city map shows {zoning.get('district_description') or district} on the selected parcel.",
+            "next_step": ("Ask Everett Planning to confirm current Section 33 eligibility, required commercial space, site plan review and dimensional standards before estimating dwelling yield."
+                          if triangle else "Ask Everett Planning for the current district, overlays, allowed building uses and dimensional standards before pricing a development scenario."),
+            "confidence": "Historical city map",
+        })
     elif result.get('zoning_review'):
         review=result['zoning_review']
         result['recommendations'].append({'title':'Prepare an addition review for '+result['zoning']['district'],
