@@ -60,6 +60,8 @@ NEWTON = "https://gisweb.newtonma.gov/server/rest/services/Data/MapServer"
 WORCESTER = "https://services1.arcgis.com/j8dqo2DJE7mVUBU1/arcgis/rest/services"
 LYNN = "https://services8.arcgis.com/vFKGBS59j3zLGs8e/arcgis/rest/services/Lynn_s_Zoning_Map_251209_WFL1/FeatureServer"
 SPRINGFIELD = "https://maps.springfield-ma.gov/arcgis/rest/services/WebGIS/WebGISDynamicMap/MapServer"
+WELLESLEY = "https://services6.arcgis.com/f6G5SbcwuEVmR1CW/arcgis/rest/services/Open_Data_Layers/FeatureServer"
+SALEM = "https://services9.arcgis.com/nPsFhwkdebYjxn1R/arcgis/rest/services"
 STOW = "https://services6.arcgis.com/bYxJFmZwD1DSkFy9/arcgis/rest/services"
 NMCOG = "https://services2.arcgis.com/8sfNXBvIUURUO8wz/arcgis/rest/services/NMCOG_Zoning_Districts_v20230106/FeatureServer/131"
 NMCOG_TOWNS = ("BILLERICA", "CHELMSFORD", "DRACUT", "DUNSTABLE", "LOWELL", "PEPPERELL", "TEWKSBURY", "TYNGSBOROUGH", "WESTFORD")
@@ -120,6 +122,28 @@ SNAPSHOT_CONNECTORS = {
         "code_url": "https://www.springfield-ma.gov/planning/planning/zoning-ordinances",
         "priority": 2, "reason": "Downtown infill and mixed-use redevelopment",
         "status": "City GIS base districts, overlays and split-zone screening; project rules pending",
+    },
+    "WELLESLEY": {
+        "base": WELLESLEY + "/26", "field": "ZoningCode", "description_field": "ZoningDescription",
+        "updated": "2026-10-29", "screens": [("Wellesley zoning overlays", WELLESLEY + "/25", "DISTRICT")],
+        "map_url": "https://www.arcgis.com/home/item.html?id=bba3b9e3352244fdbb3d4575aa1e348e",
+        "code_url": "https://www.wellesleyma.gov/281/Zoning-Bylaws",
+        "priority": 2, "reason": "Village business districts and transit-oriented infill",
+        "status": "Town GIS screening map and overlays; confirm the adopted map, bylaws and amendments",
+    },
+    "SALEM": {
+        "base": SALEM + "/Zoning_Districts_2024/FeatureServer/0", "field": "ZONE_CODE", "description_field": "ZONE_DES",
+        "updated": "2024-07-25", "local_rings_only": True,
+        "screens": [
+            ("Salem smart growth subzones", SALEM + "/Zoning_SmartGrowth_Overlay_Subzones/FeatureServer/3", "Subzone_Name"),
+            ("Salem coastal resiliency overlay", SALEM + "/CROD__Coastal_Resiliency_Overlay/FeatureServer/0", None),
+            ("Salem waterfront industrial overlay", SALEM + "/Waterfront_Industrial_Overlay_District/FeatureServer/1", None),
+            ("Salem local historic districts", SALEM + "/Salem_Local_Historic_Districts/FeatureServer/0", "NAME"),
+        ],
+        "map_url": "https://salemma.maps.arcgis.com/apps/instant/interactivelegend/index.html?appid=15f63e4da223424db6adfff4ab641be6",
+        "code_url": "https://www.salemma.gov/933/Zoning-Ordinance-Zoning-Maps",
+        "priority": 2, "reason": "Smart growth and waterfront redevelopment",
+        "status": "City viewer base layer edited July 2024; selected overlay screens from separate layers",
     },
     "STOW": {
         "base": STOW + "/Base_Zoning_Districts/FeatureServer/0", "field": "Zone", "description_field": "Name",
