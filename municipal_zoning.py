@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 import httpx
+from shapely import make_valid
 from shapely.errors import GEOSException
 from shapely.geometry import Polygon, shape
 from shapely.ops import transform, unary_union
@@ -43,7 +44,7 @@ def coverage(city):
     }
 
 
-def esri_polygon(geometry):
+def esri_polygon(geometry, *, repair_ring=False):
     """Build shells/holes with a spatial index instead of repeated polygon XOR."""
     rings = (geometry or {}).get('rings', [])
     if sum(len(ring) for ring in rings) > 250000:
@@ -51,7 +52,17 @@ def esri_polygon(geometry):
     pieces = [Polygon(ring) for ring in rings if len(ring) >= 4]
     if not pieces:
         return Polygon()
-    if any(not p.is_valid for p in pieces):
+    for index, piece in enumerate(pieces):
+        if piece.is_valid:
+            continue
+        # Everett's historical layer includes a self-touching ring. Accept only
+        # a polygon repair that preserves its area. Retain repaired holes.
+        if repair_ring:
+            repaired = make_valid(piece)
+            if (repaired.geom_type == "Polygon"
+                    and math.isclose(repaired.area, piece.area, rel_tol=1e-9, abs_tol=.0001)):
+                pieces[index] = repaired
+                continue
         raise ValueError('Municipal geometry contains an invalid ring')
     if len(pieces) == 1:
         return pieces[0]
@@ -69,7 +80,7 @@ def esri_polygon(geometry):
     shells = []
     for i, piece in enumerate(pieces):
         if depth[i] % 2 == 0:
-            shells.append(Polygon(piece.exterior.coords, children.get(i, [])))
+            shells.append(Polygon(piece.exterior.coords, [h.coords for h in piece.interiors] + children.get(i, [])))
     return unary_union(shells)
 
 
@@ -141,10 +152,10 @@ def cambridge_match(rows, parcel, latitude):
         "current_amendments_verified": False, "snapshot_note": "Municipal zoning GIS; overlays and amendments require separate review."}
 
 
-def overlap_features(features, parcel, latitude):
+def overlap_features(features, parcel, latitude, *, repair_ring=False):
     matches = []
     for feature in features:
-        geometry = to_ground(esri_polygon(feature.get("geometry")), latitude)
+        geometry = to_ground(esri_polygon(feature.get("geometry"), repair_ring=repair_ring), latitude)
         if geometry.is_empty:
             continue
         overlap = geometry.intersection(parcel).area
@@ -211,7 +222,7 @@ async def lookup(client, city, parcel_geometry, latitude, parcel):
     fields='ZONECODE,ZONEDESC,Permitted_Building_Types,Use_Provisions,Development_Standards,Standards_and_Measurements,Parking_and_Mobility' if city=='SOMERVILLE' else '*'
     results = await asyncio.gather(fetch_layer(client, base, geometry, fields), *(fetch_layer(client, url, geometry, include_geometry=False) for _, url, _ in screens))
     features, error = results[0]
-    matches = await asyncio.to_thread(overlap_features, features, parcel_geometry, latitude)
+    matches = await asyncio.to_thread(overlap_features, features, parcel_geometry, latitude, repair_ring=city == "EVERETT")
     clipped = [(a, g.intersection(parcel_geometry), n) for a, g, n in matches]
     district = district_match(clipped, field, parcel_geometry.area)
     constraints = []

@@ -206,3 +206,13 @@ async def test_everett_triangle_stays_a_historical_reference():
     assert result['zoning']['regulatory_links'][0]['name'] == 'City-published Section 33 excerpt'
     assert result['coverage']['base_zoning_connected'] is False
     assert result['review'] is None
+
+
+def test_everett_repair_preserves_area_and_rejects_bow_tie():
+    touching = {'rings': [[(0, 0), (5, 0), (3, 0), (10, 0), (10, 10), (0, 10), (0, 0)]]}
+    with pytest.raises(ValueError):
+        esri_polygon(touching)
+    assert esri_polygon(touching, repair_ring=True).equals(box(0, 0, 10, 10))
+    bow_tie = {'rings': [[(0, 0), (10, 10), (10, 0), (0, 10), (0, 0)]]}
+    with pytest.raises(ValueError):
+        esri_polygon(bow_tie, repair_ring=True)
