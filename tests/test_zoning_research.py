@@ -98,3 +98,15 @@ def test_review_endpoint_requires_configured_secret(tmp_path, monkeypatch):
     assert client.get(path).status_code == 401
     auth = {"Authorization": "Bearer test-review-token"}
     assert client.get(path, headers=auth).json() == {"pending": []}
+
+
+def test_unavailable_ordinance_retains_registered_link(monkeypatch):
+    async def unavailable(*_):
+        return None
+
+    monkeypatch.setattr(zr, "fetch_document", unavailable)
+    code = "https://ecode360.com/45390701"
+    report = asyncio.run(zr.discover("REVERE", None, code))
+    assert report["candidates"] == []
+    assert report["sources"][0]["url"] == code
+    assert report["sources"][0]["digest"] is None

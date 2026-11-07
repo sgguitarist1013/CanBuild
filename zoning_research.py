@@ -27,7 +27,10 @@ PILOT_SOURCES = {
         "https://www.cambridgema.gov/CDD/zoninganddevelopment/Zoning/Amendments/adoptedzoningamendments",
     ),
     "CHICOPEE": (CHICOPEE_CODE, "https://ecode360.com/6481854"),
-    "REVERE": ("https://ecode360.com/45391923",),
+    "REVERE": (
+        "https://ecode360.com/45391923",
+        "https://www.revere.org/business-development/zoning-and-permitting",
+    ),
 }
 PUBLISHERS = {"ecode360.com", "library.municode.com", "online.encodeplus.com"}
 TOPICS = {
@@ -67,7 +70,7 @@ def approved_link(url, municipal_hosts):
     if domain in municipal_hosts:
         return True
     if domain == "ecode360.com":
-        return not p.query and bool(re.fullmatch(r"/\d+/?", p.path))
+        return not p.query and bool(re.fullmatch(r"/(?:[0-9]+|[A-Z]{2}[0-9]{4})/?", p.path))
     if domain == "library.municode.com":
         return bool(re.match(r"^/[a-z]{2}/[^/]+/codes/", p.path))
     return domain == "online.encodeplus.com" and p.path.startswith("/regs/")
@@ -137,7 +140,7 @@ def linked_pages(document, municipal_hosts):
         if source_host in PUBLISHERS and host(url) != source_host:
             continue
         context = f"{label} {unquote(target.path)}"
-        if ORDINANCE.search(context):
+        if ORDINANCE.search(context) or (source_host in municipal_hosts and host(url) in PUBLISHERS):
             score = 8
         elif source_host in PUBLISHERS or ORDINANCE.search(document["title"]):
             score = 5 if any(pattern.search(label) for pattern in TOPIC_PATTERNS.values()) else 0
@@ -265,6 +268,8 @@ async def discover(city, district, registered_url):
                 "digest": sha256("\n".join(d["blocks"]).encode()).hexdigest()} for d in useful]
     if not sources:
         sources = [{"title": "Municipal website listed by Massachusetts", "url": homepage, "digest": None}]
+        if registered_url and registered_url != homepage and approved_link(registered_url, municipal_hosts):
+            sources.insert(0, {"title": "Municipal zoning reference (text unavailable)", "url": registered_url, "digest": None})
     return {"sources": sources, "candidates": entries, "rule_candidates": rules,
             "method": "AI-extracted source values" if rules else "source text screening"}
 
