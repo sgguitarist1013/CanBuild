@@ -52,7 +52,12 @@ async def test_municipal_zoning_uses_parcel_overlap_not_a_street_point():
         geometry = json.loads(request.url.params['geometry'])
         assert request.url.params['geometryType'] == 'esriGeometryPolygon'
         assert geometry['spatialReference']['wkid'] == 3857
-        rows = [{'attributes': {'ZoneCode': 'ResB'}, 'geometry': {'rings': [list(box(0, 0, 100, 100).exterior.coords)]}}] if '/4/query' in str(request.url) else []
+        if '/4/query' in str(request.url):
+            assert request.url.params['returnGeometry']=='true'
+            rows=[{'attributes': {'ZoneCode': 'ResB'}, 'geometry': {'rings': [list(box(0, 0, 100, 100).exterior.coords)]}}]
+        else:
+            assert request.url.params['returnGeometry']=='false'
+            rows=[]
         return httpx.Response(200, json={'features': rows})
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         result = await lookup(client, 'CHICOPEE', parcel, latitude, {'gis_area_sqft_approx': 7200})
@@ -123,3 +128,21 @@ async def test_somerville_uses_current_city_map_host_and_safe_rule_links():
     assert result['zoning']['district']=='MR4'
     assert result['zoning']['source_updated_at']=='2025-06-17'
     assert len(result['zoning']['regulatory_links'])==1
+
+
+@pytest.mark.anyio
+async def test_constraint_screening_does_not_download_large_geometry():
+    def handler(request):
+        if '/4/query' in str(request.url):
+            return httpx.Response(200,json={'features':[]})
+        assert request.url.params['returnGeometry']=='false'
+        return httpx.Response(200,json={'features':[{'attributes':{'OverlayDistrictName':'Test overlay'}}]})
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result=await lookup(client,'CHICOPEE',box(0,0,100,100),42,{})
+    assert all(c['status']=='mapped intersection' for c in result['constraints'])
+    assert result['constraints'][0]['labels']==['Test overlay']
+
+
+def test_geometry_size_limit_is_enforced():
+    with pytest.raises(ValueError,match='processing limit'):
+        esri_polygon({'rings':[[[0,0]]*250001]})

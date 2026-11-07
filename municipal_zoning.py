@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 import httpx
 from shapely.geometry import Polygon, shape
 from shapely.ops import transform, unary_union
+from shapely.strtree import STRtree
 
 CHICOPEE = "https://hostingdata3.tighebond.com/arcgis/rest/services/ChicopeeMA/ChicopeeDynamic/MapServer"
 BOSTON = "https://gis.boston.gov/arcgis/rest/services/Basemaps/basemap_IPS/MapServer"
@@ -29,15 +30,33 @@ def coverage(city):
 
 
 def esri_polygon(geometry):
-    """Even-odd rings support disjoint exteriors and interior holes."""
-    result = Polygon()
-    for ring in (geometry or {}).get("rings", []):
-        if len(ring) >= 4:
-            piece = Polygon(ring)
-            if not piece.is_valid:
-                piece = piece.buffer(0)
-            result = result.symmetric_difference(piece)
-    return result
+    """Build shells/holes with a spatial index instead of repeated polygon XOR."""
+    rings = (geometry or {}).get('rings', [])
+    if sum(len(ring) for ring in rings) > 250000:
+        raise ValueError('Municipal geometry exceeds processing limit')
+    pieces = [Polygon(ring) for ring in rings if len(ring) >= 4]
+    if not pieces:
+        return Polygon()
+    if any(not p.is_valid for p in pieces):
+        raise ValueError('Municipal geometry contains an invalid ring')
+    if len(pieces) == 1:
+        return pieces[0]
+    tree = STRtree(pieces)
+    parents = {}
+    depth = {}
+    for i, piece in enumerate(pieces):
+        enclosing = [int(j) for j in tree.query(piece, predicate='within') if pieces[int(j)].area > piece.area]
+        depth[i] = len(enclosing)
+        parents[i] = min(enclosing, key=lambda j: pieces[j].area) if enclosing else None
+    children = {}
+    for child, parent in parents.items():
+        if parent is not None and depth[child] % 2 == 1:
+            children.setdefault(parent, []).append(pieces[child].exterior.coords)
+    shells = []
+    for i, piece in enumerate(pieces):
+        if depth[i] % 2 == 0:
+            shells.append(Polygon(piece.exterior.coords, children.get(i, [])))
+    return unary_union(shells)
 
 
 def to_ground(geometry, latitude):
@@ -55,14 +74,14 @@ def esri_query_geometry(parcel, latitude):
     return json.dumps({"rings": rings, "spatialReference": {"wkid": 3857}})
 
 
-async def fetch_layer(client, url, geometry, fields='*'):
+async def fetch_layer(client, url, geometry, fields='*', include_geometry=True):
     try:
         response = await client.get(url + "/query", params={"f": "json", "geometry": geometry,
             "geometryType": "esriGeometryPolygon", "inSR": 3857, "outSR": 3857,
-            "spatialRel": "esriSpatialRelIntersects", "outFields": fields, "returnGeometry": "true", "resultRecordCount": 250},
+            "spatialRel": "esriSpatialRelIntersects", "outFields": fields, "returnGeometry": str(include_geometry).lower(), "resultRecordCount": 250},
             timeout=httpx.Timeout(18, connect=4))
         response.raise_for_status()
-        data = response.json()
+        data = await asyncio.to_thread(response.json)
         if data.get("error") or data.get("exceededTransferLimit"):
             raise ValueError("Incomplete municipal spatial response")
         return data.get("features", []), None
@@ -83,9 +102,13 @@ async def cambridge_lookup(client, parcel, latitude):
     response = await client.get("https://data.cambridgema.gov/resource/yc3q-q3hf.json", params={
         "$where": f"intersects(the_geom, '{wkt}')", "$select": "zone_type,pud_type,the_geom", "$limit": 100}, timeout=httpx.Timeout(18, connect=4))
     response.raise_for_status()
-    rows = response.json()
+    rows = await asyncio.to_thread(response.json)
     if not isinstance(rows, list) or len(rows) >= 100:
         raise ValueError("Incomplete Cambridge zoning response")
+    return await asyncio.to_thread(cambridge_match, rows, parcel, latitude)
+
+
+def cambridge_match(rows, parcel, latitude):
     scale = 3.280839895 * math.cos(math.radians(latitude))
     radius = 6378137
     matches = []
@@ -160,16 +183,18 @@ async def lookup(client, city, parcel_geometry, latitude, parcel):
         screens = [("Zoning overlays", SOMERVILLE + "/OverlayDistricts/MapServer/0", 'District'), ("Historic districts", SOMERVILLE + "/LocalHistoricDistricts/MapServer/0", 'LHD'), ('Transit area context', SOMERVILLE + '/TransitAreas/MapServer/0', 'WALKSHED')]
     geometry = esri_query_geometry(parcel_geometry, latitude)
     fields='ZONECODE,ZONEDESC,Permitted_Building_Types,Use_Provisions,Development_Standards,Standards_and_Measurements,Parking_and_Mobility' if city=='SOMERVILLE' else '*'
-    results = await asyncio.gather(fetch_layer(client, base, geometry, fields), *(fetch_layer(client, url, geometry) for _, url, _ in screens))
+    results = await asyncio.gather(fetch_layer(client, base, geometry, fields), *(fetch_layer(client, url, geometry, include_geometry=False) for _, url, _ in screens))
     features, error = results[0]
-    matches = overlap_features(features, parcel_geometry, latitude)
+    matches = await asyncio.to_thread(overlap_features, features, parcel_geometry, latitude)
     clipped = [(a, g.intersection(parcel_geometry), n) for a, g, n in matches]
     district = district_match(clipped, field, parcel_geometry.area)
     constraints = []
     for (name, url, label), (rows, failure) in zip(screens, results[1:]):
-        hits = overlap_features(rows, parcel_geometry, latitude)
+        # The server performs the parcel intersection. Screening needs attributes only;
+        # fetching an entire citywide buffer polygon can stall a small web instance.
+        hits = [row.get('attributes') or {} for row in rows]
         constraints.append({"name": name, "status": "unavailable" if failure else "mapped intersection" if hits else "no mapped intersection",
-            "labels": list(dict.fromkeys(str(a.get(label)) for a, _, _ in hits if label and a.get(label))), "source_url": url, "note": "Map screening only; absence of a mapped feature is not regulatory clearance."})
+            "labels": list(dict.fromkeys(str(a.get(label)) for a in hits if label and a.get(label))), "source_url": url, "note": "Server-side parcel screening includes boundary touches. Absence of a mapped feature is not regulatory clearance."})
     zoning = None
     if district:
         attrs = next(a for a, _, _ in matches if a.get(field) == district)
