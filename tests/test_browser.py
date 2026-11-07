@@ -20,8 +20,8 @@ def test_search_displays_selected_property_and_withholds_estimates(page, app_url
     expect(page.locator("#propertyAddress")).to_have_text("95 MAGAZINE ST, CAMBRIDGE, MA")
     expect(page.locator("#facts")).to_contain_text("95 MAGAZINE ST")
     expect(page.locator("#facts")).not_to_contain_text("91 MAGAZINE")
-    expect(page.locator("#potentialArea")).to_have_text("Not yet estimated")
-    expect(page.locator("#projectCost")).to_have_text("Pending verified rules")
+    expect(page.locator("#potentialAnswer")).to_contain_text("Confirm its zoning district")
+    expect(page.locator("#redevelopmentMetrics")).to_be_hidden()
     expect(page.locator("#go")).to_be_enabled()
 
 
@@ -70,11 +70,12 @@ def test_property_conflicts_and_local_zoning_review(page, app_url, property_reco
     expect(page.locator('#facts')).to_contain_text('Unresolved: 0 reported / 1 from use classification')
     expect(page.locator('#zoningStandards')).to_contain_text('7,500 sq ft')
     expect(page.locator('#constraintChecks')).to_contain_text('unavailable')
-    assert not page.locator('details.research-card').evaluate('(el)=>el.open')
+    assert page.locator('details.research-card[open]').count() == 0
     assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
 
 
 def test_alias_selection_owner_and_sales(page, app_url, property_record):
+    page.set_viewport_size({"width": 390, "height": 844})
     first=dict(property_record,parcel=None,existing_building=None,parcel_candidates=[{
         'parcel_number':'0303029000','address':'38-34 ATLANTIC AV, BOSTON, MA 02110',
         'recorded_owner':'ONE LEWIS WHARF LLC','use_description':'OFFICE 3-9 STORY'}])
@@ -94,9 +95,17 @@ def test_alias_selection_owner_and_sales(page, app_url, property_record):
     page.get_by_role('combobox').fill('One Lewis Wharf, Boston, MA')
     page.get_by_role('button',name='Explore property').click()
     expect(page.locator('#ownerStatus')).to_contain_text('No owner attributed')
+    expect(page.locator('#potentialAnswer')).to_contain_text('Choose the assessor record')
+    expect(page.locator('#redevelopmentMetrics')).to_be_hidden()
+    expect(page.get_by_role('button',name='Review this assessor record')).to_be_hidden()
+    page.get_by_role('button',name='Confirm parcel').click()
+    expect(page.locator('#recordDetails > summary')).to_be_focused()
     page.get_by_role('button',name='Review this assessor record').click()
     expect(page.locator('#propertyAddress')).to_have_text('38-34 ATLANTIC AV, BOSTON, MA 02110')
     expect(page.locator('#ownerStatus')).to_contain_text('ONE LEWIS WHARF LLC')
+    expect(page.locator('#recordDetails')).not_to_have_attribute('open', '')
+    page.get_by_text('Comparable sales', exact=True).click()
+    expect(page.locator('#salesCandidates')).to_be_visible()
     expect(page.locator('#salesCandidates')).to_contain_text('$12,000,000')
     assert any('boston_pid=0303029000' in url for url in requests)
 
@@ -114,6 +123,7 @@ def test_condo_program_totals_sellout_and_property_reset(page,app_url,property_r
     page.get_by_role('combobox').fill('95 Magazine St, Cambridge, MA')
     page.get_by_role('button',name='Explore property').click()
     expect(page.locator('#existingDwellingUnits')).to_have_text('3')
+    page.get_by_text('Advanced tools',exact=True).click()
     page.get_by_text('Optional manual condo scenario',exact=True).click()
     rows=page.locator('.unit-mix-row')
     for i,values in enumerate([('2','1000','800','1000'),('1','1200','900','1100')]):
@@ -148,6 +158,7 @@ def test_condo_sale_range_is_an_explicit_assumption(page,app_url,property_record
     page.goto(app_url)
     page.get_by_role('combobox').fill('95 Magazine St, Cambridge, MA')
     page.get_by_role('button',name='Explore property').click()
+    page.get_by_text('Advanced tools',exact=True).click()
     page.get_by_text('Optional manual condo scenario',exact=True).click()
     row=page.locator('.unit-mix-row').first
     row.locator('[data-field="units"]').fill('3')
@@ -175,9 +186,11 @@ def test_condo_sale_range_is_an_explicit_assumption(page,app_url,property_record
 def test_automatic_redevelopment_shows_default_estimate_without_input(page, app_url, property_record):
     from redevelopment import analyze_redevelopment
 
+    page.set_viewport_size({"width": 390, "height": 844})
     redevelopment = analyze_redevelopment({"gross_area_high_sqft": 12000, "stories": 4},
                                           {"assessed_value": 900000, "building_area_sqft": 3000})
-    record = dict(property_record, redevelopment=redevelopment)
+    redevelopment["best"]["conditional"] = True
+    record = dict(property_record, zoning={"district": "C-1"}, redevelopment=redevelopment)
     page.route("**/api/property?*", lambda route: route.fulfill(json=record))
     page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
     page.goto(app_url)
@@ -185,25 +198,43 @@ def test_automatic_redevelopment_shows_default_estimate_without_input(page, app_
     page.get_by_role("button", name="Explore property").click()
     expect(page.locator("#autoSellout")).to_contain_text("$")
     expect(page.locator("#autoCost")).to_contain_text("$")
+    expect(page.locator("#autoUnits")).to_have_text(str(redevelopment["best"]["market_units"] + redevelopment["best"]["restricted_units"]))
+    expect(page.locator("#potentialLimit")).to_contain_text("affordable-housing requirements")
+    expect(page.locator("#redevelopmentAreas")).to_be_hidden()
+    assert page.locator('details.research-card[open]').count() == 0
+    button = page.get_by_role("button", name="View development estimate")
+    expect(button).to_be_in_viewport()
+    assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+    button.click()
+    expect(page.locator("#estimateDetails > summary")).to_be_focused()
+    expect(page.locator("#redevelopmentAreas")).to_be_visible()
     expect(page.locator("#redevelopmentAreas")).to_contain_text("restricted")
     expect(page.locator("#redevelopmentMix")).to_contain_text("Cambridge 2026 study")
     assert not page.get_by_text("Optional manual condo scenario", exact=True).evaluate("(el) => el.parentElement.open")
 
 
-def test_on_demand_zoning_references_are_collapsed(page, app_url, property_record):
+def test_somerville_zoning_details_open_from_mobile_summary(page, app_url, property_record):
+    page.set_viewport_size({"width": 390, "height": 844})
+    section = "https://online.encodeplus.com/regs/somerville-ma/doc-view.aspx?pn=0&ajax=0&secid=540"
     report = {
         "status": "Official-source passages found. District applicability and amendments still need review.",
-        "sources": [{"title": "Dimensional regulations", "url": "https://ecode360.com/45391923"}],
+        "sources": [{"title": "Dimensional regulations", "url": section, "topics": ["dimensional standards"]}],
         "collected_at": "2026-11-07T18:30:00+00:00",
     }
-    record = dict(property_record, on_demand_zoning_research=report)
+    record = dict(property_record, address="50 PROSPECT ST, SOMERVILLE, MA",
+                  zoning={"district": "MR6"}, on_demand_zoning_research=report)
     page.route("**/api/property?*", lambda route: route.fulfill(json=record))
     page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
     page.goto(app_url)
-    page.get_by_role("combobox").fill("95 Magazine St, Cambridge, MA")
+    page.get_by_role("combobox").fill("50 Prospect St, Somerville, MA")
     page.get_by_role("button", name="Explore property").click()
+    expect(page.locator("#zoneStatus")).to_have_text("MR6 · City zoning map matched")
+    expect(page.locator("#potentialAnswer")).to_contain_text("automated buildout estimate is currently unavailable")
+    expect(page.locator("#redevelopmentMetrics")).to_be_hidden()
     expect(page.get_by_text("On-demand zoning research", exact=True)).to_be_hidden()
-    page.get_by_text("Research details & sources", exact=True).click()
-    page.get_by_text("On-demand zoning research", exact=True).click()
+    page.get_by_role("button", name="View district standards").click()
+    expect(page.locator("#districtDetails > summary")).to_be_focused()
+    expect(page.locator("#onDemandStatus")).to_be_visible()
     expect(page.locator("#onDemandStatus")).to_contain_text("amendments still need review")
-    expect(page.get_by_role("link", name="Dimensional regulations")).to_have_attribute("href", report["sources"][0]["url"])
+    expect(page.get_by_role("link", name="Dimensional regulations")).to_have_attribute("href", section)
+    assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
