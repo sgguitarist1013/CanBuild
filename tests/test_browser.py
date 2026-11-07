@@ -188,3 +188,22 @@ def test_automatic_redevelopment_shows_default_estimate_without_input(page, app_
     expect(page.locator("#redevelopmentAreas")).to_contain_text("restricted")
     expect(page.locator("#redevelopmentMix")).to_contain_text("Cambridge 2026 study")
     assert not page.get_by_text("Optional manual condo scenario", exact=True).evaluate("(el) => el.parentElement.open")
+
+
+def test_on_demand_zoning_references_are_collapsed(page, app_url, property_record):
+    report = {
+        "status": "Official-source passages found. District applicability and amendments still need review.",
+        "sources": [{"title": "Dimensional regulations", "url": "https://ecode360.com/45391923"}],
+        "collected_at": "2026-11-07T18:30:00+00:00",
+    }
+    record = dict(property_record, on_demand_zoning_research=report)
+    page.route("**/api/property?*", lambda route: route.fulfill(json=record))
+    page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
+    page.goto(app_url)
+    page.get_by_role("combobox").fill("95 Magazine St, Cambridge, MA")
+    page.get_by_role("button", name="Explore property").click()
+    expect(page.get_by_text("On-demand zoning research", exact=True)).to_be_hidden()
+    page.get_by_text("Research details & sources", exact=True).click()
+    page.get_by_text("On-demand zoning research", exact=True).click()
+    expect(page.locator("#onDemandStatus")).to_contain_text("amendments still need review")
+    expect(page.get_by_role("link", name="Dimensional regulations")).to_have_attribute("href", report["sources"][0]["url"])
