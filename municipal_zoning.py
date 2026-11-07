@@ -362,7 +362,7 @@ def reference_review(district, parcel):
 
 def somerville_street(address):
     """Use the requested street even when Census substitutes another street type."""
-    match = re.fullmatch(r"(.+?)(?:,\s*|\s+)Somerville(?:,\s*|\s+)(?:MA|Massachusetts)(?:\s+\d{5}(?:-\d{4})?)?", address.strip(), re.I)
+    match = re.fullmatch(r"(.+?)(?:,\s*|\s+)Somerville(?:,\s*|\s+)(?:MA|Massachusetts)(?:(?:,\s*|\s+)\d{5}(?:-\d{4})?)?", address.strip(), re.I)
     if not match:
         return None
     return re.split(r"\s+(?:#|unit\s+|apt\.?\s+)|,", match[1], maxsplit=1, flags=re.I)[0].strip()

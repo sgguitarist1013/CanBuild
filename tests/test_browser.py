@@ -25,6 +25,23 @@ def test_search_displays_selected_property_and_withholds_estimates(page, app_url
     expect(page.locator("#go")).to_be_enabled()
 
 
+def test_keyboard_search_works_without_a_suggestion(page, app_url, property_record):
+    calls = []
+    def respond(route):
+        calls.append(route.request.url)
+        route.fulfill(json=property_record)
+    page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
+    page.route("**/api/property?*", respond)
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.goto(app_url)
+    field = page.get_by_role("combobox")
+    field.fill("95 Magazine St, Cambridge, MA")
+    field.press("Enter")
+    expect(page.locator("#propertyAddress")).to_contain_text("95 MAGAZINE ST")
+    expect(page.get_by_role("button", name="Explore property")).to_be_enabled()
+    assert len(calls) == 1
+
+
 def test_error_then_retry(page, app_url, property_record):
     calls = []
     def respond(route):
