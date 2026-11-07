@@ -51,7 +51,50 @@ REVERE_SMART_GROWTH_SOURCES = [
 ATLAS = "https://services1.arcgis.com/hGdibHYSPO59RG1h/arcgis/rest/services/MBTA_Communities_3A_District_Atlas/FeatureServer"
 ATLAS_SOURCE = "https://www.mass.gov/info-details/massgis-data-mbta-communities-3a-district-atlas"
 MUNICIPALITIES = json.loads((Path(__file__).parent / "docs/massachusetts_municipalities.json").read_text())
-LOCAL_CONNECTORS = {"BOSTON", "SOMERVILLE", "CHICOPEE", "CHELSEA", "EVERETT", "REVERE"}
+SMART_GROWTH_SOURCE = "https://www.mass.gov/info-details/chapter-40r-smart-growth-zoning"
+SMART_GROWTH_DISTRICTS = json.loads((Path(__file__).parent / "docs/massachusetts_40r_districts.json").read_text())
+
+ARLINGTON = "https://services2.arcgis.com/s1Sh73K7qtP9JdrG/arcgis/rest/services/Zoning_and_Overlay_Districts/FeatureServer"
+NORTHAMPTON = "https://services3.arcgis.com/rXBMAZhnkewHZIaE/arcgis/rest/services/Northampton_Zoning_and_Overlays_WFL2/FeatureServer"
+STOW = "https://services6.arcgis.com/bYxJFmZwD1DSkFy9/arcgis/rest/services"
+NMCOG = "https://services2.arcgis.com/8sfNXBvIUURUO8wz/arcgis/rest/services/NMCOG_Zoning_Districts_v20230106/FeatureServer/131"
+NMCOG_TOWNS = ("BILLERICA", "CHELMSFORD", "DRACUT", "DUNSTABLE", "LOWELL", "PEPPERELL", "TEWKSBURY", "TYNGSBOROUGH", "WESTFORD")
+
+# New snapshot connectors can be added with verified layer IDs and fields.
+SNAPSHOT_CONNECTORS = {
+    "ARLINGTON": {
+        "base": ARLINGTON + "/1", "field": "ZoneCode", "description_field": "ZoneName",
+        "updated": "2025-11-07", "screens": [("Arlington zoning overlays", ARLINGTON + "/0", "OverlayDistrict")],
+        "map_url": "https://www.arcgis.com/home/item.html?id=9916a97573ca40db9c817f478bf44c43",
+        "priority": 2, "reason": "Multifamily and transit corridor redevelopment",
+        "status": "Town GIS base districts and overlays; current bylaws and amendments require confirmation",
+    },
+    "NORTHAMPTON": {
+        "base": NORTHAMPTON + "/2", "field": "NAME", "description_field": None,
+        "updated": "2026-02-06", "screens": [("Northampton zoning overlays", NORTHAMPTON + "/1", "NAME1_")],
+        "map_url": "https://www.arcgis.com/home/item.html?id=60931800fa7c4fc2880b4c593af00b7a",
+        "code_url": "https://ecode360.com/13265306",
+        "priority": 2, "reason": "Downtown infill and housing redevelopment",
+        "status": "City GIS base districts and overlays; current ordinance and amendments require confirmation",
+    },
+    "STOW": {
+        "base": STOW + "/Base_Zoning_Districts/FeatureServer/0", "field": "Zone", "description_field": "Name",
+        "updated": "2022-08-04", "screens": [],
+        "map_url": "https://www.arcgis.com/home/item.html?id=8de93b19c6d342129fc1200a55e7f7c5",
+        "status": "Historical 2022 municipal base zoning layer; current zoning requires confirmation",
+        "historical_zoning_only": True,
+    },
+}
+for town in NMCOG_TOWNS:
+    SNAPSHOT_CONNECTORS[town] = {
+        "base": NMCOG, "field": "Zone_CODE", "description_field": "Zone_DESC",
+        "town_field": "Town_Name", "updated": None, "screens": [],
+        "map_url": "https://www.arcgis.com/home/item.html?id=a79a7b6d02c64614b548474db85e4430",
+        "status": "Historical regional compilation from January 2023; current local map required",
+        "historical_zoning_only": True,
+    }
+
+LOCAL_CONNECTORS = {"BOSTON", "SOMERVILLE", "CHICOPEE", "CHELSEA", "EVERETT", "REVERE"} | SNAPSHOT_CONNECTORS.keys()
 REGISTRY = {
     "CAMBRIDGE": {"priority": 1, "reason": "Multifamily and inclusionary housing capacity", "status": "District connector and C-1 conceptual rules", "map_url": "https://www.cambridgema.gov/gis/gisdatadictionary/cdd/cdd_zoningdistricts", "code_url": "https://www.cambridgema.gov/cdd/zoninganddevelopment/zoning/ordinance"},
     "SOMERVILLE": {"priority": 1, "reason": "Building type, density, and mixed-use redevelopment", "status": "Published June 2025 parcel zoning and official district-rule links; later amendments require review", "map_url": "https://map.viewprogis.com/ecp/somerville-test?widget=9efa8bb5-3de1-4ff7-86b1-f698d0d6fb0d", "code_url": "https://online.encodeplus.com/regs/somerville-ma/doc-viewer.aspx"},
@@ -64,12 +107,30 @@ REGISTRY = {
 }
 
 
+for town, snapshot in SNAPSHOT_CONNECTORS.items():
+    REGISTRY[town] = {key: snapshot[key] for key in (
+        "priority", "reason", "status", "map_url", "code_url", "historical_zoning_only",
+    ) if key in snapshot}
+
+
 def coverage(city):
-    return {
-        "municipality": city, **REGISTRY.get(str(city).upper(), {"priority": None, "status": "Municipal base zoning source not connected"}),
-        "base_zoning_connected": str(city).upper() in (LOCAL_CONNECTORS - {"EVERETT"}) or str(city).upper() == "CAMBRIDGE",
+    key = str(city).upper()
+    entry = REGISTRY.get(key, {"status": "Municipal base zoning source not connected"})
+    historical = entry.get("historical_zoning_only", False)
+    connected = (key in LOCAL_CONNECTORS or key == "CAMBRIDGE") and not historical
+    result = {
+        "municipality": city, "priority": None, **entry,
+        "base_zoning_connected": connected,
+        "base_map_status": "municipal_snapshot" if connected else "historical_reference" if historical else "not_connected",
         "multifamily_screen_source": ATLAS_SOURCE,
     }
+    if key in SMART_GROWTH_DISTRICTS:
+        result["smart_growth_inventory"] = {
+            "district_names": SMART_GROWTH_DISTRICTS[key],
+            "snapshot_date": "2026-02-10", "source_url": SMART_GROWTH_SOURCE,
+            "scope": "Municipality inventory only; parcel coverage not evaluated",
+        }
+    return result
 
 
 def esri_polygon(geometry, *, repair_ring=False):
@@ -225,7 +286,11 @@ async def lookup(client, city, parcel_geometry, latitude, parcel):
     city = str(city).upper()
     if parcel_geometry is None or city not in LOCAL_CONNECTORS:
         return {"coverage": coverage(city), "zoning": None, "constraints": [], "review": None}
-    if city == "CHICOPEE":
+    snapshot = SNAPSHOT_CONNECTORS.get(city)
+    if snapshot:
+        base, field, updated = snapshot["base"], snapshot["field"], snapshot["updated"]
+        screens = snapshot["screens"]
+    elif city == "CHICOPEE":
         base, field, updated = CHICOPEE + "/4", "ZoneCode", "2025-01-01"
         screens = [("Zoning overlays", CHICOPEE + "/105", "OverlayDistrictName"), ("Historic districts", CHICOPEE + "/99", "HISTORIC_N"), ("Mapped resource buffers", CHICOPEE + "/102", None), ("Mapped floodplain", CHICOPEE + "/107", "FLD_ZONE")]
     elif city == "BOSTON":
@@ -251,8 +316,12 @@ async def lookup(client, city, parcel_geometry, latitude, parcel):
         screens = [("Zoning overlays", SOMERVILLE + "/OverlayDistricts/MapServer/0", 'District'), ("Historic districts", SOMERVILLE + "/LocalHistoricDistricts/MapServer/0", 'LHD'), ('Transit area context', SOMERVILLE + '/TransitAreas/MapServer/0', 'WALKSHED')]
     geometry = esri_query_geometry(parcel_geometry, latitude)
     fields='ZONECODE,ZONEDESC,Permitted_Building_Types,Use_Provisions,Development_Standards,Standards_and_Measurements,Parking_and_Mobility' if city=='SOMERVILLE' else '*'
-    results = await asyncio.gather(fetch_layer(client, base, geometry, fields), *(fetch_layer(client, url, geometry, include_geometry=False) for _, url, _ in screens))
+    town_field = snapshot.get("town_field") if snapshot else None
+    where = f"UPPER({town_field}) = '{city}'" if town_field else "1=1"
+    results = await asyncio.gather(fetch_layer(client, base, geometry, fields, where=where), *(fetch_layer(client, url, geometry, include_geometry=False) for _, url, _ in screens))
     features, error = results[0]
+    if town_field:
+        features = [f for f in features if str((f.get("attributes") or {}).get(town_field)).upper() == city]
     matches, district = [], None
     try:
         matches = await asyncio.to_thread(overlap_features, features, parcel_geometry, latitude, repair_ring=city == "EVERETT")
@@ -281,6 +350,14 @@ async def lookup(client, city, parcel_geometry, latitude, parcel):
             "source_updated_at": updated, "match_method": "At least 98% selected-parcel polygon coverage", "current_amendments_verified": False,
             "snapshot_note": "Published municipal GIS snapshot; confirm amendments and full overlay coverage before design.",
             "article": attrs.get("Article"), "zoning_district": attrs.get("Zoning_District"), "amendment_date_reported": attrs.get("Latest_Amendment_Effective_Date")}
+        if snapshot:
+            description = snapshot["description_field"]
+            zoning["district_description"] = attrs.get(description) if description else None
+            if snapshot.get("historical_zoning_only"):
+                zoning["historical_reference"] = True
+                zoning["snapshot_note"] = snapshot["status"] + "."
+            if snapshot.get("code_url"):
+                zoning["regulatory_links"] = [{"name": f"{city.title()} zoning ordinance", "url": snapshot["code_url"]}]
         if city == 'BOSTON':
             zoning['reference_standards'] = {label: attrs[key] for label, key in (
                 ('Maximum FAR', 'Max_FAR'), ('Maximum height', 'Max_Height'), ('Front setback', 'Front_Setback'),

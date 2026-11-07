@@ -1,4 +1,5 @@
 """CanBuild Massachusetts: statewide parcel matching with municipality-scoped zoning rules."""
+from collections import Counter
 from pathlib import Path
 from datetime import datetime, timezone
 import asyncio
@@ -20,7 +21,7 @@ from monitoring import configure_monitoring
 configure_monitoring()
 
 ROOT=Path(__file__).parent
-app=FastAPI(title="CanBuild Massachusetts",version="0.13.0")
+app=FastAPI(title="CanBuild Massachusetts",version="0.14.0")
 app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
 CENSUS="https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress"
 PARCELS="https://services1.arcgis.com/hGdibHYSPO59RG1h/ArcGIS/rest/services/Massachusetts_Property_Tax_Parcels/FeatureServer/0/query"
@@ -37,11 +38,12 @@ def now(): return datetime.now(timezone.utc).isoformat()
 @app.get("/")
 def home(): return FileResponse(ROOT/"static"/"index.html")
 @app.get("/api/health")
-def health(): return {"ok":True,"version":"0.13.0","time":now()}
+def health(): return {"ok":True,"version":"0.14.0","time":now()}
 @app.get("/api/coverage")
 def coverage():
-    return {"municipalities":[municipal_zoning.coverage(city) for city in municipal_zoning.MUNICIPALITIES],
-        "note":"All Massachusetts cities and towns are listed. The state atlas covers published Section 3A districts in compliant municipalities. Base zoning coverage is tracked separately."}
+    rows = [municipal_zoning.coverage(city) for city in municipal_zoning.MUNICIPALITIES]
+    return {"municipalities": rows, "base_map_counts": dict(Counter(row["base_map_status"] for row in rows)),
+        "note": "Base map counts measure connected sources. Current ordinances and parcel-specific capacity require separate review."}
 @app.get("/api/sources")
 def sources(municipality:str|None=None):
     local=municipal_zoning.REGISTRY.get((municipality or '').upper(),{})
@@ -183,7 +185,7 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
             result['zoning']=local['zoning'];result['constraints']=local['constraints'];result['zoning_review']=local['review']
             if local['zoning']:
                 result['verification']['zoning'] = (
-                    'Historical city map match; current zoning unverified' if local['zoning'].get('historical_reference')
+                    'Historical zoning map match; current zoning unverified' if local['zoning'].get('historical_reference')
                     else 'Municipal GIS selected-parcel polygon snapshot; amendments and full overlay coverage not verified'
                 )
                 result['warnings'].append(local['zoning']['snapshot_note'])
@@ -245,13 +247,13 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
     if not result.get("zoning"):
         result["recommendations"].append({"title":"Verify the property's zoning district","reason":"CanBuild could not confirm a base district for the selected parcel. Base district standards are needed to evaluate expansion.","next_step":"Use the municipality's official zoning map and confirm the parcel's base and overlay districts with its planning or building department.","confidence":"Not yet verified"})
     elif historical:
-        triangle = district == "EDD"
+        triangle = city.upper() == "EVERETT" and district == "EDD"
         result["recommendations"].append({
-            "title": "Check the Commercial Triangle mixed-use path" if triangle else "Confirm current Everett zoning",
-            "reason": f"The July 2019 city map shows {zoning.get('district_description') or district} on the selected parcel.",
+            "title": "Check the Commercial Triangle mixed-use path" if triangle else f"Confirm current {city.title()} zoning",
+            "reason": f"The historical map shows {zoning.get('district_description') or district} on the selected parcel.",
             "next_step": ("Ask Everett Planning to confirm current Section 33 eligibility, required commercial space, site plan review and dimensional standards before estimating dwelling yield."
-                          if triangle else "Ask Everett Planning for the current district, overlays, allowed building uses and dimensional standards before pricing a development scenario."),
-            "confidence": "Historical city map",
+                          if triangle else "Ask the local planning department for the current district, overlays, allowed building uses and dimensional standards before pricing a development scenario."),
+            "confidence": "Historical zoning map",
         })
     elif result.get('zoning_review'):
         review=result['zoning_review']

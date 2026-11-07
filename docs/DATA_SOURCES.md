@@ -10,8 +10,18 @@ The coverage endpoint lists all 351 cities and towns from [MassGIS municipal bou
 
 ## Municipality checkoff
 
+The coverage API reports a base-map status for all 351 municipalities. In this release there are eight municipal map connections, 11 historical references and 332 places awaiting a base-map connection. A connected map does not complete the municipality review. Check off local ordinance and amendment verification, overlay review, and parcel-specific capacity separately.
+
+The February 10, 2026 [EOHLC Chapter 40R district table](https://www.mass.gov/info-details/chapter-40r-smart-growth-zoning) provides 67 named district leads across 53 municipalities. The tracker records only names and the snapshot date. It does not use the table to match a parcel, estimate a project or confirm current district boundaries.
+
+Regional snapshots are kept as historical references. The [NMCOG layer](https://www.arcgis.com/home/item.html?id=a79a7b6d02c64614b548474db85e4430) documents a January 2023 compilation. It adds Billerica, Chelmsford, Dracut, Dunstable, Lowell, Pepperell, Tewksbury, Tyngsborough and Westford. Every match requires both the submitted municipality and the selected parcel geometry. The published data edit timestamp does not establish a later ordinance adoption date. The National Zoning Atlas was evaluated but is not imported because its [terms](https://www.zoningatlas.org/terms) restrict reuse, including commercial use.
+
+
 | Municipality | Source review completed | Open work |
 | --- | --- | --- |
+| Arlington | Town GIS base districts and mapped overlays; base layer edit date November 7, 2025. | Verify current bylaws, amendments and project rules. |
+| Northampton | City GIS base districts and mapped overlays; base layer edit date February 6, 2026. City planning links the zoning code. | Verify district-specific standards, amendments and parcel yield. |
+| Stow | Historical 2022 town base map. | Verify current base districts, bylaws and overlays. |
 | Watertown | Watertown Square Section 3A atlas subdistricts paired with published §§ 5.08 and 5.09. Includes active-frontage screening and district table references. | Verify current citywide base-zoning geometry and amendments, then validate parcel-specific envelopes and unit scenarios. |
 | Everett | Historical 2019 parcel map and Commercial Triangle reference excerpt. | Verify the current map and amendments. |
 | Revere | City GIS base districts and overlay screening, independent Section 3A screening, and published Wonderland, Green Street and Shirley Avenue code references. | Validate additional overlay rules, later map amendments and project-specific unit capacity. |
@@ -20,6 +30,11 @@ The coverage endpoint lists all 351 cities and towns from [MassGIS municipal bou
 Watertown's [city zoning page](https://www.watertown-ma.gov/zoning) links the MapGeo viewer and code. The viewer's published CARTO legend still lists the older Central Business district and omits the Watertown Square districts, so it is not used for current parcel assignments. The report uses the distinct `314WSQ*_TODO` atlas records, including the active-frontage records, to select reference material. Reference heights and open-space percentages come from [§ 5.08](https://ecode360.com/37104064). Review path and partial-lot treatment come from [§ 5.09](https://ecode360.com/37104096). The screen does not resolve current map boundaries, frontage geometry, eligibility for bonus height, or buildable unit yield.
 
 ## Published sources
+
+- [Arlington town GIS](https://www.arcgis.com/home/item.html?id=9916a97573ca40db9c817f478bf44c43): layers 1 (base district, `ZoneCode`) and 0 (overlays, `OverlayDistrict`). This item supersedes the separate reference map that states its amendments stop at the 2020 special town meeting.
+- [Northampton city GIS](https://www.arcgis.com/home/item.html?id=60931800fa7c4fc2880b4c593af00b7a): layers 2 (base district, `NAME`) and 1 (overlays, `NAME1_`). [Planning & Sustainability](https://www.northamptonma.gov/924/Planning-Sustainability) links the [zoning code](https://ecode360.com/13265306).
+- [Stow town GIS](https://www.arcgis.com/home/item.html?id=8de93b19c6d342129fc1200a55e7f7c5): layer 0 (`Zone`, `Name`) is an August 2022 data snapshot. Dimensional values are not applied.
+
 
 - Revere’s [city GIS page](https://www.revere.org/gis) links the municipal viewer. Its configuration points to [RevereMA MapServer](https://gis.revere.org/arcgis/rest/services/RevereMA/MapServer): base zoning layer 62 (`zone_name`) and overlay layer 20 (`zonetype`, `longname`). A base district requires the same parcel-overlap check as other municipal layers. Overlay hits can include boundary touches and remain visible when base geometry cannot be validated. The GIS service provides no verified citywide amendment date. [Chapter 17.21](https://ecode360.com/45391742) governs the Wonderland overlay, with site plan and potentially Revere Beach Design Review Board review. [Chapter 17.29](https://ecode360.com/45392350) includes the Green Street and Shirley Avenue smart growth paths. Dimensions are reference values only. Confirm eligible project area, review, parking, affordability and district-specific conditions before calculating units or sellout.
 

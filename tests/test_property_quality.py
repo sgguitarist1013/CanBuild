@@ -266,3 +266,24 @@ async def test_revere_uses_city_layers_and_keeps_overlay_references_separate(val
     assert any("45392482" in source["url"] for source in references[0]["sources"])
     assert "50 ft" in references[0]["summary"]
     assert result["review"] is None
+
+
+@pytest.mark.anyio
+async def test_regional_map_requires_matching_town_and_stays_historical():
+    parcel = to_ground(box(0, 0, 100, 100), 42)
+
+    def handler(request):
+        assert request.url.path.endswith("/131/query")
+        assert request.url.params["where"] == "UPPER(Town_Name) = 'LOWELL'"
+        geometry = {"rings": [list(box(0, 0, 100, 100).exterior.coords)]}
+        return httpx.Response(200, json={"features": [
+            {"attributes": {"Town_Name": "Dracut", "Zone_CODE": "R1"}, "geometry": geometry},
+            {"attributes": {"Town_Name": "Lowell", "Zone_CODE": "DMU"}, "geometry": geometry},
+        ]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await lookup(client, "Lowell", parcel, 42, {})
+    assert result["zoning"]["district"] == "DMU"
+    assert result["zoning"]["historical_reference"]
+    assert not result["zoning"]["current_amendments_verified"]
+    assert not result["coverage"]["base_zoning_connected"]
