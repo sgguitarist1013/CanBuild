@@ -64,6 +64,7 @@ async function loadCondoReferences(){
   const params=new URLSearchParams({municipality:city,lat:report.coordinates.lat,lon:report.coordinates.lon});
   if($('condoMinYear').value.trim())params.set('min_year_built',$('condoMinYear').value.trim());
   if(city.toUpperCase()==='BOSTON'&&/^\d{10}$/.test(report.parcel.parcel_number))params.set('boston_pid',report.parcel.parcel_number);
+  report.condo_sales_research=null;$('condoReferences').replaceChildren();
   $('loadCondoSales').disabled=true;$('applyCondoRange').disabled=true;$('condoCompStatus').textContent='Checking condominium sale records…';
   try{
     const d=await jsonResponse('/api/condo-sales?'+params.toString());if(last!==report)return;

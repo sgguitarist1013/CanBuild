@@ -139,12 +139,23 @@ def test_condo_sale_range_is_an_explicit_assumption(page,app_url,property_record
         'candidates':[{'address':'Test condo '+str(i),'sale_date':'2026-10-01','sale_price':p,'living_area_sqft':1000,'price_per_living_sqft':p/1000,'source_url':'https://www.mass.gov/'} for i,p in enumerate([700000,800000,900000])]}
     page.route('**/api/property?*',lambda route:route.fulfill(json=record))
     page.route('**/api/suggest?*',lambda route:route.fulfill(json={'suggestions':[]}))
-    page.route('**/api/condo-sales?*',lambda route:route.fulfill(json=refs))
+    calls=[]
+    def pricing_response(route):
+        calls.append(1)
+        route.fulfill(status=503,json={'detail':'Condo source temporarily unavailable'}) if len(calls)==1 else route.fulfill(json=refs)
+    page.route('**/api/condo-sales?*',pricing_response)
     page.goto(app_url)
     page.get_by_role('combobox').fill('95 Magazine St, Cambridge, MA')
     page.get_by_role('button',name='Explore property').click()
+    row=page.locator('.unit-mix-row').first
+    row.locator('[data-field="units"]').fill('3')
+    row.locator('[data-field="area_sqft"]').fill('1000')
     page.get_by_text('Condominium sale references for pricing',exact=True).click()
     expect(page.get_by_role('button',name='Use observed range as assumptions')).to_be_disabled()
+    page.get_by_role('button',name='Find nearby condo sales').click()
+    expect(page.locator('#condoCompStatus')).to_contain_text('temporarily unavailable')
+    expect(row.locator('[data-field="units"]')).to_have_value('3')
+    expect(row.locator('[data-field="area_sqft"]')).to_have_value('1000')
     page.get_by_role('button',name='Find nearby condo sales').click()
     expect(page.locator('#condoReferences')).to_contain_text('Test condo 0')
     expect(page.locator('#condoCompStatus')).to_contain_text('not verified')
