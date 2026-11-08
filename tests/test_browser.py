@@ -207,13 +207,22 @@ def test_automatic_redevelopment_shows_default_estimate_without_input(page, app_
     redevelopment = analyze_redevelopment({"gross_area_high_sqft": 12000, "stories": 4},
                                           {"assessed_value": 900000, "building_area_sqft": 3000})
     redevelopment["best"]["conditional"] = True
-    record = dict(property_record, zoning={"district": "C-1"}, redevelopment=redevelopment)
+    record = dict(property_record, zoning={"district": "C-1"}, redevelopment=redevelopment,
+                  parcel=dict(property_record["parcel"], recorded_owners=["EXAMPLE HOLDINGS LLC"]),
+                  current_valuation={"market_range": {"low": 1000000, "high": 1200000, "comp_count": 3, "radius_miles": .5},
+                                     "assessment": {"amount": 900000, "fiscal_year": 2026}})
     page.route("**/api/property?*", lambda route: route.fulfill(json=record))
     page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
     page.goto(app_url)
     page.get_by_role("combobox").fill("95 Magazine St, Cambridge, MA")
     page.get_by_role("button", name="Explore property").click()
+    expect(page.locator("#ownershipSummary")).to_contain_text("Assessor-reported owner / entity · EXAMPLE HOLDINGS LLC")
+    expect(page.locator("#currentMarketValue")).to_have_text("$1,000,000 to $1,200,000")
+    expect(page.locator("#currentMarketBasis")).to_contain_text("3 Registry-confirmed sales")
+    expect(page.locator("#assessedValueContext")).to_contain_text("FY 2026 tax assessment · $900,000")
     expect(page.locator("#autoSellout")).to_contain_text("$")
+    expect(page.locator("#potentialValueBasis")).to_contain_text("Gross market-rate condo sales")
+    expect(page.locator("#autoGrossArea")).to_have_text("12,000 sq ft")
     expect(page.locator("#autoCost")).to_contain_text("$")
     expect(page.locator("#autoUnits")).to_have_text(str(redevelopment["best"]["market_units"] + redevelopment["best"]["restricted_units"]))
     expect(page.locator("#potentialLimit")).to_contain_text("affordable-housing requirements")

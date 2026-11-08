@@ -16,8 +16,8 @@ def test_automatic_scenario_reserves_whole_affordable_units_and_ranks_after_cost
     assert result["restricted_proceeds_credited"] == 0
 
 
-def test_area_threshold_can_trigger_affordability_below_ten_units():
-    result = analyze_redevelopment({"gross_area_high_sqft": 11000, "stories": 4}, None)
+def test_area_threshold_includes_exactly_10000_sqft_below_ten_units():
+    result = analyze_redevelopment({"gross_area_high_sqft": 10000, "stories": 4}, None)
     assert result["best"]["market_units"] + result["best"]["restricted_units"] < 10
     assert result["best"]["restricted_units"] > 0
     assert result["acquisition_proxy"] is None
