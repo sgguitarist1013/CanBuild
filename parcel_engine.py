@@ -239,12 +239,12 @@ async def resolve_parcel(client, lon, lat, components, warnings, requested_addre
             "assessor_site_address":x.get("SITE_ADDR"),"fiscal_year":x.get("FY"),
             "last_edit":x.get("LAST_EDIT"),"assessor_account_count":len(records),"recorded_owners":list(dict.fromkeys(r["OWNER1"] for r in records if r.get("OWNER1"))),
             "ownership_source":"https://www.mass.gov/info-details/massgis-data-property-tax-parcels","area_source":"MassGIS assessor LOT_SIZE"}
-    parcel["last_transfer"]={"sale_date_reported":x.get("LS_DATE"),"price_reported":x.get("LS_PRICE"),
-        "book":x.get("LS_BOOK"),"page":x.get("LS_PAGE"),"registered_reference":x.get("REG_ID"),
-        "status":"Assessor-reported reference; deed and latest ownership not checked",
-        "registry_url":"https://www.masslandrecords.com/"}
     building=None
     if len(records)==1:
+        parcel["last_transfer"]={"sale_date_reported":x.get("LS_DATE"),"price_reported":x.get("LS_PRICE"),
+            "book":x.get("LS_BOOK"),"page":x.get("LS_PAGE"),"registered_reference":x.get("REG_ID"),
+            "status":"Assessor-reported reference; deed and latest ownership not checked",
+            "registry_url":"https://www.masslandrecords.com/"}
         building={"building_area_sqft":x.get("BLD_AREA"),
                   "residential_area_sqft":x.get("RES_AREA"),
                   "units":x.get("UNITS"),"year_built":x.get("YEAR_BUILT"),

@@ -138,8 +138,10 @@ function renderValues(d){
     ? (assessment.fiscal_year?'FY '+assessment.fiscal_year+' tax assessment':'Tax assessment')+' · '+money(assessment.amount)+'. Separate from the market estimate.'
     : '';
   $('autoSellout').textContent=best?range(best.sellout_low,best.sellout_high):'Estimate unavailable';
+  const usesBenchmark=best?.unit_mix.some(unit=>unit.comparable_projects<3);
   $('potentialValueBasis').textContent=best
-    ? 'Gross market-rate condo sales for the '+(best.conditional?'conditional ':'')+best.stories+'-story scenario, before project costs.'
+    ? 'Gross market-rate condo sales for the '+(best.conditional?'conditional ':'')+best.stories+'-story scenario, before project costs.'+
+      (usesBenchmark?' Uses Cambridge study pricing where matched sales are limited.':'')
     : 'Requires a parcel-specific zoning scenario and completed-project pricing.';
 }
 

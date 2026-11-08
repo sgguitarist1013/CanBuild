@@ -415,7 +415,7 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
     sale_report = registry.sale_report(city, result["sales_research"])
     result["sales_research"] = sale_report
     pending = list(sale_report.get("pending_registry_review", []))
-    if result.get("parcel"):
+    if result.get("parcel") and result["parcel"].get("assessor_account_count", 1) == 1:
         parcel = result["parcel"]
         transfer = parcel.get("last_transfer") or {}
         registry_address = parcel.get("assessor_site_address") or result["address"]
