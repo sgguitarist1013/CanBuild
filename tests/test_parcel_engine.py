@@ -67,6 +67,12 @@ class StatewideParcelTests(unittest.TestCase):
         self.assertLessEqual(out["gross_area_high_sqft"],10000*0.7*4)
         self.assertLess(out["gross_area_low_sqft"],out["gross_area_high_sqft"])
 
+    def test_no_inclusionary_option_when_assessor_lot_is_below_5000_sqft(self):
+        out = conceptual_massing(box(0, 0, 100, 60), {"gis_area_sqft_approx": 4999},
+                                 None, "CAMBRIDGE", "C-1")
+        self.assertEqual(out["stories"], 4)
+        self.assertNotIn("inclusionary_scenario", out)
+
     def test_no_inclusionary_option_below_5000_sqft(self):
         plot=box(0,0,60,60)
         out=conceptual_massing(plot,{},None,"CAMBRIDGE","C-1")

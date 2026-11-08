@@ -237,7 +237,7 @@ async def resolve_parcel(client, lon, lat, components, warnings, requested_addre
             "full_number":x.get("MAP_PAR_ID"),"loc_id":x.get("LOC_ID"),
             "type":x.get("POLY_TYPE"),"gis_area_sqft_approx":lot_area_sqft(x),
             "assessor_site_address":x.get("SITE_ADDR"),"fiscal_year":x.get("FY"),
-            "last_edit":x.get("LAST_EDIT"),"recorded_owners":list(dict.fromkeys(r["OWNER1"] for r in records if r.get("OWNER1"))),
+            "last_edit":x.get("LAST_EDIT"),"assessor_account_count":len(records),"recorded_owners":list(dict.fromkeys(r["OWNER1"] for r in records if r.get("OWNER1"))),
             "ownership_source":"https://www.mass.gov/info-details/massgis-data-property-tax-parcels","area_source":"MassGIS assessor LOT_SIZE"}
     parcel["last_transfer"]={"sale_date_reported":x.get("LS_DATE"),"price_reported":x.get("LS_PRICE"),
         "book":x.get("LS_BOOK"),"page":x.get("LS_PAGE"),"registered_reference":x.get("REG_ID"),
@@ -285,8 +285,10 @@ def conceptual_massing(polygon, parcel, building, city, district):
             "additional_area_high_sqft":round(max(0,base_high-existing)) if existing is not None else None,
             "stories":rules["stories"],"height_ft":rules["height_ft"],
             "source":rules["source"],
-            "limitations":"Conceptual envelope only. Actual front/side/rear orientation, existing structure, usable open space, overlays, historic limits, frontage, Green Factor and zoning GFA are not verified. Assessor BLD_AREA may differ from zoning GFA."}
-    if area >= rules["inclusionary_min_lot_sqft"]:
+            "limitations":"Conceptual envelope only. Confirm front, side and rear setbacks, qualifying open space, overlays, historic limits, Green Factor and zoning GFA. Cambridge also requires neighborhood outreach for buildings over three stories and 35 feet when Planning Board advisory consultation or special-permit review does not apply."}
+    threshold = rules["inclusionary_min_lot_sqft"]
+    assessor_area = parcel.get("gis_area_sqft_approx")
+    if area >= threshold and (not assessor_area or assessor_area >= threshold):
         result["inclusionary_scenario"]={
             "stories":rules["inclusionary_stories"],
             "height_ft":rules["inclusionary_height_ft"],

@@ -62,7 +62,7 @@ def pricing(references):
         rows = matching_condos(references, beds, baths, area)
         if len(rows) >= 3:
             low, _, high = quantiles([r["price_per_living_sqft"] for r in rows], n=4, method="inclusive")
-            rates.append((round(low), round(high), "Matched Cambridge assessor sales", rows))
+            rates.append((round(low), round(high), "MassLandRecords-confirmed Cambridge sales", rows))
         else:
             rates.append((*benchmark, "Cambridge 2026 study · citywide submarket range", rows))
     return rates
@@ -122,7 +122,7 @@ def analyze_redevelopment(massing, building, references=()):
             continue
         unit_area = sum(count * size for count, size in zip(counts, UNIT_SIZES))
         # Use the gross envelope as a conservative proxy for the 10,000 sq ft trigger.
-        restricted_area = ceil(.20 * unit_area) if conditional or sum(counts) >= 10 or gross > 10000 else 0
+        restricted_area = ceil(.20 * unit_area) if conditional or sum(counts) >= 10 or gross >= 10000 else 0
         restricted = reserve_affordable(counts, restricted_area)
         mix = []
         for i, (count, affordable, area, price) in enumerate(zip(counts, restricted, UNIT_SIZES, prices), start=1):
@@ -140,7 +140,8 @@ def analyze_redevelopment(massing, building, references=()):
         costs_high = sum(x for x in downside.values() if x is not None)
         costs_low = sum(x for x in upside.values() if x is not None)
         modeled.append({
-            "name": name, "conditional": conditional, "stories": option["stories"], "gross_area_sqft": gross,
+            "name": name, "conditional": conditional, "stories": option["stories"],
+            "height_ft": option.get("height_ft"), "gross_area_sqft": gross,
             "common_area_sqft": common, "unallocated_area_sqft": gross - common - unit_area,
             "market_area_sqft": sum(row["market_units"] * row["area_sqft"] for row in mix),
             "restricted_area_sqft": sum(row["restricted_units"] * row["area_sqft"] for row in mix),

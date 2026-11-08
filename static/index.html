@@ -13,6 +13,10 @@
 #potentialLimit,#surplusSummary{margin:8px 0 12px}
 .estimate-summary{margin:12px 0;gap:8px}
 .estimate-summary .metric{padding:12px 14px}
+.value-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
+.value-summary small+strong+small{margin-top:5px}
+.value-card h3{margin:0}
+#ownershipSummary{overflow-wrap:anywhere}
 .estimate-summary strong{font-size:clamp(16px,2.2vw,24px);letter-spacing:-.4px;margin-top:3px}
 .research-card{margin:0 0 10px;border-top:1px solid #e1e9e6}
 .research-card summary{min-height:36px;align-content:center}
@@ -26,6 +30,7 @@
   .wrap{padding-left:16px;padding-right:16px}
   .potential-card{padding:16px}
   .estimate-summary{gap:4px}
+  .value-summary{grid-template-columns:1fr}
   .estimate-summary .metric{display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding:7px 10px}
   .estimate-summary strong{text-align:right;margin-top:0}
   .has-results .search{flex-direction:row}
@@ -44,6 +49,7 @@
 <article class="card potential-card" aria-labelledby="potentialTitle">
 <p class="eyebrow">Property potential</p>
 <h2 id="propertyAddress" tabindex="-1">Property overview</h2>
+<p id="ownershipSummary" class="small muted" hidden></p>
 <p class="tag" id="zoneStatus"></p>
 <h3 id="potentialTitle">What can I do here?</h3>
 <p id="potentialAnswer" class="answer"></p>
@@ -53,12 +59,20 @@
 <div class="grid estimate-summary" id="redevelopmentMetrics" hidden>
 <div class="metric"><small>Proposed units</small><strong id="autoUnits"></strong></div>
 <div class="metric"><small>Estimated project cost</small><strong id="autoCost"></strong></div>
-<div class="metric"><small>Estimated market-rate sellout</small><strong id="autoSellout"></strong></div>
+<div class="metric"><small>Modeled gross floor area</small><strong id="autoGrossArea"></strong></div>
 </div>
 <p id="surplusSummary" class="small" hidden>Modeled surplus / loss <strong id="autoSurplus"></strong></p>
 <p id="potentialLimit" class="small muted" hidden></p>
 <button type="button" class="primary no-print" id="resultAction"></button>
 </article>
+<section class="card value-card" id="valueComparison" aria-labelledby="valueTitle" hidden>
+<h3 id="valueTitle">Current value &amp; development potential</h3>
+<div class="grid estimate-summary value-summary">
+<div class="metric"><div><small>Current market estimate</small><strong id="currentMarketValue"></strong><small id="currentMarketBasis"></small></div></div>
+<div class="metric"><div><small>Potential value at completion</small><strong id="autoSellout"></strong><small id="potentialValueBasis"></small></div></div>
+</div>
+<p id="assessedValueContext" class="small muted" hidden></p>
+</section>
 <details class="card research-card" id="recordDetails"><summary>Property records</summary>
 <div id="parcelResearch"><h3>Ownership &amp; parcel identity</h3><p id="ownerStatus" class="small muted"></p><p id="lastTransfer" class="small muted"></p><div id="parcelCandidates" class="details"></div></div>
 <p id="sourceStatus" class="small muted"></p>
@@ -89,7 +103,7 @@
 <div id="redevelopmentMix" class="details"></div>
 <div id="redevelopmentEvidence"></div>
 </details>
-<details id="envelopeDetails" hidden><summary>Conceptual building envelope</summary><p id="opportunityNote" class="small"></p><p id="inclusionaryScenario" class="small muted hide"></p></details>
+<details id="envelopeDetails" hidden><summary>Conceptual building envelope</summary><p id="opportunityNote" class="small"></p><p id="inclusionaryScenario" class="small muted hide"></p><p id="envelopeSource" class="small"></p></details>
 <details id="recommendationDetails" hidden><summary>Planning checks</summary><div id="recommendations" class="details"></div></details><details><summary>Data quality and limitations</summary><ul id="warnings"></ul><p class="muted small">CanBuild is an independent preliminary research tool. It is not a survey, appraisal, municipal zoning determination, construction estimate, permit approval or guarantee of buildability. Massachusetts parcel records may be older than the latest municipal records. Zoning amendments, overlays, historic controls and legal unit counts require independent verification. Consult local authorities and qualified professionals before making financial or construction decisions.</p></details><details><summary>Financial underwriting assumptions</summary><p class="small muted">Construction, architecture, engineering, permitting, financing, carrying costs, contingency and sales commissions must be supported by current, project-specific sources. A cost or ROI is withheld when the building program or valuation is unverified.</p></details></details>
 <details class="card research-card" id="advancedDetails"><summary>Advanced tools</summary>
 <div id="condoProgram"><h3>Condo scenario calculator</h3><p id="dwellingStatus" class="small muted"></p>
@@ -107,12 +121,36 @@
 <script>
 const $=id=>document.getElementById(id);const fmt=n=>Number.isFinite(Number(n))&&n!==null&&n!==''?Math.round(Number(n)).toLocaleString():'—';let delay,seq=0,last=null;
 function addFact(label,value){if(value===null||value===undefined||value==='')return;const d=document.createElement('div');d.className='item';const a=document.createElement('span');a.textContent=label;const b=document.createElement('strong');b.textContent=String(value);d.append(a,b);$('facts').append(d)}
+const money=n=>n==null?'Unavailable':(n<0?'−':'')+'$'+fmt(Math.abs(n));
+const range=(low,high)=>money(low)+' to '+money(high);
+function renderValues(d){
+  $('valueComparison').hidden=!d.parcel;
+  const valuation=d.current_valuation;
+  const market=valuation?.market_range;
+  const assessment=valuation?.assessment;
+  const best=d.redevelopment?.best;
+  $('currentMarketValue').textContent=market?range(market.low,market.high):'Estimate unavailable';
+  $('currentMarketBasis').textContent=market
+    ? market.comp_count+' Registry-confirmed sales within '+market.radius_miles+' mi, scaled to subject living area.'
+    : 'Requires three qualifying local sales confirmed in MassLandRecords.';
+  $('assessedValueContext').hidden=!assessment;
+  $('assessedValueContext').textContent=assessment
+    ? (assessment.fiscal_year?'FY '+assessment.fiscal_year+' tax assessment':'Tax assessment')+' · '+money(assessment.amount)+'. Separate from the market estimate.'
+    : '';
+  $('autoSellout').textContent=best?range(best.sellout_low,best.sellout_high):'Estimate unavailable';
+  $('potentialValueBasis').textContent=best
+    ? 'Gross market-rate condo sales for the '+(best.conditional?'conditional ':'')+best.stories+'-story scenario, before project costs.'
+    : 'Requires a parcel-specific zoning scenario and completed-project pricing.';
+}
+
 function renderOpportunity(d) {
   const zone=d.zoning?.district;
   const historical=d.zoning?.historical_reference;
   const best=d.redevelopment?.best;
   const envelope=d.zoning_potential;
   const buildout=d.buildout_review;
+  const sharedSite=d.parcel?.assessor_account_count>1;
+  const ownershipReview=d.recommendations?.some(check=>check.confidence==='Development site ownership unresolved');
   const candidates=d.parcel_candidates?.length;
   const linkedStandards=d.zoning_review||d.zoning?.regulatory_links?.length||d.zoning?.reference_standards||
     d.on_demand_zoning_research?.sources?.some(source=>source.topics?.includes('dimensional standards'));
@@ -145,6 +183,7 @@ function renderOpportunity(d) {
     answer='CanBuild found a historical zoning district. Confirm the current district before estimating what can be built.';
     [action,target]=['View zoning sources','districtDetails'];
   } else if(zone) {
+    if(ownershipReview) limit='Confirm which ownership rights apply to the whole site before estimating redevelopment.';
     answer=d.zoning_review?.lot_area_status
       ? 'CanBuild found local expansion standards. '+d.zoning_review.lot_area_status+'.'
       : 'CanBuild matched the zoning district. An automated buildout estimate is currently unavailable.';
@@ -169,9 +208,14 @@ function renderOpportunity(d) {
   ].filter(Boolean);
   $('propertyFactsSummary').textContent=facts.join(' · ');
   $('propertyFactsSummary').hidden=!facts.length;
+  const owners=d.parcel?.recorded_owners||[];
+  $('ownershipSummary').hidden=!d.parcel;
+  $('ownershipSummary').textContent=owners.length
+    ? (sharedSite?'Assessor-reported owners across tax accounts':'Assessor-reported owner / entity')+' · '+owners.join('; ')
+    : 'Assessor-reported owner / entity unavailable';
   const deed=d.parcel?.deed_verification;
   $('deedSummary').hidden=!deed;
-  $('deedSummary').textContent=deed?.status==='verified'?'Transfer confirmed in MassLandRecords · recorded '+deed.recorded_date
+  $('deedSummary').textContent=deed?.status==='verified'?'Transfer confirmed in MassLandRecords · '+money(deed.consideration)+' · recorded '+deed.recorded_date
     :deed?.status==='conflict'?'Registry and assessor figures differ · review the deed':'Transfer awaiting MassLandRecords confirmation';
   const sales=d.parcel&&d.sales_research?.candidates;
   const sale=sales?.[0];
@@ -218,6 +262,8 @@ function renderOpportunity(d) {
   const additional=envelope?.additional_area_high_sqft!=null
     ? ' About '+fmt(envelope.additional_area_low_sqft)+'–'+fmt(envelope.additional_area_high_sqft)+' sq ft above reported building area.'
     : '';
+  $('envelopeSource').replaceChildren();
+  permitLink($('envelopeSource'),'Cambridge zoning ordinance and amendments',envelope?.source);
   $('opportunityNote').textContent=envelope
     ? 'Indicative '+envelope.stories+'-story envelope: '+fmt(envelope.gross_area_low_sqft)+'–'+fmt(envelope.gross_area_high_sqft)+' gross sq ft.'+additional+' '+(envelope.limitations||'')
     : '';
@@ -234,16 +280,14 @@ function renderRedevelopment(d){
   $('estimateDetails').hidden=!best;
   $('surplusSummary').hidden=!best||!screen.acquisition_proxy;
   $('redevelopmentMetrics').hidden=!best;
-  $('redevelopmentStatus').textContent=best?best.name+' · '+best.stories+' stories. '+screen.ranking+' Confirm zoning and project-specific costs before relying on this estimate.':screen?.status||'';
+  $('redevelopmentStatus').textContent=best?best.name+' · '+best.stories+' stories'+(best.height_ft?' · '+best.height_ft+' ft height limit':'')+'. '+screen.ranking+' Confirm zoning and project-specific costs before relying on this estimate.':screen?.status||'';
   $('redevelopmentAreas').textContent='';
   $('redevelopmentMix').replaceChildren();
   $('redevelopmentEvidence').replaceChildren();
   if(!best) return;
 
-  const money=n=>n==null?'Unavailable':(n<0?'−':'')+'$'+fmt(Math.abs(n));
-  const range=(low,high)=>money(low)+' to '+money(high);
   $('autoUnits').textContent=fmt(best.market_units+best.restricted_units);
-  $('autoSellout').textContent=range(best.sellout_low,best.sellout_high);
+  $('autoGrossArea').textContent=fmt(best.gross_area_sqft)+' sq ft';
   const budget=[best.cost_low,best.cost_high].sort((a,b)=>a-b);
   $('autoCost').textContent=range(...budget)+(screen.acquisition_proxy?'':' before acquisition');
   $('autoSurplus').textContent=screen.acquisition_proxy?range(best.surplus_low,best.surplus_high):'Acquisition unpriced';
@@ -330,6 +374,7 @@ function render(d) {
   resetPermits(d);
   renderOpportunity(d);
   renderRedevelopment(d);
+  renderValues(d);
   $('warnings').replaceChildren();
   for(const warning of d.warnings||[]){
     const li=document.createElement('li');
@@ -444,7 +489,11 @@ for(const source of discovery?.sources||[]){
   $('onDemandSources').append(a);
 }
 const p=d.parcel, owners=p?.recorded_owners||[];
-$('ownerStatus').textContent=owners.length?'Assessor-reported owner / entity: '+owners.join('; ')+'. Source: '+(p.data_source||'MassGIS assessor extract')+'. Latest deed and complete ownership must be checked.':'No owner attributed until the correct parcel is matched or selected.';
+$('ownerStatus').textContent=owners.length?'Assessor-reported owner / entity: '+owners.join('; ')+'. Source: '+(p.data_source||'MassGIS assessor extract')+'. Check the latest deed for current title.':'No owner attributed until an assessor record provides the name or entity.';
+if(owners.length&&p.ownership_source){
+  $('ownerStatus').append(' ');
+  permitLink($('ownerStatus'),'Assessor source',p.ownership_source);
+}
 $('lastTransfer').replaceChildren();
 if(p?.deed_verification) appendDeed($('lastTransfer'),p.deed_verification);
 $('parcelCandidates').replaceChildren();
@@ -471,6 +520,7 @@ for(const c of sales.candidates||[]){
     c.bedrooms_reported!=null?c.bedrooms_reported+' beds / '+c.bathrooms_reported+' baths':null,
     rate?'$'+fmt(rate)+'/sq ft':null,c.use_description,c.comparison_label,
     c.parcel_number?'Parcel '+c.parcel_number:null,c.record_reference,c.arm_length_status,
+    d.current_valuation?.market_range?.comp_addresses?.includes(c.address)?'Used for current market estimate':null,
   ].filter(Boolean).join(' · ');
   const link=document.createElement('a');
   link.href=c.source_url||sales.source_url||'#';link.target='_blank';link.rel='noopener noreferrer';

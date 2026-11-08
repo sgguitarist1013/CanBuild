@@ -26,12 +26,13 @@ import zoning_research
 import somerville
 import registry
 import registry_research
+from valuation import current_valuation
 import permit_research
 
 configure_monitoring()
 
 ROOT=Path(__file__).parent
-VERSION = "0.16.10"
+VERSION = "0.16.11"
 app=FastAPI(title="CanBuild Massachusetts",version=VERSION)
 app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
 CENSUS="https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress"
@@ -422,6 +423,7 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
                               transfer.get("price_reported"), transfer.get("registered_reference"))
         parcel["deed_verification"] = deed
         pending.append({"address": registry_address, "deed_verification": deed})
+    result["current_valuation"] = current_valuation(result["parcel"], result.get("existing_building"), sale_report) if result.get("parcel") else None
     result['warnings'] += review_building(result.get('existing_building'))
     observed=result.get('existing_building') or {}
     result['dwelling_unit_summary']={'existing_reported_total':observed.get('units'),
@@ -454,7 +456,11 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
             'next_step':'Review each mapped layer and its governing rules with the municipality before planning excavation, foundations, demolition or a larger building. A map intersection is a screening flag, not a permit determination.','confidence':'Mapped screening intersection'})
     if result.get("parcel") and city.upper() == "SOMERVILLE" and district == "NR" and not historical:
         result["buildout_review"] = somerville.buildout(result["parcel"], result.get("existing_building"))
-    if result.get("parcel") and district and not historical:
+    parcel = result.get("parcel") or {}
+    multi_account = parcel.get("assessor_account_count", 1) > 1
+    condo_account = ma_sales.use_group((result.get("existing_building") or {}).get("use_description")) == "condominium"
+    ambiguous_site = multi_account or condo_account
+    if parcel and district and not historical and not ambiguous_site:
         potential=conceptual_massing(polygon,result["parcel"],result.get("existing_building"),city,district)
         if potential:
             result["zoning_potential"]=potential
@@ -486,6 +492,13 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
             "next_step": "Open On-demand zoning research for the city ordinance sections. Confirm the building type, dimensional standards, overlays and approvals with Somerville Planning before estimating a buildout.",
             "confidence": "Municipal GIS match; automated buildout estimate unavailable",
         })
+    elif ambiguous_site:
+        result["recommendations"].append({
+            "title": "Confirm which property rights are included",
+            "reason": "The assessor reports a condo or multiple tax accounts for the lot.",
+            "next_step": "Check the deeds and any master deed or condo documents before modeling redevelopment of the whole site.",
+            "confidence": "Development site ownership unresolved",
+        })
     elif not result.get("zoning_potential"):
         result["recommendations"].append({"title":"Check local expansion standards","reason":"The district is mapped, but a reviewed rule set for this district is not available in CanBuild.","next_step":"Confirm setbacks, height, lot coverage, open space, nonconforming-lot rules, overlays, and permit requirements with the municipality.","confidence":"District mapped; dimensional rules incomplete"})
     else:
@@ -515,6 +528,11 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
             comparable if references and not references["truncated"] else [],
         )
         result["redevelopment"]["sale_references"] = references
+    if scenario := result["redevelopment"].get("best"):
+        result["dwelling_unit_summary"].update(
+            potential_total=scenario["market_units"] + scenario["restricted_units"],
+            potential_status="Conceptual redevelopment program based on the screened zoning envelope.",
+        )
     if pending:
         queue_registry_review(city, pending)
     return result
