@@ -30,7 +30,7 @@ import permit_research
 configure_monitoring()
 
 ROOT=Path(__file__).parent
-VERSION = "0.16.8"
+VERSION = "0.16.9"
 app=FastAPI(title="CanBuild Massachusetts",version=VERSION)
 app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
 CENSUS="https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress"
@@ -184,6 +184,31 @@ async def permit_history(municipality: str = Query(min_length=2, max_length=80, 
         return {**(permit_research.coverage(municipality) or {}), "status": "unavailable", "records": []}
 
 
+CENSUS_GEOGRAPHIES = "https://www.census.gov/data/what-is-data-census-gov/guidance-for-data-users/frequently-asked-questions/how-do-i-search-by-address-using-the-census-geocoder.html"
+
+
+def municipality_for_match(match):
+    """Use a Massachusetts county subdivision before the mailing locality."""
+    boundaries = (match.get("geographies") or {}).get("County Subdivisions") or []
+    places = set()
+    for area in boundaries:
+        if area.get("STATE") != "25":
+            continue
+        name = registry.city_key(area.get("BASENAME") or re.sub(r" (?:city|town)$", "", area.get("NAME") or "", flags=re.I))
+        if name not in registry.DISTRICTS and name.endswith(" TOWN"):
+            name = registry.city_key(name.removesuffix(" TOWN"))
+        if name in registry.DISTRICTS:
+            places.add(name)
+    if len(places) > 1:
+        raise HTTPException(409, "The address matches multiple municipalities. Include the city or town and ZIP code.")
+    if places:
+        return next(iter(places)), "Census municipal boundary"
+    postal_city = registry.city_key((match.get("addressComponents") or {}).get("city"))
+    if postal_city in registry.DISTRICTS:
+        return postal_city, "Census address locality"
+    return "", None
+
+
 @app.get("/api/property")
 async def property_lookup(address:str=Query(min_length=5,max_length=240), boston_pid:str|None=Query(default=None,pattern=r"^\d{10}$")):
     address=normalize_address(re.sub(r",\s*(?:USA|United States(?: of America)?)\s*$", "", address, flags=re.I))
@@ -193,7 +218,7 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
         somerville_street = municipal_zoning.somerville_street(address)
         geocoding_failed = False
         try:
-            resp=await client.get(CENSUS,params={"address":address,"benchmark":"Public_AR_Current","vintage":"Current_Current","format":"json"})
+            resp=await client.get(CENSUS,params={"address":address,"benchmark":"Public_AR_Current","vintage":"Current_Current","format":"json","layers":"County Subdivisions"})
             resp.raise_for_status()
             matches=resp.json().get("result",{}).get("addressMatches",[])
         except (httpx.HTTPError, ValueError):
@@ -204,8 +229,15 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
                 "Census geocoding is temporarily unavailable." if geocoding_failed else
                 "Address not matched. Check the street number and name.")
         m = matches[0] if matches else {}
-        parts = m.get("addressComponents") or {}
-        if parts and parts.get("state", "").upper() != "MA":
+        city, jurisdiction_source = municipality_for_match(m)
+        other_cities = {municipality_for_match(match)[0] for match in matches[1:]}
+        if city and other_cities - {"", city}:
+            raise HTTPException(409, "The address matches multiple municipalities. Include the city or town and ZIP code.")
+        parts = dict(m.get("addressComponents") or {})
+        postal_city = parts.get("city")
+        parts["city"] = city
+        parts["postal_city"] = postal_city
+        if m and parts.get("state", "").upper() != "MA":
             raise HTTPException(422, "CanBuild currently supports Massachusetts addresses.")
         c = m.get("coordinates") or {}
         lon, lat = c.get("x"), c.get("y")
@@ -218,9 +250,14 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
                         and same_street(matched_street[1], requested_street[1]))
             if not geocoded:
                 parts = {"city": "Somerville", "state": "MA"}
+                jurisdiction_source = "Somerville address request"
         elif not geocoded:
             raise HTTPException(502, "Geocoder returned no coordinates.")
         result["address"] = m.get("matchedAddress") if geocoded else address
+        if jurisdiction_source == "Census municipal boundary":
+            result["sources"].append({"name": "Census municipality boundary lookup", "url": CENSUS_GEOGRAPHIES})
+        if not parts["city"]:
+            result["warnings"].append("Could not identify a Massachusetts city or town from the geocoder. Check the address and ZIP code.")
         if geocoded:
             result["coordinates"] = {"lat": lat, "lon": lon}
             result["verification"]["address"] = "Census geocoded (not Google-confirmed)"
@@ -256,6 +293,7 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
                     result["sales_research"] = {"status": "Comparable sales require a matched assessor record", "candidates": []}
                 result["address"] = city_address
                 result["coordinates"] = {"lat": lat, "lon": lon}
+                jurisdiction_source = "Somerville municipal GIS address match"
                 result["verification"]["address"] = "Exact Somerville municipal GIS address"
                 result["verification"]["parcel"] = "Somerville municipal parcel GIS; not a legal survey"
                 result["sources"].append({"name": "Somerville city parcel GIS", "url": source})
@@ -275,7 +313,7 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
                     result["verification"]["assessor"] = "Somerville municipal GIS assessor attributes; ownership and dwelling count unconfirmed"
         sales_task = None
         if parts.get("city","").upper()=="BOSTON":
-            result["sources"]=[{"name":"Boston municipal assessor FY2026 and recorded sales","url":boston.SOURCE},{"name":"MassGIS statewide parcels","url":SOURCES[0]["url"]}]
+            result["sources"].insert(0, {"name": "Boston municipal assessor FY2026 and recorded sales", "url": boston.SOURCE})
             try:
                 record,candidates,method=await boston.lookup(client,lon,lat,parts,address,boston_pid)
                 result["parcel_candidates"]=candidates
@@ -349,6 +387,7 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
     historical = zoning.get('historical_reference')
     district = zoning.get('district')
     city=parts.get("city") or ""
+    result["municipality_match"] = {"municipality": city, "mailing_locality": postal_city, "source": jurisdiction_source} if city else None
     result['coverage']=municipal_zoning.coverage(city)
     if result.get('parcel'):
         result['permit_coverage']=permit_research.coverage(city)

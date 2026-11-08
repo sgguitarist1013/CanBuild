@@ -75,7 +75,7 @@ def same_street(actual, requested):
     return a == b or (a[-1] in types and a[:-1] == b) or (b[-1] in types and b[:-1] == a)
 
 
-def exact_address_match(feature, house, street, city):
+def exact_address_match(feature, house, street, city, postal_city=None):
     """Reject a nearby parcel unless its assessor address matches all supplied components."""
     if not house or not street or not city:
         return False
@@ -94,6 +94,10 @@ def exact_address_match(feature, house, street, city):
     actual_street = str(feature.get("FULL_STR") or "").strip()
     if not actual_street:
         actual_street = re.sub(r"^\s*\d+[A-Za-z]?\s*", "", site)
+    # Some assessors qualify repeated street names by village.
+    qualifier = re.fullmatch(r"(.+?)\s+\(([^()]+)\)", actual_street)
+    if qualifier and postal_city and clean(qualifier[2]) == clean(postal_city):
+        actual_street = qualifier[1]
     return same_street(actual_street,street)
 
 def lot_area_sqft(feature):
@@ -194,7 +198,7 @@ async def resolve_parcel(client, lon, lat, components, warnings, requested_addre
                                    attempt(params[1],"Address parcel search"))
     def matches(features):
         return [f for f in features if clean((f.get("attributes") or {}).get("POLY_TYPE")) not in ("ROW","RAIL ROW","WATER")
-                and exact_address_match(f.get("attributes") or {},house,street,city)]
+                and exact_address_match(f.get("attributes") or {},house,street,city,components.get("postal_city"))]
     choices=matches(responses[0]+responses[1])
     if not choices:
         # A Census road-centreline point often falls outside the actual lot.
