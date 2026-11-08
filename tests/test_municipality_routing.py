@@ -62,10 +62,14 @@ def mock_census(monkeypatch):
 def test_hyannis_uses_barnstable_parcel_sales_zoning_and_deed_route(monkeypatch, mock_census):
     mock_census([census_match("HYANNIS", "Barnstable Town city", "Barnstable Town")])
     record = {"attributes": {
-        "OBJECTID": 1, "CITY": "BARNSTABLE", "ADDR_NUM": "367", "SITE_ADDR": "367 MAIN ST",
-        "FULL_STR": "MAIN ST", "MAP_PAR_ID": "test-lot", "LOC_ID": "test-lot", "FY": 2026,
+        "OBJECTID": 1, "CITY": "BARNSTABLE", "ADDR_NUM": "367", "SITE_ADDR": "367 MAIN STREET (HYANNIS), HYANNIS",
+        "FULL_STR": "MAIN STREET (HYANNIS)", "MAP_PAR_ID": "test-lot", "LOC_ID": "test-lot", "FY": 2026,
     }}
-    parcel_query = AsyncMock(return_value=[record])
+    other_village = {"attributes": {
+        **record["attributes"], "OBJECTID": 2, "MAP_PAR_ID": "other-lot", "LOC_ID": "other-lot",
+        "SITE_ADDR": "367 MAIN STREET (CENTERVILLE), CENTERVILLE", "FULL_STR": "MAIN STREET (CENTERVILLE)",
+    }}
+    parcel_query = AsyncMock(return_value=[record, other_village])
     monkeypatch.setattr(parcel_engine, "query", parcel_query)
     monkeypatch.setattr(parcel_engine, "selected_geometry", AsyncMock(return_value=None))
     atlas = AsyncMock(return_value={})

@@ -236,6 +236,7 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
         parts = dict(m.get("addressComponents") or {})
         postal_city = parts.get("city")
         parts["city"] = city
+        parts["postal_city"] = postal_city
         if m and parts.get("state", "").upper() != "MA":
             raise HTTPException(422, "CanBuild currently supports Massachusetts addresses.")
         c = m.get("coordinates") or {}
