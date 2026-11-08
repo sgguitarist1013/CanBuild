@@ -120,19 +120,29 @@ def enqueue(connect, city, items):
             ON CONFLICT(city,address,evidence) DO UPDATE SET requested_at=CURRENT_TIMESTAMP""", pending)
 
 
-def review_queue(connect, limit):
+def pending_review(row):
+    evidence = json.loads(row["evidence"])
+    pair = transfer_pair(evidence)
+    # Preserve price conflicts as outstanding even when a deed exists.
+    if evidence["status"] == "conflict" or check(row["city"], row["address"], pair)["status"] != "verified":
+        return {"id": row["id"], "municipality": row["city"], "address": row["address"],
+                "deed_verification": evidence}
+    return None
+
+
+def review_queue(connect, limit, review_id=None):
     with closing(connect()) as db:
         exists = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='registry_review'").fetchone()
         if not exists:
             return []
-        rows = db.execute("SELECT * FROM registry_review ORDER BY requested_at DESC")
+        query = "SELECT rowid AS id, * FROM registry_review"
+        rows = (db.execute(query + " WHERE rowid = ?", (review_id,)) if review_id is not None
+                else db.execute(query + " ORDER BY requested_at DESC, rowid DESC"))
         pending = []
         for row in rows:
-            evidence = json.loads(row["evidence"])
-            pair = transfer_pair(evidence)
-            # Preserve price conflicts as outstanding even when a deed exists.
-            if evidence["status"] == "conflict" or check(row["city"], row["address"], pair)["status"] != "verified":
-                pending.append({"municipality": row["city"], "address": row["address"], "deed_verification": evidence})
+            review = pending_review(row)
+            if review:
+                pending.append(review)
                 if len(pending) >= limit:
                     break
         return pending

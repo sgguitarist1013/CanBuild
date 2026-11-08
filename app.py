@@ -25,12 +25,13 @@ from redevelopment import analyze_redevelopment
 import zoning_research
 import somerville
 import registry
+import registry_research
 import permit_research
 
 configure_monitoring()
 
 ROOT=Path(__file__).parent
-VERSION = "0.16.9"
+VERSION = "0.16.10"
 app=FastAPI(title="CanBuild Massachusetts",version=VERSION)
 app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
 CENSUS="https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress"
@@ -82,6 +83,18 @@ def zoning_review_queue(authorization: str | None = Header(default=None), limit:
 def registry_review_queue(authorization: str | None = Header(default=None), limit: int = Query(default=40, ge=1, le=100)):
     require_reviewer(authorization)
     return {"pending": registry.review_queue(zoning_research.cache().connect, limit)}
+
+
+@app.post("/api/internal/registry-review/{review_id}/research", include_in_schema=False)
+async def research_registry_review(review_id: int, authorization: str | None = Header(default=None)):
+    require_reviewer(authorization)
+    pending = await asyncio.to_thread(registry.review_queue, zoning_research.cache().connect, 1, review_id)
+    if not pending:
+        raise HTTPException(404, "Pending deed review was not found.")
+    lead = pending[0]
+    municipal_website = zoning_research.WEBSITES.get(lead["municipality"], "")
+    async with httpx.AsyncClient() as client:
+        return await registry_research.find_sources(client, lead, municipal_website)
 
 
 def queue_registry_review(city, items):
