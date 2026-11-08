@@ -155,12 +155,18 @@ function renderOpportunity(d) {
   }
 
   const building=d.existing_building||{};
-  const facts=d.parcel?[
+  const location=d.municipality_match;
+  const jurisdiction=location?.mailing_locality&&location.municipality.toUpperCase()!==location.mailing_locality.toUpperCase()
+    ? 'Municipality for zoning: '+location.municipality : null;
+  const facts=[
+    jurisdiction,
+    ...(d.parcel?[
     d.parcel.gis_area_sqft_approx?fmt(d.parcel.gis_area_sqft_approx)+' sq ft lot':null,
     building.residential_area_sqft?fmt(building.residential_area_sqft)+' sq ft living area':null,
     building.bedrooms_reported!=null?building.bedrooms_reported+' beds':null,
     building.bathrooms_reported!=null?building.bathrooms_reported+' baths':null,
-  ].filter(Boolean):[];
+    ]:[]),
+  ].filter(Boolean);
   $('propertyFactsSummary').textContent=facts.join(' · ');
   $('propertyFactsSummary').hidden=!facts.length;
   const deed=d.parcel?.deed_verification;
@@ -306,6 +312,8 @@ function render(d) {
   $('verification').textContent='Parcel: '+(d.verification?.parcel||'not verified')+' · Assessor: '+(d.verification?.assessor||'not verified')+' · Zoning: '+(d.verification?.zoning||'not verified');
   const e=d.existing_building||{};
   $('facts').replaceChildren();
+  addFact('Municipality for zoning',d.municipality_match?.municipality);
+  addFact('Municipality source',d.municipality_match?.source);
   addFact('Parcel ID',d.parcel?.parcel_number);
   addFact('Lot area',d.parcel?.gis_area_sqft_approx?fmt(d.parcel.gis_area_sqft_approx)+' sq ft':null);
   addFact('Assessor site address',d.parcel?.assessor_site_address);
