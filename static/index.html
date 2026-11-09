@@ -86,7 +86,7 @@
 <div class="ask-examples">
 <button class="secondary" type="button">What can I build?</button>
 <button class="secondary" type="button">How much is it worth?</button>
-<button class="secondary" type="button">What could it cost?</button>
+<button class="secondary" type="button">Could this project make money?</button>
 </div>
 <form class="ask-form" id="askReport">
 <input id="reportQuestion" aria-label="Question about this property report" placeholder="Ask a question about this property" maxlength="240" required>
@@ -410,6 +410,9 @@ function explainReport(question, report){
   const sales=report.sales_research;
   const deed=report.parcel?.deed_verification;
   const restricted=/\b(?:affordable|restricted|inclusionary)\b/.test(text);
+  const upside=/\b(?:upside|make money|how much (?:could|would|can) (?:i|we) make)\b/.test(text)
+    || /\b(?:project|development|redevelopment|rebuild)\b.*\b(?:worth|value)\b/.test(text)
+    || /\b(?:value of|worth after) (?:this |the )?(?:project|development|redevelopment|rebuild)\b/.test(text);
   const cost=/\b(?:profits?|loss(?:es)?|sellout|break[- ]even|costs?|budgets?|finance|financing|returns?)\b/.test(text);
   const zoning=/\b(?:build|building|buildable|built|zoning|zones?|units?|homes?|add|additions?|adus?|height|floor|redevelop(?:ment)?|expand|setbacks?|alter(?:ation)?|as[- ]of[- ]right|by[- ]right)\b/.test(text);
 
@@ -438,7 +441,7 @@ function explainReport(question, report){
     }
     return {answer:'The report does not confirm a required number of affordable homes for this project. Review the district and program rules with the city.',target:'districtDetails'};
   }
-  if(cost){
+  if(cost||upside){
     if(historical||approvalHold) return historical||approvalHold;
     const answer=[];
     if(best?.cost_high!=null){
@@ -448,9 +451,11 @@ function explainReport(question, report){
     }
     if(best?.surplus_high!=null){
       const result=range(best.surplus_low,best.surplus_high);
-      answer.push(best.restricted_units
+      const outcome=best.restricted_units
         ? 'Market-rate sales less modeled costs range from '+result+', before any restricted-home sale proceeds.'
-        : 'After modeled costs, the project result ranges from '+result+'.');
+        : 'Modeled profit or loss ranges from '+result+'.';
+      if(upside) answer.unshift(outcome);
+      else answer.push(outcome);
     }
     if(!answer.length) answer.push(screen?.decision==='retain_and_review'
       ? 'The screened rebuild would lose existing space or homes, so the report leaves it unpriced.'
@@ -497,7 +502,7 @@ function explainReport(question, report){
       : 'We need to confirm the parcel’s zoning district before we can estimate what fits.',
       target:'districtDetails'};
   }
-  return {answer:'I can explain the building options, value, comparable sales, project costs, ownership, or permit records shown in this report. Try one of the example questions above.',target:null};
+  return {answer:'I can explain the building options, value, comparable sales, project costs and returns, ownership, or permit records shown in this report. Try one of the example questions above.',target:null};
 }
 
 $('askReport').addEventListener('submit',event=>{
