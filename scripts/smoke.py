@@ -5,6 +5,22 @@ import httpx
 from parcel_engine import requested_house_number
 
 
+def check_boston_sales(report):
+    assert report.get('truncated') is False, 'Boston sales lookup returned incomplete data'
+    candidates = report.get('candidates')
+    assert isinstance(candidates, list), 'Boston sales candidates missing'
+    if report.get('status') == 'No qualifying recorded sales found':
+        assert not candidates, 'Empty Boston sales result contains candidates'
+        return
+
+    pending = report.get('pending_registry_review')
+    assert isinstance(pending, list) and report.get('count') == len(candidates), 'Boston registry review data missing'
+    assert candidates or pending, 'Boston sales lookup returned no sale results'
+    assert all(row.get('deed_verification', {}).get('status') == 'verified' for row in candidates), 'Boston comparable sale lacks registry confirmation'
+    assert all('sale_price' not in row and row.get('deed_verification', {}).get('status') not in (None, 'verified')
+               for row in pending), 'Boston pending sale lead was treated as confirmed'
+
+
 def check(base_url):
     with httpx.Client(base_url=base_url.rstrip('/'), timeout=90, follow_redirects=True) as client:
         response = client.get('/api/health')
@@ -29,7 +45,7 @@ def check(base_url):
         selected = response.json()
         assert selected.get('parcel', {}).get('parcel_number') == '0303029000', 'Selected Boston PID changed'
         assert selected['parcel'].get('recorded_owners'), 'Boston owner missing'
-        assert selected.get('sales_research', {}).get('status') in {'Recorded sale candidates found', 'No qualifying recorded sales found'}, 'Boston recorded sales lookup failed'
+        check_boston_sales(selected.get('sales_research') or {})
     print('Live health, search UI, 95 Magazine, Boston alias/owner and recorded-sales checks passed.')
 
 
