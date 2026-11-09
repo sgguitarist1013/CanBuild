@@ -58,7 +58,7 @@
 <p id="salePreview" class="small" hidden></p>
 <div class="grid estimate-summary" id="redevelopmentMetrics" hidden>
 <div class="metric"><small>Proposed units</small><strong id="autoUnits"></strong></div>
-<div class="metric" id="autoCostMetric" hidden><small>Estimated project cost</small><strong id="autoCost"></strong></div>
+<div class="metric" id="autoCostMetric" hidden><small id="autoCostLabel">Estimated project cost</small><strong id="autoCost"></strong></div>
 <div class="metric"><small>Modeled gross floor area</small><strong id="autoGrossArea"></strong></div>
 </div>
 <p id="surplusSummary" class="small" hidden>Modeled surplus / loss <strong id="autoSurplus"></strong></p>
@@ -69,7 +69,7 @@
 <h3 id="valueTitle">Current value &amp; development potential</h3>
 <div class="grid estimate-summary value-summary">
 <div class="metric"><div><small>Current market estimate</small><strong id="currentMarketValue"></strong><small id="currentMarketBasis"></small></div></div>
-<div class="metric"><div><small>Potential value at completion</small><strong id="autoSellout"></strong><small id="potentialValueBasis"></small></div></div>
+<div class="metric"><div><small id="potentialValueLabel">Potential value at completion</small><strong id="autoSellout"></strong><small id="potentialValueBasis"></small></div></div>
 </div>
 <p id="assessedValueContext" class="small muted" hidden></p>
 </section>
@@ -139,9 +139,11 @@ function renderValues(d){
     : '';
   const decision=d.redevelopment?.decision;
   const priced=best?.sellout_high!=null&&decision!=='modeled_loss';
+  $('potentialValueLabel').textContent=priced&&best.restricted_units?'Market-rate condo sales only':'Potential value at completion';
   $('autoSellout').textContent=priced?range(best.sellout_low,best.sellout_high):'Estimate unavailable';
   $('potentialValueBasis').textContent=priced
-    ? 'Gross market-rate condo sales for the '+(best.conditional?'conditional ':'')+best.stories+'-story scenario, before project costs.'
+    ? 'Gross market-rate condo sales for the '+(best.conditional?'conditional ':'')+best.stories+'-story scenario, before project costs.'+
+      (best.restricted_units?' Affordable-unit sale prices are pending.':'')
     : decision==='retain_and_review'?'The screened rebuild would lose existing space or units.'
     : decision==='modeled_loss'?'The priced rebuild shows a loss even in the upside case.'
     : best?'Requires three deed-confirmed sales per market-rate unit type.'
@@ -176,12 +178,17 @@ function renderOpportunity(d) {
     answer='The priced rebuild shows a loss even in the upside case.';
     limit='Review the existing building and the assumptions before considering redevelopment.';
     [action,target]=['View development estimate','estimateDetails'];
+  } else if(d.redevelopment?.decision==='market_rate_shortfall') {
+    answer='Market-rate condo sales alone fall short of the modeled costs.';
+    limit='Affordable-unit sale prices are pending, so the overall profit or loss is still unknown.';
+    [action,target]=['View development estimate','estimateDetails'];
   } else if(best) {
     answer='CanBuild modeled a '+best.stories+'-story redevelopment scenario.';
     const conditions=[];
     if(best.conditional) conditions.push('This option depends on meeting affordable-housing requirements.');
     if(best.sellout_high==null) conditions.push('Comparable sales are needed to price this buildout.');
     else if(!d.redevelopment.acquisition_proxy) conditions.push('The project cost excludes acquisition.');
+    if(best.sellout_high!=null&&best.restricted_units) conditions.push('Affordable-unit prices are needed to estimate overall profit or loss.');
     conditions.push('Confirm zoning and site conditions before relying on this scenario.');
     limit=conditions.join(' ');
     [action,target]=['View development estimate','estimateDetails'];
@@ -312,8 +319,9 @@ function renderRedevelopment(d){
   $('autoUnits').textContent=fmt(best.market_units+best.restricted_units);
   $('autoGrossArea').textContent=fmt(best.gross_area_sqft)+' sq ft';
   const budget=[best.cost_low,best.cost_high].sort((a,b)=>a-b);
+  $('autoCostLabel').textContent=best.restricted_units?'Estimated costs (partial)':'Estimated project cost';
   $('autoCost').textContent=range(...budget)+(screen.acquisition_proxy?'':' before acquisition');
-  $('autoSurplus').textContent=screen.acquisition_proxy?range(best.surplus_low,best.surplus_high):'Acquisition unpriced';
+  $('autoSurplus').textContent=best.surplus_high==null?'':range(best.surplus_low,best.surplus_high);
   $('redevelopmentAreas').textContent=fmt(best.market_units+best.restricted_units)+' proposed units ('+
     best.market_units+' market-rate, '+best.restricted_units+' restricted) · '+fmt(best.gross_area_sqft)+' gross sq ft · '+
     fmt(best.common_area_sqft)+' common/service · '+fmt(best.restricted_area_sqft)+' restricted · '+
@@ -347,7 +355,7 @@ function renderRedevelopment(d){
       : 'The budget excludes acquisition and its financing. An as-is market estimate is required to model surplus.');
     if(best.surplus_high!=null) paragraph('Modeled surplus / loss '+range(best.surplus_low,best.surplus_high)+'.');
   }
-  if(best.restricted_units) paragraph('Restricted-unit proceeds credited: $0 until project-specific caps are verified.');
+  if(best.restricted_units) paragraph('Affordable-unit sale prices are pending. Modeled costs include building these units and exclude their selling costs. Overall profit or loss requires project-specific affordable-unit pricing.');
   for(const alt of screen.alternatives) paragraph(alt.name+' · '+fmt(alt.gross_area_sqft)+' gross sq ft'+
     (alt.surplus_high!=null?' · '+range(alt.surplus_low,alt.surplus_high)+' modeled surplus.':'.'));
   paragraph('Finished-condo references match the modeled bedroom and bathroom counts and are within 15% of modeled living area. Start at 0.5 mile and widen within Cambridge only when fewer than three independent projects match. Recorded build and sale dates are screening proxies.');

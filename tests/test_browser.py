@@ -239,6 +239,32 @@ def test_automatic_redevelopment_shows_default_estimate_without_input(page, app_
     assert not page.get_by_text("Optional manual condo scenario", exact=True).evaluate("(el) => el.parentElement.open")
 
 
+def test_inclusionary_shortfall_explains_missing_overall_result_on_mobile(page, app_url, property_record):
+    from redevelopment import analyze_redevelopment
+    from tests.test_redevelopment import verified_condos
+
+    redevelopment = analyze_redevelopment(
+        {"gross_area_high_sqft": 12000, "stories": 4}, {}, verified_condos(350),
+        current_market_range={"low": 1000000, "high": 1200000},
+    )
+    record = dict(property_record, zoning={"district": "C-1"}, redevelopment=redevelopment)
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.route("**/api/property?*", lambda route: route.fulfill(json=record))
+    page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
+    page.goto(app_url)
+    page.get_by_role("combobox").fill("95 Magazine St, Cambridge, MA")
+    page.get_by_role("button", name="Explore property").click()
+    expect(page.locator("#potentialAnswer")).to_have_text("Market-rate condo sales alone fall short of the modeled costs.")
+    expect(page.locator("#potentialLimit")).to_contain_text("overall profit or loss is still unknown")
+    expect(page.locator("#potentialValueLabel")).to_have_text("Market-rate condo sales only")
+    expect(page.locator("#autoCostLabel")).to_have_text("Estimated costs (partial)")
+    expect(page.locator("#surplusSummary")).to_be_hidden()
+    assert page.locator('details.research-card[open]').count() == 0
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    page.get_by_role("button", name="View development estimate").click()
+    expect(page.locator("#redevelopmentEvidence")).to_contain_text("exclude their selling costs")
+
+
 def test_smaller_rebuild_leads_with_existing_building_on_mobile(page, app_url, property_record):
     from redevelopment import analyze_redevelopment
 

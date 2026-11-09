@@ -11,7 +11,7 @@ def verified_condos(rate):
     ]
 
 
-def test_automatic_scenario_reserves_whole_affordable_units_and_ranks_after_costs():
+def test_automatic_scenario_reserves_whole_affordable_units_and_withholds_surplus():
     envelope = {"gross_area_high_sqft": 12000, "stories": 4, "inclusionary_scenario": {
         "gross_area_high_sqft": 18000, "stories": 6,
     }}
@@ -22,8 +22,9 @@ def test_automatic_scenario_reserves_whole_affordable_units_and_ranks_after_cost
     assert best["common_area_sqft"] + best["market_area_sqft"] + best["restricted_area_sqft"] + best["unallocated_area_sqft"] == best["gross_area_sqft"]
     assert best["restricted_area_sqft"] >= .20 * (best["restricted_area_sqft"] + best["market_area_sqft"])
     assert best["restricted_units"] > 0
-    assert best["surplus_high"] >= result["alternatives"][0]["surplus_high"]
-    assert best["sellout_high"] - best["cost_low"] == best["surplus_high"]
+    assert best["sellout_high"] > best["cost_low"]
+    assert best["surplus_low"] is best["surplus_high"] is None
+    assert result["alternatives"][0]["surplus_high"] is None
     assert result["restricted_proceeds_credited"] == 0
 
 
@@ -59,10 +60,33 @@ def test_larger_scenario_stays_unpriced_without_verified_sales_for_each_unit_typ
 
 
 def test_priced_rebuild_that_loses_money_before_land_is_flagged():
-    result = analyze_redevelopment({"gross_area_high_sqft": 12000, "stories": 4}, {}, verified_condos(350))
+    result = analyze_redevelopment({"gross_area_high_sqft": 8000, "stories": 4}, {}, verified_condos(350))
     assert result["decision"] == "modeled_loss"
-    assert result["best"]["sellout_high"] <= result["best"]["cost_low"]
+    assert result["best"]["sellout_high"] < result["best"]["cost_low"]
     assert result["best"]["surplus_high"] is None
+
+
+def test_inclusionary_shortfall_is_not_a_whole_project_loss():
+    result = analyze_redevelopment(
+        {"gross_area_high_sqft": 12000, "stories": 4}, {}, verified_condos(350),
+        current_market_range={"low": 1000000, "high": 1200000},
+    )
+    best = result["best"]
+    assert result["decision"] == "market_rate_shortfall"
+    assert best["restricted_units"] > 0
+    assert best["sellout_high"] < best["cost_low"]
+    assert best["surplus_low"] is best["surplus_high"] is None
+
+
+def test_surplus_is_available_with_full_revenue_and_acquisition_inputs():
+    result = analyze_redevelopment(
+        {"gross_area_high_sqft": 8000, "stories": 4}, {}, verified_condos(1700),
+        current_market_range={"low": 1000000, "high": 1200000},
+    )
+    best = result["best"]
+    assert best["restricted_units"] == 0
+    assert best["surplus_low"] == best["sellout_low"] - best["cost_high"]
+    assert best["surplus_high"] == best["sellout_high"] - best["cost_low"]
 
 
 def test_new_build_sales_screen_excludes_repeat_projects_and_later_resales():

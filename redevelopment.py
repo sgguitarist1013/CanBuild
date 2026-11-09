@@ -167,10 +167,11 @@ def analyze_redevelopment(massing, building, references=(), *, current_market_ra
             upside = cost_budget(gross, demolition_area, option["stories"], sum(counts), acquisition, sale_high, stress=False)
             costs_high = sum(x for x in downside.values() if x is not None)
             costs_low = sum(x for x in upside.values() if x is not None)
+            complete_project = acquisition is not None and not scenario["restricted_units"]
             scenario.update(
                 sellout_low=sale_low, sellout_high=sale_high, cost_low=costs_low, cost_high=costs_high,
-                surplus_low=sale_low - costs_high if acquisition else None,
-                surplus_high=sale_high - costs_low if acquisition else None,
+                surplus_low=sale_low - costs_high if complete_project else None,
+                surplus_high=sale_high - costs_low if complete_project else None,
                 cost_lines=[{"name": key, "upside": value, "downside": downside[key]} for key, value in upside.items()],
             )
         modeled.append(scenario)
@@ -185,12 +186,14 @@ def analyze_redevelopment(massing, building, references=(), *, current_market_ra
         ranking = "Ranked by highest modeled surplus after acquisition."
     else:
         modeled.sort(key=lambda row: row["gross_area_sqft"], reverse=True)
-        ranking = "Largest modeled floor area. Financial ranking requires comparable sales and an as-is market estimate."
+        ranking = "Largest modeled floor area. Financial ranking requires pricing for all units and an as-is market estimate."
     best = modeled[0]
-    upside_loss = best["sellout_high"] is not None and best["sellout_high"] <= best["cost_low"]
+    decision = "screened"
+    if best["sellout_high"] is not None and best["sellout_high"] < best["cost_low"]:
+        decision = "market_rate_shortfall" if best["restricted_units"] else "modeled_loss"
     return {
         "status": "Preliminary redevelopment screen",
-        "decision": "modeled_loss" if upside_loss else "screened",
+        "decision": decision,
         "best": best, "alternatives": [
             {key: row[key] for key in ("name", "conditional", "stories", "gross_area_sqft", "sellout_low", "sellout_high", "surplus_low", "surplus_high")}
             for row in modeled[1:]
