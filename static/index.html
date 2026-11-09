@@ -81,7 +81,7 @@
 <p id="assessedValueContext" class="small muted" hidden></p>
 </section>
 <details class="card research-card" id="askDetails" hidden>
-<summary>Ask CanBuild about this report</summary>
+<summary>Ask LotGenius about this report</summary>
 <p class="small muted">Ask what the numbers mean or what to check next.</p>
 <div class="ask-examples">
 <button class="secondary" type="button">What can I build?</button>
@@ -417,7 +417,7 @@ function explainReport(question, report){
     if(/\b(?:issued|filed|past|existing|previous|history|records|applications|look up|pull up|see)\b/.test(text)){
       return report.permit_coverage
         ? {answer:'Open the city records to see any permit applications or issued permits the city has published for this parcel.',target:'permitDetails'}
-        : {answer:'CanBuild does not have a city permit feed for this property. Check the local building department for records.',target:'recordDetails'};
+        : {answer:'LotGenius does not have a city permit feed for this property. Check the local building department for records.',target:'recordDetails'};
     }
     return {answer:'The permits and reviews a project needs depend on the work proposed. Start with the district standards and confirm the approval steps with the city.',target:'districtDetails'};
   }
@@ -461,13 +461,13 @@ function explainReport(question, report){
   if(/\b(?:own|owns|owned|owners?|ownership|title|entity|transfers?)\b|\b(?:last|latest|recorded)\s+(?:deed|sale)\b|\b(?:it|this|the property)\s+sell\b/.test(text)){
     const owners=report.parcel?.recorded_owners||[];
     let answer=owners.length?'The assessor lists '+owners.join('; ')+' on the property records.':'The assessor record did not identify an owner here.';
-    if(deed?.status==='verified') answer+=' CanBuild confirmed a transfer recorded on '+deed.recorded_date+' for '+money(deed.consideration)+'.';
+    if(deed?.status==='verified') answer+=' LotGenius confirmed a transfer recorded on '+deed.recorded_date+' for '+money(deed.consideration)+'.';
     return {answer:answer+' Current ownership requires checking the latest deed.',target:'recordDetails'};
   }
   if(/\b(?:comps?|comparables?|sales?|prices?|worth|value|assess(?:ed|ment|or)?|market)\b/.test(text)){
     const answer=[];
     if(market) answer.push('The as-is market estimate is '+range(market.low,market.high)+', based on '+market.comp_count+' similar deed-confirmed sales.');
-    else if(sales?.truncated) answer.push('The sales source returned an incomplete set of records. CanBuild cannot give a market estimate from those results.');
+    else if(sales?.truncated) answer.push('The sales source returned an incomplete set of records. LotGenius cannot give a market estimate from those results.');
     else if(/\b(?:temporarily unavailable|unavailable|not configured)\b/i.test(sales?.status||'')) answer.push('Comparable sale records are unavailable for this report, so there is no market estimate.');
     else answer.push('The as-is market estimate needs three similar local sales with confirmed deed prices.');
     if(assessment) answer.push('The assessor lists '+money(assessment.amount)+(assessment.fiscal_year?' for FY '+assessment.fiscal_year:'')+' for tax purposes.');
@@ -476,8 +476,8 @@ function explainReport(question, report){
   }
   if(/\bdeeds?\b/.test(text)){
     return {answer:deed?.status==='verified'
-      ? 'CanBuild confirmed a transfer recorded on '+deed.recorded_date+' for '+money(deed.consideration)+'.'
-      : 'CanBuild has not confirmed the transfer details for this property.',
+      ? 'LotGenius confirmed a transfer recorded on '+deed.recorded_date+' for '+money(deed.consideration)+'.'
+      : 'LotGenius has not confirmed the transfer details for this property.',
       target:'recordDetails'};
   }
   if(zoning){

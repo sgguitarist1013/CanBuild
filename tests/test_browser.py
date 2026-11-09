@@ -256,7 +256,7 @@ def test_smaller_rebuild_leads_with_existing_building_on_mobile(page, app_url, p
     expect(page.locator("#redevelopmentMetrics")).to_be_hidden()
     expect(page.locator("#surplusSummary")).to_be_hidden()
     expect(page.locator("#autoSellout")).to_have_text("Estimate unavailable")
-    page.get_by_text("Ask CanBuild about this report", exact=True).click()
+    page.get_by_text("Ask LotGenius about this report", exact=True).click()
     page.get_by_role("textbox", name="Question about this property report").fill("Can I build more homes here?")
     page.get_by_role("button", name="Ask", exact=True).click()
     expect(page.locator("#reportAnswer")).to_contain_text("would lose space or homes")
@@ -391,7 +391,7 @@ def test_ask_report_routes_zoning_permits_and_unavailable_sales_on_mobile(page, 
     page.goto(app_url)
     page.get_by_role("combobox").fill("95 Magazine St, Cambridge, MA")
     page.get_by_role("button", name="Explore property").click()
-    page.get_by_text("Ask CanBuild about this report", exact=True).click()
+    page.get_by_text("Ask LotGenius about this report", exact=True).click()
     question = page.get_by_role("textbox", name="Question about this property report")
     answer = page.locator("#reportAnswerText")
 
@@ -430,7 +430,7 @@ def test_ask_report_distinguishes_affordable_home_count_and_pricing(page, app_ur
     page.goto(app_url)
     page.get_by_role("combobox").fill("95 Magazine St, Cambridge, MA")
     page.get_by_role("button", name="Explore property").click()
-    page.get_by_text("Ask CanBuild about this report", exact=True).click()
+    page.get_by_text("Ask LotGenius about this report", exact=True).click()
     question = page.get_by_role("textbox", name="Question about this property report")
     answer = page.locator("#reportAnswerText")
 
