@@ -1,8 +1,22 @@
 """Live service checks; fail closed on unavailable or incorrect parcel data."""
 import argparse
-import time
 import httpx
-from parcel_engine import requested_house_number
+from parcel_engine import street_tokens
+
+
+def check_cambridge_parcels(client):
+    # Cambridge assessor block maps: https://gis.cambridgema.gov/blockmaps/
+    for street, map_lot in (('95 Magazine St', '101-200'), ('106 Magazine St', '102-51')):
+        response = client.get('/api/property', params={'address': f'{street}, Cambridge, MA'})
+        response.raise_for_status()
+        report = response.json()
+        municipality = (report.get('municipality_match') or {}).get('municipality')
+        assert (municipality or '').upper() == 'CAMBRIDGE', f'{street}: wrong or missing municipality ({municipality})'
+        parcel = report.get('parcel') or {}
+        actual_lot = parcel.get('parcel_number')
+        assert actual_lot == map_lot, f'{street}: expected map-lot {map_lot}, got {actual_lot}'
+        actual_street = (parcel.get('assessor_site_address') or '').split(',')[0]
+        assert street_tokens(actual_street) == street_tokens(street), f'{street}: unexpected assessor address ({actual_street})'
 
 
 def check_boston_sales(report):
@@ -29,13 +43,7 @@ def check(base_url):
         response = client.get('/')
         response.raise_for_status()
         assert 'Property address' in response.text, 'Property search UI missing'
-        response = client.get('/api/property', params={'address': '95 Magazine St, Cambridge, MA'})
-        response.raise_for_status()
-        data = response.json()
-        parcel = data.get('parcel') or {}
-        assert requested_house_number(parcel.get('assessor_site_address') or '') == '95', 'Expected parcel 95; wrong or missing parcel'
-        assert 'MAGAZINE' in (parcel.get('assessor_site_address') or '').upper(), 'Wrong street'
-        assert parcel.get('parcel_number'), 'Missing parcel identifier'
+        check_cambridge_parcels(client)
         response = client.get('/api/property', params={'address': 'One Lewis Wharf, Boston, MA'})
         response.raise_for_status()
         candidates = response.json().get('parcel_candidates', [])
@@ -46,7 +54,7 @@ def check(base_url):
         assert selected.get('parcel', {}).get('parcel_number') == '0303029000', 'Selected Boston PID changed'
         assert selected['parcel'].get('recorded_owners'), 'Boston owner missing'
         check_boston_sales(selected.get('sales_research') or {})
-    print('Live health, search UI, 95 Magazine, Boston alias/owner and recorded-sales checks passed.')
+    print('Live health, search UI, 95 and 106 Magazine, Boston alias/owner and recorded-sales checks passed.')
 
 
 if __name__ == '__main__':
