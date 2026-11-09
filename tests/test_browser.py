@@ -221,7 +221,7 @@ def test_automatic_redevelopment_shows_default_estimate_without_input(page, app_
     expect(page.locator("#currentMarketBasis")).to_contain_text("3 Registry-confirmed sales")
     expect(page.locator("#assessedValueContext")).to_contain_text("FY 2026 tax assessment · $900,000")
     expect(page.locator("#autoSellout")).to_have_text("Estimate unavailable")
-    expect(page.locator("#potentialValueBasis")).to_contain_text("three deed-confirmed sales")
+    expect(page.locator("#potentialValueBasis")).to_contain_text("three similar condo sales")
     expect(page.locator("#autoGrossArea")).to_have_text("12,000 sq ft")
     expect(page.locator("#autoCostMetric")).to_be_hidden()
     expect(page.locator("#autoUnits")).to_have_text(str(redevelopment["best"]["market_units"] + redevelopment["best"]["restricted_units"]))
@@ -335,7 +335,8 @@ def test_verified_deed_and_pending_lead_stay_visibly_distinct(page, app_url, pro
     expect(page.locator("#lastTransfer")).to_contain_text("Book 80505, page 62")
     expect(page.locator("#lastTransfer").get_by_role("link")).to_have_attribute("href", deed["url"])
     page.get_by_text("Comparable sales", exact=True).click()
-    page.get_by_text("Sale leads awaiting registry confirmation", exact=True).click()
+    expect(page.locator("#salesStatus")).to_have_text("1 possible match still being checked.")
+    page.get_by_text("Sales still being checked", exact=True).click()
     expect(page.locator("#pendingRegistryList")).to_contain_text("Book 123, page 456")
     expect(page.locator("#pendingRegistryList")).to_contain_text("Awaiting MassLandRecords confirmation")
 

@@ -57,9 +57,9 @@
 <p id="deedSummary" class="small muted" hidden></p>
 <p id="salePreview" class="small" hidden></p>
 <div class="grid estimate-summary" id="redevelopmentMetrics" hidden>
-<div class="metric"><small>Proposed units</small><strong id="autoUnits"></strong></div>
+<div class="metric"><small>Homes in this scenario</small><strong id="autoUnits"></strong></div>
 <div class="metric" id="autoCostMetric" hidden><small>Estimated project cost</small><strong id="autoCost"></strong></div>
-<div class="metric"><small>Modeled gross floor area</small><strong id="autoGrossArea"></strong></div>
+<div class="metric"><small>Total floor area</small><strong id="autoGrossArea"></strong></div>
 </div>
 <p id="surplusSummary" class="small" hidden>Modeled surplus / loss <strong id="autoSurplus"></strong></p>
 <p id="potentialLimit" class="small muted" hidden></p>
@@ -87,8 +87,9 @@
 </details>
 <button class="secondary no-print" id="print">Print report</button></details>
 <details class="card research-card" id="salesDetails"><summary>Comparable sales</summary>
-<div id="salesResearch"><p id="salesStatus" class="small muted"></p><div id="salesCandidates"></div><p id="salesLimits" class="small muted"></p></div>
-<details id="pendingRegistrySales" hidden><summary>Sale leads awaiting registry confirmation</summary><div id="pendingRegistryList"></div></details>
+<div id="salesResearch"><p id="salesStatus" class="small"></p><div id="salesCandidates"></div></div>
+<details id="pendingRegistrySales" hidden><summary>Sales still being checked</summary><div id="pendingRegistryList"></div></details>
+<details id="salesMethodDetails" hidden><summary>How sales were chosen</summary><p id="salesMethod" class="small muted"></p><p id="salesLimits" class="small muted"></p></details>
 </details>
 <details class="card research-card" id="sourceDetails"><summary>Sources &amp; assumptions</summary><p class="muted small">Source dates and verification status</p><div class="links" id="links"></div>
 <details id="buildoutDetails" hidden><summary>Buildout summary</summary>
@@ -132,7 +133,7 @@ function renderValues(d){
   $('currentMarketValue').textContent=market?range(market.low,market.high):'Estimate unavailable';
   $('currentMarketBasis').textContent=market
     ? market.comp_count+' Registry-confirmed sales within '+market.radius_miles+' mi, scaled to subject living area.'
-    : 'Requires three qualifying local sales confirmed in MassLandRecords.';
+    : 'We need at least three similar local sales with confirmed deed prices.';
   $('assessedValueContext').hidden=!assessment;
   $('assessedValueContext').textContent=assessment
     ? (assessment.fiscal_year?'FY '+assessment.fiscal_year+' tax assessment':'Tax assessment')+' · '+money(assessment.amount)+'. Separate from the market estimate.'
@@ -144,7 +145,7 @@ function renderValues(d){
     ? 'Gross market-rate condo sales for the '+(best.conditional?'conditional ':'')+best.stories+'-story scenario, before project costs.'
     : decision==='retain_and_review'?'The screened rebuild would lose existing space or units.'
     : decision==='modeled_loss'?'The priced rebuild shows a loss even in the upside case.'
-    : best?'Requires three deed-confirmed sales per market-rate unit type.'
+    : best?'We need three similar condo sales with confirmed deed prices for each type of home.'
     : 'Requires a parcel-specific zoning scenario and completed-project pricing.';
 }
 
@@ -529,7 +530,16 @@ if(p?.deed_verification) appendDeed($('lastTransfer'),p.deed_verification);
 $('parcelCandidates').replaceChildren();
 (d.parcel_candidates||[]).forEach(c=>{const el=document.createElement('div');el.className='item';const title=document.createElement('strong');title.textContent=c.address;const note=document.createElement('p');note.className='small muted';note.textContent='Parcel '+c.parcel_number+' · '+(c.use_description||'Use unavailable')+' · Recorded owner: '+(c.recorded_owner||'Unavailable');const b=document.createElement('button');b.className='secondary';b.textContent='Review this assessor record';b.onclick=()=>lookup(c.parcel_number);el.append(title,note,b);$('parcelCandidates').append(el)});
 const sales=d.sales_research||{};
-$('salesStatus').textContent=(sales.status||'Sales research unavailable')+(sales.median_sale_price?' · Median reported sale $'+fmt(sales.median_sale_price):'')+'. '+(sales.method||'');
+const confirmed=sales.candidates?.length||0;
+const pending=sales.pending_registry_review||[];
+const countLabel=(count,label)=>count+' '+label+(count===1?'':'s');
+const summary=[
+  confirmed?countLabel(confirmed,'confirmed sale'):null,
+  pending.length?countLabel(pending.length,'possible match')+' still being checked':null,
+].filter(Boolean).join(' · ');
+$('salesStatus').textContent=summary?summary+'.':sales.status||'Sales research unavailable';
+$('salesMethodDetails').hidden=!sales.method&&!sales.limitations&&!sales.truncated;
+$('salesMethod').textContent=sales.method||'';
 $('salesLimits').textContent=(sales.limitations||'Candidate sales are not a valuation or a verified appraisal.')+(sales.truncated?' Source result limit reached; coverage is incomplete.':'');
 $('salesCandidates').replaceChildren();
 for(const c of sales.candidates||[]){
@@ -564,7 +574,6 @@ for(const c of sales.candidates||[]){
   }
   $('salesCandidates').append(el);
 }
-const pending=sales.pending_registry_review||[];
 $('pendingRegistrySales').hidden=!pending.length;
 $('pendingRegistryList').replaceChildren();
 for(const lead of pending){
