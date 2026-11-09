@@ -5,7 +5,8 @@ import httpx
 from shapely.geometry import box
 
 from municipal_zoning import (
-    CAMBRIDGE_DEMOLITION, cambridge_approval_screen, cambridge_constraints, cambridge_parcel_geometry,
+    CAMBRIDGE_DEMOLITION, cambridge_approval_screen, cambridge_constraints, cambridge_mapped_frontage,
+    cambridge_parcel_geometry,
 )
 
 
@@ -45,6 +46,19 @@ def test_cambridge_demolition_review_flags_age_boundary_or_missing_year():
     assert not cambridge_approval_screen([], {"year_built": 1977}, today)["pricing_on_hold"]
     assert cambridge_approval_screen([], {"building_area_sqft": 2000}, today)["pricing_on_hold"]
 
+
+def test_cambridge_mapped_frontage_requires_reviewed_map_lot_and_exact_assessor_address():
+    for lot, address, feet, block in (
+        ("101-200", "95 MAGAZINE ST", 70.0, 101),
+        ("102-51", "106 Magazine Street", 19.07, 102),
+    ):
+        parcel = {"parcel_number": lot, "assessor_site_address": address}
+        assert cambridge_mapped_frontage(parcel) == {
+            "street": "Magazine Street", "frontage_ft": feet,
+            "source_url": f"https://gis.cambridgema.gov/blockmaps/Block_{block}.pdf",
+        }
+        assert cambridge_mapped_frontage({**parcel, "assessor_site_address": address + " Unit 1"}) is None
+        assert cambridge_mapped_frontage({**parcel, "parcel_number": "102-50"}) is None
 
 
 def test_cambridge_zoning_geometry_requires_one_exact_map_and_lot():

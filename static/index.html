@@ -95,7 +95,7 @@
 <p id="buildoutScope" class="small"></p><ul id="buildoutChecks"></ul><div id="buildoutSources" class="links"></div>
 </details>
 <details id="districtDetails"><summary>District standards</summary>
-<div id="localZoning"><p id="zoningStatus" class="small muted"></p><div id="zoningStandards" class="details"></div><p id="zoningConditions" class="small muted"></p><ul id="cambridgeApprovalChecks" class="small" hidden></ul><div id="constraintChecks" class="details"></div><div id="multifamilyScreen" class="item hide"></div></div>
+<div id="localZoning"><p id="zoningStatus" class="small muted"></p><div id="zoningStandards" class="details"></div><p id="zoningConditions" class="small muted"></p><p id="cambridgeMappedFrontage" class="small muted" hidden></p><ul id="cambridgeApprovalChecks" class="small" hidden></ul><div id="constraintChecks" class="details"></div><div id="multifamilyScreen" class="item hide"></div></div>
 <details id="onDemandZoning" class="hide"><summary>On-demand zoning research</summary><p id="onDemandStatus" class="muted small"></p><div id="onDemandSources" class="links"></div></details></details>
 <details id="estimateDetails" hidden><summary>Development estimate details</summary>
 <p id="redevelopmentStatus" class="small muted"></p>
@@ -591,6 +591,14 @@ renderCondoProgram(d);
 }
 function renderLocalZoning(d){
 const z=d.zoning,review=d.zoning_review,coverage=d.coverage||{};
+const frontage=d.cambridge_mapped_frontage;
+const frontageNote=$('cambridgeMappedFrontage');
+frontageNote.hidden=!frontage;
+frontageNote.replaceChildren();
+if(frontage){
+  frontageNote.textContent=`The assessor block map shows ${frontage.frontage_ft} feet along ${frontage.street}. A survey and site plan are needed to check the exact street line, setbacks, and usable footprint. `;
+  permitLink(frontageNote,'City parcel block map',frontage.source_url);
+}
 const checks=d.cambridge_approvals?.checks||[];
 const approvalList=$('cambridgeApprovalChecks');
 approvalList.hidden=!checks.length;

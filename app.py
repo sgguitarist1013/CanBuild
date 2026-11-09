@@ -354,6 +354,9 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
                 client, lon, lat, parts.get("city"), result["parcel"], result.get("existing_building"),
             ))
         if parts.get("city") == "CAMBRIDGE" and result.get("parcel"):
+            frontage = municipal_zoning.cambridge_mapped_frontage(result["parcel"])
+            if frontage:
+                result["cambridge_mapped_frontage"] = frontage
             city_polygon = await municipal_zoning.cambridge_parcel_geometry(client, result["parcel"].get("parcel_number"), lat)
             if city_polygon is not None:
                 polygon = city_polygon

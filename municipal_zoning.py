@@ -7,7 +7,7 @@ from pathlib import Path
 from datetime import date, datetime, timezone
 from urllib.parse import urlparse
 
-from parcel_engine import requested_house_number, same_street
+from parcel_engine import requested_house_number, same_street, street_tokens
 
 import httpx
 from shapely import make_valid
@@ -295,6 +295,22 @@ CAMBRIDGE_APPROVAL_LAYERS = (
     ("Landmarks and preservation easements", "Landmarks_and_Easements", "HISTORIC_N", "historical/historical_landmarkseasements"),
 )
 CAMBRIDGE_DEMOLITION = "https://www.cambridgema.gov/historic/districtshistoricproperties/demolitionreview"
+# Parenthesized green dimensions on the Cambridge FY2027 assessor block maps.
+CAMBRIDGE_MAPPED_FRONTAGE = {
+    "101-200": ("95 Magazine Street", 70.0, "https://gis.cambridgema.gov/blockmaps/Block_101.pdf"),
+    "102-51": ("106 Magazine Street", 19.07, "https://gis.cambridgema.gov/blockmaps/Block_102.pdf"),
+}
+
+
+def cambridge_mapped_frontage(parcel):
+    """Return block-map frontage evidence for a reviewed Cambridge parcel."""
+    record = CAMBRIDGE_MAPPED_FRONTAGE.get(parcel.get("parcel_number"))
+    if record is None:
+        return None
+    address, feet, source_url = record
+    if street_tokens(parcel.get("assessor_site_address")) != street_tokens(address):
+        return None
+    return {"street": "Magazine Street", "frontage_ft": feet, "source_url": source_url}
 
 
 async def cambridge_parcel_geometry(client, parcel_number, latitude):

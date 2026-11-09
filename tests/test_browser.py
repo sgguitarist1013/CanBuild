@@ -345,7 +345,10 @@ def test_cambridge_approval_step_is_visible_before_estimates(page, app_url, prop
 
     redevelopment = analyze_redevelopment({"gross_area_high_sqft": 12000, "stories": 4}, None)
     source = "https://www.cambridgema.gov/historic/districtshistoricproperties/demolitionreview"
+    frontage_source = "https://gis.cambridgema.gov/blockmaps/Block_101.pdf"
     record = dict(property_record, zoning={"district": "C-1"}, redevelopment=redevelopment,
+                  cambridge_mapped_frontage={"frontage_ft": 70, "street": "Magazine Street",
+                                             "source_url": frontage_source},
                   cambridge_approvals={"pricing_on_hold": True, "checks": [{
                       "text": "Confirm demolition review with the Historical Commission.", "url": source,
                   }]})
@@ -359,7 +362,10 @@ def test_cambridge_approval_step_is_visible_before_estimates(page, app_url, prop
     expect(page.locator("#redevelopmentMetrics")).to_be_hidden()
     expect(page.locator("#autoSellout")).to_have_text("Estimate unavailable")
     expect(page.locator("#cambridgeApprovalChecks")).to_be_hidden()
+    expect(page.locator("#cambridgeMappedFrontage")).to_be_hidden()
     page.get_by_role("button", name="See what needs city review").click()
+    expect(page.locator("#cambridgeMappedFrontage")).to_contain_text("70 feet along Magazine Street")
+    expect(page.locator("#cambridgeMappedFrontage").get_by_role("link")).to_have_attribute("href", frontage_source)
     expect(page.locator("#cambridgeApprovalChecks")).to_contain_text("Confirm demolition review")
     expect(page.locator("#cambridgeApprovalChecks").get_by_role("link")).to_have_attribute("href", source)
 
