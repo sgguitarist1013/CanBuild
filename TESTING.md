@@ -12,7 +12,14 @@ python -m pytest tests/test_browser.py -q --tracing retain-on-failure --screensh
 PYTHONPATH=. python scripts/smoke.py https://canbuild.onrender.com
 ```
 
-The suite covers parcel identity (95 Magazine must never select 91), municipal rule boundaries, envelope calculations, API validation, suggestion filtering, browser search/results, withheld estimates, error/retry behavior, mobile layout, and monitoring request-data scrubbing. Browser responses are deliberately mocked for repeatability; the live smoke script independently requires an actual 95 Magazine parcel record. Browser failures produce traces and screenshots in test-results.
+The suite covers parcel identity, municipal rule boundaries, envelope calculations, API validation, suggestion filtering, browser search/results, withheld estimates, error/retry behavior, mobile layout, and monitoring request-data scrubbing. Browser responses are mocked for repeatability. The live smoke script independently checks the municipality, assessor address and map-lot for [95 Magazine St (101-200)](https://gis.cambridgema.gov/blockmaps/Block_101.pdf) and [106 Magazine St (102-51)](https://gis.cambridgema.gov/blockmaps/Block_102.pdf), along with the Boston alias and registry status. Browser failures produce traces and screenshots in `test-results`.
+
+## Product review
+
+1. Record each failure in the relevant GitHub issue or draft PR. Include the build SHA, address or search steps, expected and actual result, source links and dates, and what decision the error could affect. For mobile defects, include the viewport and browser trace or screenshot.
+2. Reproduce against staging when possible. Separate app defects from temporary source failures and from unresolved source evidence. Track evidence blockers with the missing record or approval and the next check. Keep them open while other cases proceed.
+3. Add a reproducible regression for the defect and run the relevant local tests. For changes to a buyer-facing report, verify at 320 and 390 px that the lead answer, figures, collapsed evidence and Ask PlotDocket links work with complete and incomplete data.
+4. Require review and passing CI before integration, and a passing live staging smoke test on the release commit before production. A passing parcel identity check only confirms which property the report describes. Review zoning, sales and underwriting evidence separately before marking a municipal case verified.
 
 ## Required host configuration before release
 
