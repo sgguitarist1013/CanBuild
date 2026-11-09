@@ -144,7 +144,6 @@ function renderValues(d){
     ? 'Gross market-rate condo sales for the '+(best.conditional?'conditional ':'')+best.stories+'-story scenario, before project costs.'
     : decision==='retain_and_review'?'The screened rebuild would lose existing space or units.'
     : decision==='modeled_loss'?'The priced rebuild shows a loss even in the upside case.'
-    : d.cambridge_approvals?.pricing_on_hold?'Confirm the city review steps before pricing this rebuild.'
     : best?'Requires three deed-confirmed sales per market-rate unit type.'
     : 'Requires a parcel-specific zoning scenario and completed-project pricing.';
 }
@@ -306,7 +305,7 @@ function renderRedevelopment(d){
   $('estimateDetails').hidden=!best;
   const loss=screen?.decision==='modeled_loss';
   $('surplusSummary').hidden=best?.surplus_high==null||loss;
-  $('redevelopmentMetrics').hidden=!best||loss||Boolean(d.cambridge_approvals?.pricing_on_hold);
+  $('redevelopmentMetrics').hidden=!best||loss;
   $('autoCostMetric').hidden=best?.cost_high==null;
   $('redevelopmentStatus').textContent=best?best.name+' · '+best.stories+' stories'+(best.height_ft?' · '+best.height_ft+' ft height limit':'')+'. '+screen.ranking+' Confirm zoning and project-specific costs before relying on this estimate.':screen?.status||'';
   $('redevelopmentAreas').textContent='';
@@ -410,6 +409,12 @@ function render(d) {
   renderOpportunity(d);
   renderRedevelopment(d);
   renderValues(d);
+  if(d.redevelopment?.best&&d.cambridge_approvals?.pricing_on_hold){
+    $('redevelopmentMetrics').hidden=true;
+    $('surplusSummary').hidden=true;
+    $('autoSellout').textContent='Estimate unavailable';
+    $('potentialValueBasis').textContent='Confirm the city review steps before pricing this rebuild.';
+  }
   $('warnings').replaceChildren();
   for(const warning of d.warnings||[]){
     const li=document.createElement('li');
