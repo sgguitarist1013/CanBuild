@@ -78,6 +78,33 @@ def check(municipality, address, reference, reported_price=None, registered_refe
     return {**result, **reviewed, "status": "verified"}
 
 
+def sale_deed(city, sale):
+    return check(city, sale.get("address"), reference_pair(sale.get("record_reference")), sale.get("sale_price"))
+
+
+def shortlist(city, candidates, limit=12):
+    """Keep confirmed sales from being crowded out by closer unconfirmed leads."""
+    ranked = sorted(candidates, key=lambda row: (
+        bool(row.get("older_reference")),
+        row.get("comparison_label", "Same assessor class") != "Same assessor class",
+        row["distance_miles"],
+        -int(row["sale_date"].replace("-", "")),
+    ))
+    verified, pending = [], []
+    for sale in ranked:
+        group = verified if sale_deed(city, sale)["status"] == "verified" else pending
+        group.append(sale)
+    recent = [sale for sale in verified if not sale.get("older_reference")
+              and sale.get("comparison_label", "Same assessor class") == "Same assessor class"]
+    close = [sale for sale in recent if sale["distance_miles"] <= .5]
+    if len(close) >= 3:
+        return close[:min(4, limit)]
+    if len(recent) >= 3:
+        return recent[:min(3, limit)]
+    selected = verified[:min(4, limit)]
+    return selected + pending[:limit - len(selected)]
+
+
 def sale_report(city, report):
     """Unverified leads stay separate and cannot set any price statistic."""
     candidates = report.get("candidates", [])
@@ -85,21 +112,26 @@ def sale_report(city, report):
         return report
     verified, pending = [], []
     for sale in candidates:
-        deed = check(city, sale.get("address"), reference_pair(sale.get("record_reference")), sale.get("sale_price"))
+        deed = sale_deed(city, sale)
         if deed["status"] == "verified":
             verified.append({**sale, "deed_verification": deed})
         else:
-            pending.append({"address": sale.get("address"), "deed_verification": deed})
+            lead = {"address": sale.get("address"), "deed_verification": deed}
+            if report.get("expanded_search"):
+                lead.update({key: sale[key] for key in ("sale_date", "distance_miles", "comparison_area_sqft",
+                            "comparison_area_basis", "older_reference", "source_url") if key in sale})
+            pending.append(lead)
+    recent = [sale for sale in verified if not sale.get("older_reference")]
     result = {**report, "candidates": verified, "pending_registry_review": pending, "count": len(verified)}
     result["status"] = f"{len(verified)} registry-confirmed sale reference(s)"
     if pending:
         result["status"] += f" · {len(pending)} awaiting registry confirmation"
     if "median_sale_price" in result:
-        result["median_sale_price"] = median(r["sale_price"] for r in verified) if len(verified) >= 3 else None
+        result["median_sale_price"] = median(r["sale_price"] for r in recent) if len(recent) >= 3 else None
     if "same_class_count" in result:
         result["same_class_count"] = sum(r.get("comparison_label") == "Same assessor class" for r in verified)
     if "observed_price_per_sqft_low" in result:
-        rates = [r["price_per_living_sqft"] for r in verified]
+        rates = [r["price_per_living_sqft"] for r in recent]
         usable = len(rates) >= 3 and not report.get("truncated")
         result["observed_price_per_sqft_low"] = min(rates) if usable else None
         result["observed_price_per_sqft_high"] = max(rates) if usable else None

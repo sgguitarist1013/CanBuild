@@ -27,7 +27,7 @@ def current_valuation(parcel, building, sales):
         sale_beds, sale_baths = sale.get("bedrooms_reported"), sale.get("bathrooms_reported")
         distance = sale.get("distance_miles")
         price = deed.get("consideration")
-        if (deed.get("status") == "verified" and price == sale.get("sale_price")
+        if (not sale.get("older_reference") and deed.get("status") == "verified" and price == sale.get("sale_price")
                 and sale.get("comparison_label") == "Same assessor class"
                 and sale.get("arm_length_status") == "City sale flag Q"
                 and sale.get("comparison_area_basis") == "assessor living area"

@@ -32,7 +32,7 @@ import permit_research
 configure_monitoring()
 
 ROOT=Path(__file__).parent
-VERSION = "0.16.12"
+VERSION = "0.16.13"
 app=FastAPI(title="CanBuild Massachusetts",version=VERSION)
 app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
 CENSUS="https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress"

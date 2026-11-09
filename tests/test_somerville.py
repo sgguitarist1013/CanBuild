@@ -3,6 +3,8 @@ from datetime import date
 import httpx
 import pytest
 
+import registry
+
 from somerville import buildout, sale_candidates, sales
 
 
@@ -40,10 +42,14 @@ def test_comp_match_preserves_size_rooms_and_distinguishes_assessor_class():
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("initial,expected_queries", [(3, 1), (2, 2)])
-async def test_sales_expand_only_until_three_matches(initial, expected_queries):
-    close = [feature(str(i), .001 * i) for i in range(1, initial+1)]
-    farther = [feature(str(i+10), .015 + .004*i) for i in range(3)]
+@pytest.mark.parametrize("initial_confirmed,expected_queries", [(3, 1), (2, 2)])
+async def test_sales_expand_only_until_three_confirmed_matches(initial_confirmed, expected_queries, monkeypatch):
+    close = [feature(str(i), .001 * i, PCC="1090") for i in range(1, 4)]
+    farther = [feature(str(i), .015 + .004*i, PCC="1090") for i in range(10, 13)]
+    confirmed = {str(i) for i in range(1, initial_confirmed + 1)} | {"10", "11", "12"}
+    monkeypatch.setattr(registry, "sale_deed", lambda city, row: {
+        "status": "verified" if row["parcel_number"] in confirmed else "pending",
+    })
     queries = []
     def handler(request):
         queries.append(request.url)
@@ -53,6 +59,7 @@ async def test_sales_expand_only_until_three_matches(initial, expected_queries):
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         result = await sales(client, -71.125, 42.4, PARCEL, SUBJECT)
     assert len(queries) == expected_queries
-    assert len(result["candidates"]) == 3
+    expected = ["1", "2", "3"] if initial_confirmed == 3 else ["1", "2", "10"]
+    assert [row["parcel_number"] for row in result["candidates"]] == expected
     assert result["expanded"] == (expected_queries == 2)
     assert (result["radius_miles"] > .5) == (expected_queries == 2)

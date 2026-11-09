@@ -237,6 +237,7 @@ function renderOpportunity(d) {
   $('salePreview').textContent=sale?[
     sales.length+(sale.deed_verification?.status==='verified'?' registry-confirmed':' nearby')+' sale reference'+(sales.length===1?'':'s'),
     sale.address+' sold for $'+fmt(sale.sale_price),
+    sale.older_reference?'Historical reference':null,
     sale.comparison_area_sqft?fmt(sale.comparison_area_sqft)+' sq ft':null,
     sale.comparison_label||null,
   ].filter(Boolean).join(' · '):'';
@@ -542,7 +543,7 @@ for(const c of sales.candidates||[]){
   const basis=c.comparison_area_basis||'assessor gross building area';
   const rate=c.price_per_comparison_sqft??c.price_per_gross_sqft;
   note.textContent=[
-    c.sale_date||'Sale date unavailable','$'+fmt(c.sale_price),
+    c.sale_date||'Sale date unavailable',c.older_reference?'Historical reference':null,'$'+fmt(c.sale_price),
     c.distance_miles!=null?Number(c.distance_miles).toFixed(2)+' mi':null,
     size!=null?fmt(size)+' sq ft ('+basis+')':null,
     c.size_difference_pct!=null?(c.size_difference_pct>0?'+':'')+c.size_difference_pct+'% vs subject':null,
@@ -569,8 +570,17 @@ $('pendingRegistryList').replaceChildren();
 for(const lead of pending){
   const item=document.createElement('p');
   item.className='small';
-  item.textContent=(lead.address||'Address unavailable')+' · ';
+  item.textContent=[
+    lead.address||'Address unavailable',lead.sale_date,
+    lead.distance_miles!=null?Number(lead.distance_miles).toFixed(2)+' mi':null,
+    lead.comparison_area_sqft?fmt(lead.comparison_area_sqft)+' sq ft ('+lead.comparison_area_basis+')':null,
+    lead.older_reference?'Historical reference':null,
+  ].filter(Boolean).join(' · ')+' · ';
   appendDeed(item,lead.deed_verification);
+  if(lead.source_url){
+    item.append(' · ');
+    permitLink(item,'Assessor sale source',lead.source_url);
+  }
   $('pendingRegistryList').append(item);
 }
 

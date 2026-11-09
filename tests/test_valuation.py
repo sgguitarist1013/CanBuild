@@ -32,6 +32,8 @@ def test_as_is_estimate_uses_three_distinct_registry_confirmed_like_sales():
     assert report["assessment"] == {"amount": 900000, "fiscal_year": 2026}
     assert current_valuation(parcel, building, {"candidates": candidates[:7]})["market_range"] is None
     assert current_valuation(parcel, building, {"candidates": candidates, "truncated": True})["market_range"] is None
+    historical = [dict(sale, older_reference=True) if sale["parcel_number"] == "c" else sale for sale in candidates[:8]]
+    assert current_valuation(parcel, building, {"candidates": historical})["market_range"] is None
 
 
 def test_missing_assessment_and_comps_stay_unavailable():
