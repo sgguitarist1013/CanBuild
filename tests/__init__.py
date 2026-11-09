@@ -1,1 +1,1 @@
-"""CanBuild automated regression test package."""
+"""LotGenius automated regression test package."""

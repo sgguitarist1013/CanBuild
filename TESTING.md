@@ -1,4 +1,4 @@
-# CanBuild testing and release
+# LotGenius testing and release
 
 ## Local checks
 
