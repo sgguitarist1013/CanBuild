@@ -1,6 +1,6 @@
 # Zoning and property data rollout
 
-Reviewed November 7, 2026. Priorities are an implementation order based on development use cases, not an econometric valuation ranking.
+Reviewed November 7, 2026. These priorities describe the initial development use cases. See the [municipal rollout queue](MUNICIPAL_ROLLOUT.md) for the current assessment-based order and review stages.
 
 1. Cambridge, Somerville, Boston: building type, housing capacity, subdistricts, overlays and redevelopment.
 2. Watertown, Everett, Chelsea, Revere: corridor redevelopment, industrial conversion and transit context. State atlas data is available for mapped districts in Watertown, Chelsea and Revere. Chelsea also has a dated municipal base-zoning snapshot. Prioritize current local rule and overlay verification in these cities, including Everett. Everett’s historical municipal map is connected for research.
