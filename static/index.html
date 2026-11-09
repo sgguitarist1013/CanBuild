@@ -53,6 +53,7 @@
 <p class="tag" id="zoneStatus"></p>
 <h3 id="potentialTitle">What can I do here?</h3>
 <p id="potentialAnswer" class="answer"></p>
+<p id="useRecommendation" class="small" hidden></p>
 <p id="propertyFactsSummary" class="small muted" hidden></p>
 <p id="deedSummary" class="small muted" hidden></p>
 <p id="salePreview" class="small" hidden></p>
@@ -254,7 +255,12 @@ function renderOpportunity(d) {
     link.href=source.url;link.target='_blank';link.rel='noopener noreferrer';link.textContent=source.name+' ↗';
     $('buildoutSources').append(link);
   }
-  $('potentialAnswer').textContent=answer;
+  const recommendation=d.use_recommendation;
+  const leadsWithUse=best&&recommendation?.status==='conceptual_redevelopment';
+  $('potentialAnswer').textContent=leadsWithUse?recommendation.summary:answer;
+  if(leadsWithUse) limit='';
+  $('useRecommendation').hidden=!recommendation||leadsWithUse||recommendation.status==='retain_and_review';
+  $('useRecommendation').textContent=recommendation?.summary||'';
   $('potentialLimit').textContent=limit;
   $('potentialLimit').hidden=!limit;
   $('resultAction').textContent=action;
@@ -419,6 +425,7 @@ function render(d) {
   $('status').textContent=d.parcel?'Property records loaded.':d.parcel_candidates?.length?'Address found. Confirm the parcel below.':'Parcel match unavailable.';
   $('propertyAddress').focus({preventScroll:true});
   $('results').scrollIntoView({block:'start'});
+  void loadPermits();
 }
 function permitLink(container, label, url) {
   if(!url?.startsWith('https://')) return;
@@ -444,12 +451,12 @@ function resetPermits(report) {
 
 async function loadPermits() {
   const report=last;
-  if(!report?.permit_coverage||report.permitLookup) return;
+  if(!report?.parcel||!report.permit_coverage||report.permitLookup) return;
   report.permitLookup='loading';
   $('retryPermits').hidden=true;
   $('permitStatus').textContent='Checking city permit records…';
   const query=new URLSearchParams({
-    municipality:report.coverage.municipality,
+    municipality:report.municipality_match?.municipality||report.coverage.municipality,
     address:report.assessor_address||report.parcel.assessor_site_address||report.address,
     parcel:report.parcel.parcel_number||'',
   });
@@ -483,9 +490,6 @@ async function loadPermits() {
   }
 }
 
-$('permitDetails').addEventListener('toggle',()=>{
-  if($('permitDetails').open) loadPermits();
-});
 $('retryPermits').onclick=loadPermits;
 
 function appendDeed(container,deed){

@@ -346,12 +346,16 @@ def test_verified_deed_and_pending_lead_stay_visibly_distinct(page, app_url, pro
     expect(page.locator("#pendingRegistryList")).to_contain_text("Awaiting MassLandRecords confirmation")
 
 
-def test_permit_history_loads_only_when_opened_and_keeps_city_links(page, app_url, property_record):
+def test_address_loads_use_guidance_and_permits_without_more_input(page, app_url, property_record):
     coverage = {"source_url": "https://data.cambridgema.gov/d/3wsm-e5jx",
                 "official_lookup_url": "https://www.cambridgema.gov/inspection/codesandmaps/recordsandarchives",
                 "coverage_note": "City permit dataset"}
     property_record["coverage"] = {"municipality": "CAMBRIDGE"}
     property_record["permit_coverage"] = coverage
+    property_record["use_recommendation"] = {
+        "status": "unresolved",
+        "summary": "Use the property's current condition as the starting point.",
+    }
     calls = []
 
     def respond(route):
@@ -367,8 +371,11 @@ def test_permit_history_loads_only_when_opened_and_keeps_city_links(page, app_ur
     page.goto(app_url)
     page.get_by_role("combobox").fill("95 Magazine St, Cambridge, MA")
     page.get_by_role("button", name="Explore property").click()
+    expect(page.locator("#useRecommendation")).to_have_text(property_record["use_recommendation"]["summary"])
+    expect(page.locator("#permitStatus")).to_contain_text("1 permit record(s) shown.")
+    assert not page.locator("#permitDetails").evaluate("el => el.open")
+    assert not page.locator("#advancedDetails").evaluate("el => el.open")
     page.get_by_text("Property records", exact=True).click()
-    assert not calls
     page.get_by_text("Building permits and applications", exact=True).click()
     expect(page.locator("#permitRecords")).to_contain_text("138721")
     expect(page.get_by_role("link", name="City permit lookup")).to_have_attribute("href", coverage["official_lookup_url"])

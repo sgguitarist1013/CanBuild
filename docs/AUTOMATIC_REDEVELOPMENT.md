@@ -2,6 +2,8 @@
 
 The property endpoint populates a preliminary for-sale redevelopment screen for Cambridge C-1 parcels where the existing geometric rule engine can produce an envelope. Other zoning coverage does not imply a usable development envelope. The default report requires no inputs. An optional manual condo tool is available on reports without an automatic estimate.
 
+An address search checks the configured parcel, zoning, and sales sources. Where the city provides a permit feed, the web report starts that lookup automatically after resolving the parcel. The permit details start collapsed. The property API's `use_recommendation` identifies an option to investigate or explains why the existing use is the starting point. The recommendation uses the report evidence and keeps site control, approvals, and missing economics explicit.
+
 ## Program and revenue
 
 Compare the base four-story envelope and, where the parcel passes the existing lot-area screen, the conditional six-story inclusionary envelope. Each uses the upper geometric area sensitivity. Screen out replacements that shrink reported gross or living area or reduce reported units. Rank by highest modeled surplus when all scenarios have enough evidence, otherwise show the largest remaining program. The report flags projects that lose money even in the upside case. The downside case stresses costs and prices for the same program. Footprint sensitivity is calculated separately.

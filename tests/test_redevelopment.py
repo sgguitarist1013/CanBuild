@@ -1,4 +1,4 @@
-from redevelopment import analyze_redevelopment
+from redevelopment import analyze_redevelopment, recommend_use
 from condo_analysis import reference_summary
 
 
@@ -43,6 +43,32 @@ def test_smaller_rebuild_is_rejected_before_pricing():
         {"name": "Base redevelopment", "proposed_gross_area_sqft": 1703,
          "proposed_living_area_sqft": 1050, "proposed_units": 1},
     ]
+    assert recommend_use({"parcel": {"parcel_number": "102-51"}, "redevelopment": result})["status"] == "retain_and_review"
+
+
+def test_use_recommendation_keeps_conceptual_upside_separate_from_supported_value():
+    report = {"parcel": {"parcel_number": "101-200"}, "redevelopment": {
+        "decision": "modeled_loss",
+        "best": {"stories": 6, "conditional": True, "restricted_units": 2, "sellout_high": 3_000_000},
+    }}
+    guidance = recommend_use(report)
+    assert guidance["status"] == "conceptual_redevelopment"
+    assert "6-story" in guidance["summary"]
+    assert "restricted-home proceeds" in guidance["summary"]
+    assert "acquisition cost" in guidance["summary"]
+    assert recommend_use({"parcel_candidates": [{"parcel_number": "101-200"}]}) is None
+    assert recommend_use(report, site_control_unresolved=True)["status"] == "site_control_unresolved"
+    report["cambridge_approvals"] = {"pricing_on_hold": True}
+    assert recommend_use(report)["status"] == "approval_review"
+
+
+def test_use_recommendation_prefers_parcel_rules_to_overlay_and_withholds_unsupported_upside():
+    report = {"parcel": {"parcel_number": "test"}}
+    assert recommend_use(report)["status"] == "unresolved"
+    report["multifamily_screen"] = {"districts": [{"name": "Test overlay"}]}
+    assert recommend_use(report)["status"] == "overlay_to_screen"
+    report["zoning_review"] = {"status": "Test dimensional rules"}
+    assert recommend_use(report)["status"] == "expansion_to_screen"
 
 
 def test_larger_scenario_stays_unpriced_without_verified_sales_for_each_unit_type():

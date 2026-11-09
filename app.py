@@ -21,7 +21,7 @@ import municipal_zoning
 from data_quality import review_building
 from condo_analysis import CondoProgram, analyze_program, cambridge_new_build_sales, condo_sales
 from monitoring import configure_monitoring
-from redevelopment import analyze_redevelopment
+from redevelopment import analyze_redevelopment, recommend_use
 import zoning_research
 import somerville
 import registry
@@ -535,6 +535,7 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
             potential_total=scenario["market_units"] + scenario["restricted_units"],
             potential_status="Conceptual redevelopment program based on the screened zoning envelope.",
         )
+    result["use_recommendation"] = recommend_use(result, site_control_unresolved=ambiguous_site)
     if pending:
         queue_registry_review(city, pending)
     return result
