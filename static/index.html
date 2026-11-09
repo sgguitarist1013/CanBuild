@@ -95,7 +95,7 @@
 <p id="buildoutScope" class="small"></p><ul id="buildoutChecks"></ul><div id="buildoutSources" class="links"></div>
 </details>
 <details id="districtDetails"><summary>District standards</summary>
-<div id="localZoning"><p id="zoningStatus" class="small muted"></p><div id="zoningStandards" class="details"></div><p id="zoningConditions" class="small muted"></p><div id="constraintChecks" class="details"></div><div id="multifamilyScreen" class="item hide"></div></div>
+<div id="localZoning"><p id="zoningStatus" class="small muted"></p><div id="zoningStandards" class="details"></div><p id="zoningConditions" class="small muted"></p><ul id="cambridgeApprovalChecks" class="small" hidden></ul><div id="constraintChecks" class="details"></div><div id="multifamilyScreen" class="item hide"></div></div>
 <details id="onDemandZoning" class="hide"><summary>On-demand zoning research</summary><p id="onDemandStatus" class="muted small"></p><div id="onDemandSources" class="links"></div></details></details>
 <details id="estimateDetails" hidden><summary>Development estimate details</summary>
 <p id="redevelopmentStatus" class="small muted"></p>
@@ -144,6 +144,7 @@ function renderValues(d){
     ? 'Gross market-rate condo sales for the '+(best.conditional?'conditional ':'')+best.stories+'-story scenario, before project costs.'
     : decision==='retain_and_review'?'The screened rebuild would lose existing space or units.'
     : decision==='modeled_loss'?'The priced rebuild shows a loss even in the upside case.'
+    : d.cambridge_approvals?.pricing_on_hold?'Confirm the city review steps before pricing this rebuild.'
     : best?'Requires three deed-confirmed sales per market-rate unit type.'
     : 'Requires a parcel-specific zoning scenario and completed-project pricing.';
 }
@@ -172,6 +173,10 @@ function renderOpportunity(d) {
     answer='Start with the existing building. The screened rebuild would lose space or units.';
     limit='Check whether an addition or alteration is feasible under the local rules.';
     [action,target]=['View zoning comparison','envelopeDetails'];
+  } else if(best&&d.cambridge_approvals?.pricing_on_hold) {
+    answer='City review comes first for this rebuild.';
+    limit='Check the approval steps that could change what fits, how long it takes, or what it costs.';
+    [action,target]=['See what needs city review','districtDetails'];
   } else if(d.redevelopment?.decision==='modeled_loss') {
     answer='The priced rebuild shows a loss even in the upside case.';
     limit='Review the existing building and the assumptions before considering redevelopment.';
@@ -301,7 +306,7 @@ function renderRedevelopment(d){
   $('estimateDetails').hidden=!best;
   const loss=screen?.decision==='modeled_loss';
   $('surplusSummary').hidden=best?.surplus_high==null||loss;
-  $('redevelopmentMetrics').hidden=!best||loss;
+  $('redevelopmentMetrics').hidden=!best||loss||Boolean(d.cambridge_approvals?.pricing_on_hold);
   $('autoCostMetric').hidden=best?.cost_high==null;
   $('redevelopmentStatus').textContent=best?best.name+' · '+best.stories+' stories'+(best.height_ft?' · '+best.height_ft+' ft height limit':'')+'. '+screen.ranking+' Confirm zoning and project-specific costs before relying on this estimate.':screen?.status||'';
   $('redevelopmentAreas').textContent='';
@@ -387,6 +392,7 @@ function render(d) {
   $('facts').replaceChildren();
   addFact('Municipality for zoning',d.municipality_match?.municipality);
   addFact('Municipality source',d.municipality_match?.source);
+  addFact('Parcel map used for zoning',d.parcel?.zoning_geometry_source);
   addFact('Parcel ID',d.parcel?.parcel_number);
   addFact('Lot area',d.parcel?.gis_area_sqft_approx?fmt(d.parcel.gis_area_sqft_approx)+' sq ft':null);
   addFact('Assessor site address',d.parcel?.assessor_site_address);
@@ -580,6 +586,17 @@ renderCondoProgram(d);
 }
 function renderLocalZoning(d){
 const z=d.zoning,review=d.zoning_review,coverage=d.coverage||{};
+const checks=d.cambridge_approvals?.checks||[];
+const approvalList=$('cambridgeApprovalChecks');
+approvalList.hidden=!checks.length;
+approvalList.replaceChildren();
+for(const check of checks){
+  const item=document.createElement('li');
+  item.textContent=check.text+' ';
+  permitLink(item,'City source',check.url);
+  approvalList.append(item);
+}
+
 $('zoningStatus').textContent=z?(z.historical_reference?'Historical district: ':'Mapped district: ')+z.district+(z.district_description?' · '+z.district_description:'')+(z.article?' · Zoning article '+z.article:'')+' · '+(z.match_method||'Municipal map lookup')+(z.source_updated_at?' · Published GIS date: '+z.source_updated_at:' · GIS update date not supplied')+'. '+(z.snapshot_note||'Current amendments and full overlay coverage require confirmation.'):(coverage.status||'Municipal zoning is not connected')+'. A mapped district is required before applying local dimensional rules.';
 $('zoningStandards').replaceChildren();$('zoningConditions').textContent='';
 if(review){const rules=review.standards;const values=[['Reference section',review.section],['Minimum single-family lot',fmt(rules.min_lot_sqft)+' sq ft'],['Minimum frontage',rules.frontage_ft+' ft'],['Foundation front setback',rules.front_ft+' ft'],['Side / rear yard',rules.side_ft+' / '+rules.rear_ft+' ft'],['Principal-building height',rules.height_ft+' ft']];values.forEach(([label,value])=>{const item=document.createElement('div');item.className='item';const s=document.createElement('span');s.textContent=label;const b=document.createElement('strong');b.textContent=value;item.append(s,b);$('zoningStandards').append(item)});$('zoningConditions').textContent=review.lot_area_status+'. '+review.conditions+' '+review.limitations;}

@@ -353,18 +353,32 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
             sales_task = asyncio.create_task(ma_sales.search(
                 client, lon, lat, parts.get("city"), result["parcel"], result.get("existing_building"),
             ))
+        if parts.get("city") == "CAMBRIDGE" and result.get("parcel"):
+            city_polygon = await municipal_zoning.cambridge_parcel_geometry(client, result["parcel"].get("parcel_number"), lat)
+            if city_polygon is not None:
+                polygon = city_polygon
+                result["parcel"]["zoning_geometry_source"] = "Cambridge parcel GIS, exact map and lot"
+                result["sources"].append({"name": "Cambridge parcel map used for zoning", "url": municipal_zoning.CAMBRIDGE_PARCEL_SOURCE})
+            elif polygon is not None:
+                result["parcel"]["zoning_geometry_source"] = "MassGIS parcel geometry"
         atlas_task = asyncio.create_task(municipal_zoning.multifamily_screen(
             client, parts.get("city") or "", polygon, lat, (result.get("parcel") or {}).get("loc_id"),
         ))
         if parts.get("city","").lower()=="cambridge":
+          constraint_task = asyncio.create_task(municipal_zoning.cambridge_constraints(client, polygon, lat))
           try:
             result['zoning']=await municipal_zoning.cambridge_lookup(client,polygon,lat)
             if result['zoning']:
-                result['verification']['zoning']='Municipal GIS selected-parcel polygon match; overlays/amendments not checked'
+                result['verification']['zoning']='Municipal GIS selected-parcel polygon match; see separate overlay checks'
             else:
                 result['warnings'].append('Cambridge zoning did not cover the selected parcel uniquely; district withheld.')
           except (httpx.HTTPError,ValueError,TypeError):
             result["warnings"].append("Cambridge zoning GIS unavailable; district not verified.")
+          result["constraints"] = await constraint_task
+          if result.get("parcel"):
+              result["cambridge_approvals"] = municipal_zoning.cambridge_approval_screen(
+                  result["constraints"], result.get("existing_building"),
+              )
         elif parts.get('city','').upper() in municipal_zoning.LOCAL_CONNECTORS:
             try:
                 local=await municipal_zoning.lookup(client,parts['city'],polygon,lat,result.get('parcel') or {})
@@ -505,7 +519,8 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
         result["recommendations"].append({"title":"Review the preliminary zoning scenario","reason":"A district-specific scenario is available, subject to its stated assumptions and limitations.","next_step":"Have the city review a current survey and proposed footprint before paying for design work.","confidence":result["zoning_potential"].get("confidence")})
     market_range = (result.get("current_valuation") or {}).get("market_range")
     result["redevelopment"] = analyze_redevelopment(result.get("zoning_potential"), result.get("existing_building"))
-    if result["redevelopment"].get("best"):
+    pricing_on_hold = result.get("cambridge_approvals", {}).get("pricing_on_hold")
+    if result["redevelopment"].get("best") and not pricing_on_hold:
         references = None
         try:
             async with asyncio.timeout(13), httpx.AsyncClient(timeout=12, follow_redirects=True) as client:
@@ -533,7 +548,8 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
     if scenario := result["redevelopment"].get("best"):
         result["dwelling_unit_summary"].update(
             potential_total=scenario["market_units"] + scenario["restricted_units"],
-            potential_status="Conceptual redevelopment program based on the screened zoning envelope.",
+            potential_status=("Conceptual program. City approval checks remain open." if pricing_on_hold
+                              else "Conceptual redevelopment program based on the screened zoning envelope."),
         )
     if pending:
         queue_registry_review(city, pending)

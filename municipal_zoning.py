@@ -4,7 +4,7 @@ import json
 import math
 import re
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from urllib.parse import urlparse
 
 from parcel_engine import requested_house_number, same_street
@@ -282,6 +282,84 @@ def lonlat_geometry(parcel, latitude):
     scale = 3.280839895 * math.cos(math.radians(latitude))
     radius = 6378137
     return transform(lambda x, y: (math.degrees(x / scale / radius), math.degrees(2 * math.atan(math.exp(y / scale / radius)) - math.pi / 2)), parcel)
+
+
+CAMBRIDGE_GIS = "https://services1.arcgis.com/WnzC35krSYGuYov4/arcgis/rest/services/"
+CAMBRIDGE_GIS_DICTIONARY = "https://www.cambridgema.gov/gis/gisdatadictionary/"
+CAMBRIDGE_PARCELS = CAMBRIDGE_GIS + "Parcels/FeatureServer/0/query"
+CAMBRIDGE_PARCEL_SOURCE = CAMBRIDGE_GIS_DICTIONARY + "assessing/fy2027/assessing_parcelsfy2027"
+CAMBRIDGE_APPROVAL_LAYERS = (
+    ("Zoning overlays", "Zoning_Overlay_Districts", "Name", "cdd/cdd_zoningoverlaydistricts"),
+    ("Historic districts", "Historic_Districts", "NAME", "historical/historical_historicdistricts"),
+    ("Neighborhood conservation districts", "Neighborhood_Conservation_Districts", "NAME", "historical/historical_nhoodconservationdist"),
+    ("Landmarks and preservation easements", "Landmarks_and_Easements", "HISTORIC_N", "historical/historical_landmarkseasements"),
+)
+CAMBRIDGE_DEMOLITION = "https://www.cambridgema.gov/historic/districtshistoricproperties/demolitionreview"
+
+
+async def cambridge_parcel_geometry(client, parcel_number, latitude):
+    if not isinstance(parcel_number, str) or not re.fullmatch(r"[0-9A-Za-z-]+", parcel_number):
+        return None
+    try:
+        response = await client.get(CAMBRIDGE_PARCELS, params={
+            "f": "json", "where": f"ML = '{parcel_number}'", "outFields": "ML",
+            "returnGeometry": "true", "outSR": 3857, "resultRecordCount": 2,
+        }, timeout=httpx.Timeout(8, connect=4))
+        response.raise_for_status()
+        data = response.json()
+        features = data.get("features", [])
+        if data.get("error") or data.get("exceededTransferLimit") or len(features) != 1:
+            return None
+        feature = features[0]
+        if (feature.get("attributes") or {}).get("ML") != parcel_number:
+            return None
+        polygon = esri_polygon(feature.get("geometry"))
+        return to_ground(polygon, latitude) if not polygon.is_empty else None
+    except (httpx.HTTPError, ValueError, TypeError, AttributeError, GEOSException):
+        return None
+
+
+async def cambridge_constraints(client, parcel, latitude):
+    if parcel is None:
+        return []
+    geometry = esri_query_geometry(parcel, latitude)
+    responses = await asyncio.gather(*(
+        fetch_layer(client, CAMBRIDGE_GIS + service + "/FeatureServer/0", geometry, field,
+                    include_geometry=False, timeout=8)
+        for _, service, field, _ in CAMBRIDGE_APPROVAL_LAYERS
+    ))
+    return [
+        {"name": name, "status": "unavailable" if failure else "mapped intersection" if rows else "no mapped intersection",
+         "labels": list(dict.fromkeys(str(value) for row in rows if (value := (row.get("attributes") or {}).get(field)))),
+         "source_url": CAMBRIDGE_GIS_DICTIONARY + metadata,
+         "note": "Screened against the parcel boundary. The city can confirm whether the rules apply to a project."}
+        for (name, _, field, metadata), (rows, failure) in zip(CAMBRIDGE_APPROVAL_LAYERS, responses)
+    ]
+
+
+def cambridge_approval_screen(constraints, building, today=None):
+    current_year = (today or date.today()).year
+    building = building or {}
+    year = building.get("year_built")
+    notes = []
+    if type(year) is int and 0 < year <= current_year - 50:
+        notes.append({"text": f"The assessor reports a construction year of {year}. Confirm the building age and demolition review with the Historical Commission.",
+                      "url": CAMBRIDGE_DEMOLITION})
+    elif (type(year) is not int or not 0 < year <= current_year) and any(
+        type(building.get(field)) in (int, float) and building[field] > 0
+        for field in ("building_area_sqft", "residential_area_sqft")
+    ):
+        notes.append({"text": "The building age is missing. Confirm whether Cambridge's demolition review applies.",
+                      "url": CAMBRIDGE_DEMOLITION})
+    for item in constraints:
+        if item["status"] == "mapped intersection":
+            names = ", ".join(item["labels"])
+            notes.append({"text": item["name"] + (" includes " + names if names else " intersects this parcel") + ". Ask the city how it affects the plan.",
+                          "url": item["source_url"]})
+        elif item["status"] == "unavailable":
+            notes.append({"text": item["name"] + " could not be checked. Confirm it with the city.",
+                          "url": item["source_url"]})
+    return {"pricing_on_hold": bool(notes), "checks": notes}
 
 
 async def cambridge_lookup(client, parcel, latitude):
