@@ -20,6 +20,7 @@ def test_search_displays_selected_property_and_withholds_estimates(page, app_url
     expect(page.locator("#propertyAddress")).to_have_text("95 MAGAZINE ST, CAMBRIDGE, MA")
     expect(page.locator("#facts")).to_contain_text("95 MAGAZINE ST")
     expect(page.locator("#facts")).not_to_contain_text("91 MAGAZINE")
+    expect(page.locator("#potentialAnswer")).to_contain_text("PlotDocket matched the parcel.")
     expect(page.locator("#potentialAnswer")).to_contain_text("Confirm its zoning district")
     expect(page.locator("#redevelopmentMetrics")).to_be_hidden()
     expect(page.locator("#go")).to_be_enabled()
@@ -61,9 +62,14 @@ def test_error_then_retry(page, app_url, property_record):
     expect(page.locator("#propertyAddress")).to_contain_text("95 MAGAZINE")
 
 
-def test_mobile_layout_and_input_validation(page, app_url):
-    page.set_viewport_size({"width": 390, "height": 844})
+@pytest.mark.parametrize("width", [320, 390])
+def test_mobile_layout_and_input_validation(page, app_url, width):
+    page.set_viewport_size({"width": width, "height": 844})
     page.goto(app_url)
+    expect(page).to_have_title("PlotDocket | Discover your property's potential")
+    expect(page.locator("header .brand")).to_have_text("PlotDocket")
+    expect(page.locator("footer")).to_contain_text("PlotDocket")
+    assert page.request.get(f"{app_url}/static/plotdocket.svg").ok
     page.get_by_role("button", name="Explore property").click()
     expect(page.locator("#status")).to_have_text("Enter a full Massachusetts address.")
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
@@ -341,31 +347,44 @@ def test_verified_deed_and_pending_lead_stay_visibly_distinct(page, app_url, pro
 
 
 @pytest.mark.parametrize("width", [320, 390])
-def test_cambridge_approval_step_is_visible_before_estimates(page, app_url, property_record, width):
-    from municipal_zoning import CAMBRIDGE_DEMOLITION, CAMBRIDGE_NEIGHBOR_NOTICE, cambridge_approval_screen
+@pytest.mark.parametrize(("house", "lot", "year", "frontage", "block", "gross_area", "answer"), [
+    (95, "101-200", 1873, 70, 101, 12000, "City review comes first for this rebuild."),
+    (106, "102-51", 1886, 19.07, 102, 1700, "Start with the existing building. The screened rebuild would lose space or units."),
+])
+def test_cambridge_approval_step_is_visible_before_estimates(
+    page, app_url, property_record, width, house, lot, year, frontage, block, gross_area, answer,
+):
+    from municipal_zoning import CAMBRIDGE_DEMOLITION, CAMBRIDGE_NEIGHBOR_NOTICE, cambridge_approval_screen, cambridge_mapped_frontage
     from redevelopment import analyze_redevelopment
 
-    redevelopment = analyze_redevelopment({"gross_area_high_sqft": 12000, "stories": 4}, None)
-    frontage_source = "https://gis.cambridgema.gov/blockmaps/Block_101.pdf"
-    review = cambridge_approval_screen([], {"year_built": 1873}, c1_envelope={"stories": 4, "height_ft": 45})
-    record = dict(property_record, zoning={"district": "C-1"}, redevelopment=redevelopment,
-                  cambridge_mapped_frontage={"frontage_ft": 70, "street": "Magazine Street",
-                                             "source_url": frontage_source},
-                  cambridge_approvals=review)
+    street = f"{house} Magazine St"
+    address = f"{street}, Cambridge, MA"
+    envelope = {"gross_area_low_sqft": 0, "gross_area_high_sqft": gross_area, "stories": 4, "height_ft": 45}
+    building = {"year_built": year, "residential_area_sqft": 2702 if house == 95 else 2083, "units": 3}
+    parcel = dict(property_record["parcel"], parcel_number=lot, assessor_site_address=street)
+    record = dict(
+        property_record, address=address, parcel=parcel, existing_building=building,
+        zoning={"district": "C-1"}, zoning_potential=envelope,
+        redevelopment=analyze_redevelopment(envelope, building),
+        cambridge_mapped_frontage=cambridge_mapped_frontage(parcel),
+        cambridge_approvals=cambridge_approval_screen([], building, c1_envelope=envelope),
+    )
     page.set_viewport_size({"width": width, "height": 844})
     page.route("**/api/property?*", lambda route: route.fulfill(json=record))
     page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
     page.goto(app_url)
-    page.get_by_role("combobox").fill("95 Magazine St, Cambridge, MA")
+    page.get_by_role("combobox").fill(address)
     page.get_by_role("button", name="Explore property").click()
-    expect(page.locator("#potentialAnswer")).to_have_text("City review comes first for this rebuild.")
+    expect(page.locator("#potentialAnswer")).to_have_text(answer)
     expect(page.locator("#redevelopmentMetrics")).to_be_hidden()
     expect(page.locator("#autoSellout")).to_have_text("Estimate unavailable")
     expect(page.locator("#cambridgeApprovalChecks")).to_be_hidden()
     expect(page.locator("#cambridgeMappedFrontage")).to_be_hidden()
     page.get_by_role("button", name="See what needs city review").click()
-    expect(page.locator("#cambridgeMappedFrontage")).to_contain_text("70 feet along Magazine Street")
-    expect(page.locator("#cambridgeMappedFrontage").get_by_role("link")).to_have_attribute("href", frontage_source)
+    expect(page.locator("#cambridgeMappedFrontage")).to_contain_text(f"{frontage} feet along Magazine Street")
+    expect(page.locator("#cambridgeMappedFrontage").get_by_role("link")).to_have_attribute(
+        "href", f"https://gis.cambridgema.gov/blockmaps/Block_{block}.pdf",
+    )
     expect(page.locator("#cambridgeApprovalChecks")).to_contain_text("demolition review with the Historical Commission")
     expect(page.locator("#cambridgeApprovalChecks")).to_contain_text("Neighbor meeting before a building permit")
     expect(page.locator(f'#cambridgeApprovalChecks a[href="{CAMBRIDGE_DEMOLITION}"]')).to_be_visible()
