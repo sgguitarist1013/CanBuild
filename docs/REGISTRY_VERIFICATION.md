@@ -1,0 +1,17 @@
+# Registry verification
+
+Assessors and GIS identify sale leads and property characteristics. PlotDocket checks each transfer and sale lead against reviewed MassLandRecords deed entries before treating the price as confirmed. The match requires the municipality, exact property address (including unit or house range where given), and book/page. A conflicting price is held out. Verified consideration and registry recording date are shown separately from assessor sale date and do not establish current title, arm's-length status, or market value.
+
+All 351 municipalities map to their MassGIS registry district. The lookup table was derived by dominant municipality overlap with the MassGIS Registries of Deeds and Municipalities polygon layers. The deployed report links directly to the reviewed Middlesex South and Suffolk portal URLs and uses the state registry selector elsewhere. The reference and office are shown beside the link. When no book/page is available, start with the registry's property-address search and check both recorded and registered land as appropriate.
+
+## Review workflow
+
+The public MassLandRecords portal is a stateful browser search and presents automated access controls. This release does not scrape or bypass it. A reviewer can call `GET /api/internal/registry-review` with the same bearer token as the internal zoning review. Entries are collected without owner names and deduplicated on the existing research database. The default staging database is temporary. For each item, search the registry by district and reference, open the deed details, verify the exact address and deed type, and compare consideration. Use Registered Land (Land Court) where applicable. After a successful check, add the reviewed fields to `verified_registry_sales.json` and deploy. Verified entries are durable in Git and pending items already resolved by a deployed match disappear from the review list. Price conflicts remain in review.
+
+A previously confirmed transfer does not establish that it is the latest deed. A permitted registry feed or a fresh address-index search would be required to track new recordings independently of the assessor candidate feed. Automatic condo pricing excludes unconfirmed leads. Where there are fewer than three qualifying confirmed projects, pricing may use a separately labeled benchmark.
+
+## AI-assisted source discovery
+
+For a pending subject-property or comparable-sale review, take the item's `id` from the authenticated queue and call `POST /api/internal/registry-review/{id}/research` with the same bearer token. The response includes the registry link, exact queued address and any known deed reference. If `OPENAI_API_KEY` and a web-search-capable `REGISTRY_RESEARCH_MODEL` are configured, it also returns up to six cited source links. Registry and public-record links appear before listing-site leads. The model receives only the public property address, municipality, district and known deed reference. Each reviewer request has a two-search cap. Public property searches never trigger this paid feature.
+
+Open the linked sources to check that they refer to the right unit or property, then review the deed in MassLandRecords. Listing history can help locate a closed transaction. The tool returns links for triage and leaves the review pending. It publishes no asking prices, model-generated sale amounts, or verification decisions, and it does not change the public valuation. With the model disabled or unavailable, the reviewer still gets the registry link and lookup details.

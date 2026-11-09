@@ -1,0 +1,64 @@
+name: Staging to production
+# Explicit release only. Deploy the tested commit, then require staging verification.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: canbuild-release
+  cancel-in-progress: false
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements-dev.txt
+      - run: python -m playwright install --with-deps chromium
+      - run: python -m pytest -q --ignore=tests/test_browser.py
+      - run: python -m pytest tests/test_browser.py -q --tracing retain-on-failure --screenshot only-on-failure
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: release-test-failures
+          path: test-results/
+  staging:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - run: python scripts/release.py
+        env:
+          PYTHONPATH: .
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          SERVICE_ID: ${{ vars.RENDER_SERVICE_ID }}
+          SERVICE_URL: ${{ vars.SERVICE_URL }}
+          COMMIT_SHA: ${{ github.sha }}
+  production:
+    needs: staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - run: python scripts/release.py
+        env:
+          PYTHONPATH: .
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          SERVICE_ID: ${{ vars.RENDER_SERVICE_ID }}
+          SERVICE_URL: ${{ vars.SERVICE_URL }}
+          COMMIT_SHA: ${{ github.sha }}

@@ -1,1 +1,1 @@
-"""CanBuild automated regression test package."""
+"""PlotDocket automated regression test package."""

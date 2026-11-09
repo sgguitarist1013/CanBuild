@@ -1,0 +1,28 @@
+name: CanBuild tests
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  regression-and-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - name: Install Chromium browser
+        run: python -m playwright install chromium
+        timeout-minutes: 5
+      - run: python -m pytest -q --ignore=tests/test_browser.py --junitxml=test-results/unit.xml
+      - run: python -m pytest tests/test_browser.py -q --browser chromium --tracing retain-on-failure --screenshot only-on-failure --junitxml=test-results/browser.xml
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: test-failure-evidence
+          path: test-results/
+          retention-days: 7

@@ -11,7 +11,7 @@ from shapely.geometry import Polygon
 from shapely.ops import unary_union, transform
 
 SERVICE = "https://services1.arcgis.com/hGdibHYSPO59RG1h/ArcGIS/rest/services/Massachusetts_Property_Tax_Parcels/FeatureServer/0/query"
-FIELDS = "OBJECTID,MAP_PAR_ID,LOC_ID,POLY_TYPE,PROP_ID,SITE_ADDR,ADDR_NUM,FULL_STR,CITY,FY,LOT_SIZE,LOT_UNITS,BLD_AREA,RES_AREA,UNITS,YEAR_BUILT,STORIES,USE_DESC,ZONING,TOTAL_VAL,LAST_EDIT"
+FIELDS = "OBJECTID,MAP_PAR_ID,LOC_ID,POLY_TYPE,PROP_ID,SITE_ADDR,ADDR_NUM,FULL_STR,CITY,FY,LOT_SIZE,LOT_UNITS,BLD_AREA,RES_AREA,UNITS,YEAR_BUILT,STORIES,USE_DESC,ZONING,TOTAL_VAL,LAST_EDIT,OWNER1,USE_CODE,LS_DATE,LS_PRICE,LS_BOOK,LS_PAGE,REG_ID"
 
 # Rules here are municipality-specific; no city rules are applied statewide.
 SUPPORTED_RULES = {
@@ -25,30 +25,57 @@ SUPPORTED_RULES = {
     },
 }
 
+def normalize_address(address):
+    """Normalize only an unambiguous spelled-out leading house number."""
+    words={'one':'1','two':'2','three':'3','four':'4','five':'5','six':'6','seven':'7','eight':'8','nine':'9','ten':'10'}
+    return re.sub(r"^\s*(one|two|three|four|five|six|seven|eight|nine|ten)(?=\s+)",
+                  lambda m:words[m.group(1).lower()],str(address or ''),flags=re.I)
+
 def requested_house_number(address):
     """Return the explicitly requested house number, never Census block-range fromAddress."""
-    segment=str(address or "").split(",")[0]
+    segment=normalize_address(address).split(",")[0]
     match=re.match(r"^\s*(\d+[A-Za-z]?)(?=\s)",segment)
     return match.group(1).upper() if match else None
 
 def clean(s):
     return re.sub(r"[^A-Z0-9]+", " ", str(s or "").upper()).strip()
 
+STREET_TYPES = {
+    "ST": "STREET", "RD": "ROAD", "AVE": "AVENUE", "AV": "AVENUE",
+    "BLVD": "BOULEVARD", "DR": "DRIVE", "LN": "LANE", "CT": "COURT",
+    "PL": "PLACE", "TER": "TERRACE", "PKWY": "PARKWAY", "CIR": "CIRCLE",
+    "HWY": "HIGHWAY", "SQ": "SQUARE", "WH": "WHARF",
+}
+ORDINALS = dict(zip(
+    ("1ST", "2ND", "3RD", "4TH", "5TH", "6TH", "7TH", "8TH", "9TH", "10TH"),
+    ("FIRST", "SECOND", "THIRD", "FOURTH", "FIFTH", "SIXTH", "SEVENTH", "EIGHTH", "NINTH", "TENTH"),
+))
+DIRECTIONS = {"N": "NORTH", "NO": "NORTH", "S": "SOUTH", "SO": "SOUTH", "E": "EAST", "W": "WEST"}
+
+
 def street_tokens(value):
-    """Normalize common assessor/geocoder street-type abbreviations statewide."""
-    aliases={"ST":"STREET","RD":"ROAD","AVE":"AVENUE","AV":"AVENUE",
-             "BLVD":"BOULEVARD","DR":"DRIVE","LN":"LANE","CT":"COURT",
-             "PL":"PLACE","TER":"TERRACE","PKWY":"PARKWAY","CIR":"CIRCLE",
-             "HWY":"HIGHWAY","SQ":"SQUARE"}
-    parts=clean(value).split()
-    return [aliases.get(x,x) for x in parts]
+    parts = clean(value).split()
+    if not parts:
+        return parts
+    parts[0] = ORDINALS.get(parts[0], parts[0])
+    if len(parts) > 1:
+        parts[-1] = STREET_TYPES.get(parts[-1], parts[-1])
+        if len(parts) > 2 or parts[-1] not in STREET_TYPES.values():
+            parts[0] = DIRECTIONS.get(parts[0], parts[0])
+            if parts[0] == "MT":
+                parts[0] = "MOUNT"
+    return ["MASSACHUSETTS", "AVENUE"] if parts == ["MASS", "AVENUE"] else parts
+
 
 def same_street(actual, requested):
-    a,b=street_tokens(actual),street_tokens(requested)
-    if not a or not b:return False
-    return a==b or (len(b)==1 and len(a)==2 and a[0]==b[0]) or (len(a)==1 and len(b)==2 and a[0]==b[0])
+    a, b = street_tokens(actual), street_tokens(requested)
+    if not a or not b:
+        return False
+    types = STREET_TYPES.values()
+    return a == b or (a[-1] in types and a[:-1] == b) or (b[-1] in types and b[:-1] == a)
 
-def exact_address_match(feature, house, street, city):
+
+def exact_address_match(feature, house, street, city, postal_city=None):
     """Reject a nearby parcel unless its assessor address matches all supplied components."""
     if not house or not street or not city:
         return False
@@ -67,6 +94,10 @@ def exact_address_match(feature, house, street, city):
     actual_street = str(feature.get("FULL_STR") or "").strip()
     if not actual_street:
         actual_street = re.sub(r"^\s*\d+[A-Za-z]?\s*", "", site)
+    # Some assessors qualify repeated street names by village.
+    qualifier = re.fullmatch(r"(.+?)\s+\(([^()]+)\)", actual_street)
+    if qualifier and postal_city and clean(qualifier[2]) == clean(postal_city):
+        actual_street = qualifier[1]
     return same_street(actual_street,street)
 
 def lot_area_sqft(feature):
@@ -144,7 +175,9 @@ async def selected_geometry(client, features, warnings, latitude):
 
 async def resolve_parcel(client, lon, lat, components, warnings, requested_address):
     house = requested_house_number(requested_address)
-    street = str(components.get("streetName") or "").strip()
+    street = " ".join(str(components.get(key) or "").strip() for key in (
+        "preQualifier", "preDirection", "preType", "streetName", "suffixType", "suffixDirection", "suffixQualifier",
+    )).strip() if components.get("streetName") else ""
     city = str(components.get("city") or "").strip()
     if not all((house,street,city)):
         warnings.append("Geocoder did not provide enough address components to verify the parcel.")
@@ -165,7 +198,7 @@ async def resolve_parcel(client, lon, lat, components, warnings, requested_addre
                                    attempt(params[1],"Address parcel search"))
     def matches(features):
         return [f for f in features if clean((f.get("attributes") or {}).get("POLY_TYPE")) not in ("ROW","RAIL ROW","WATER")
-                and exact_address_match(f.get("attributes") or {},house,street,city)]
+                and exact_address_match(f.get("attributes") or {},house,street,city,components.get("postal_city"))]
     choices=matches(responses[0]+responses[1])
     if not choices:
         # A Census road-centreline point often falls outside the actual lot.
@@ -200,13 +233,18 @@ async def resolve_parcel(client, lon, lat, components, warnings, requested_addre
     features=list(next(iter(by_parcel.values())).values())
     records=[f.get("attributes") or {} for f in features]
     x=records[0]
-    parcel={"parcel_number":x.get("MAP_PAR_ID"),
+    parcel={"parcel_number":x.get("MAP_PAR_ID") or x.get("LOC_ID"),
             "full_number":x.get("MAP_PAR_ID"),"loc_id":x.get("LOC_ID"),
             "type":x.get("POLY_TYPE"),"gis_area_sqft_approx":lot_area_sqft(x),
             "assessor_site_address":x.get("SITE_ADDR"),"fiscal_year":x.get("FY"),
-            "last_edit":x.get("LAST_EDIT"),"area_source":"MassGIS assessor LOT_SIZE"}
+            "last_edit":x.get("LAST_EDIT"),"assessor_account_count":len(records),"recorded_owners":list(dict.fromkeys(r["OWNER1"] for r in records if r.get("OWNER1"))),
+            "ownership_source":"https://www.mass.gov/info-details/massgis-data-property-tax-parcels","area_source":"MassGIS assessor LOT_SIZE"}
     building=None
     if len(records)==1:
+        parcel["last_transfer"]={"sale_date_reported":x.get("LS_DATE"),"price_reported":x.get("LS_PRICE"),
+            "book":x.get("LS_BOOK"),"page":x.get("LS_PAGE"),"registered_reference":x.get("REG_ID"),
+            "status":"Assessor-reported reference; deed and latest ownership not checked",
+            "registry_url":"https://www.masslandrecords.com/"}
         building={"building_area_sqft":x.get("BLD_AREA"),
                   "residential_area_sqft":x.get("RES_AREA"),
                   "units":x.get("UNITS"),"year_built":x.get("YEAR_BUILT"),
@@ -247,8 +285,10 @@ def conceptual_massing(polygon, parcel, building, city, district):
             "additional_area_high_sqft":round(max(0,base_high-existing)) if existing is not None else None,
             "stories":rules["stories"],"height_ft":rules["height_ft"],
             "source":rules["source"],
-            "limitations":"Conceptual envelope only. Actual front/side/rear orientation, existing structure, usable open space, overlays, historic limits, frontage, Green Factor and zoning GFA are not verified. Assessor BLD_AREA may differ from zoning GFA."}
-    if area >= rules["inclusionary_min_lot_sqft"]:
+            "limitations":"Conceptual envelope only. Confirm front, side and rear setbacks, qualifying open space, overlays, historic limits, Green Factor and zoning GFA. Cambridge also requires neighborhood outreach for buildings over three stories and 35 feet when Planning Board advisory consultation or special-permit review does not apply."}
+    threshold = rules["inclusionary_min_lot_sqft"]
+    assessor_area = parcel.get("gis_area_sqft_approx")
+    if area >= threshold and (not assessor_area or assessor_area >= threshold):
         result["inclusionary_scenario"]={
             "stories":rules["inclusionary_stories"],
             "height_ft":rules["inclusionary_height_ft"],
