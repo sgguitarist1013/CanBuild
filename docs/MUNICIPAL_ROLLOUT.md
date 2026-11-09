@@ -17,7 +17,7 @@ Cambridge remains the active pilot. Reproduce the reports at 95 and 106 Magazine
 | 9 | West Tisbury | $1,837,546 | Pending | Pending | Pending |
 | 10 | Provincetown | $1,756,564 | Pending | Pending | Pending |
 
-Start Chilmark with the [town zoning bylaw index and district maps](https://www.chilmarkma.gov/1865/Complete-List-of-Zoning-Bylaws). The town lists the August 2026 amendment posting and separate articles for dimensions, rate of development, nonconforming uses, and overlay districts. For parallel source work, use [Nantucket’s official GIS maps](https://www.nantucket-ma.gov/151/GIS-Maps) and [Brookline’s parcel and zoning resources](https://www.brooklinema.gov/1480/Find-Property-Information).
+See the [municipal source review](MUNICIPAL_SOURCE_REVIEW.md) for dated parcel cases, zoning sources, recorded-sale lead sources, and open checks for the first six municipalities outside the Cambridge pilot.
 
 Map connection means a municipal source is available in the app. Track current ordinances, overlays and amendments separately. See [source coverage](DATA_SOURCES.md) and the `/api/coverage` endpoint for current map statuses, including historical references. Keep research and blocked work visible for each active municipality. Add a row when starting a municipality outside this table.
 
