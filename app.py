@@ -226,6 +226,11 @@ def municipality_for_match(match):
 
 async def property_sales(client, lon, lat, city, parcel, building):
     if city == "CAMBRIDGE":
+        if building:
+            try:
+                building.update(await cambridge_sales.subject_layout(client, parcel))
+            except (httpx.HTTPError, ValueError, TypeError, AttributeError):
+                pass
         try:
             report = await cambridge_sales.search(client, lon, lat, parcel, building)
             if report:
