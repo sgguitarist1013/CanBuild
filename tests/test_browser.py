@@ -340,6 +340,30 @@ def test_verified_deed_and_pending_lead_stay_visibly_distinct(page, app_url, pro
     expect(page.locator("#pendingRegistryList")).to_contain_text("Awaiting MassLandRecords confirmation")
 
 
+def test_cambridge_approval_step_is_visible_before_estimates(page, app_url, property_record):
+    from redevelopment import analyze_redevelopment
+
+    redevelopment = analyze_redevelopment({"gross_area_high_sqft": 12000, "stories": 4}, None)
+    source = "https://www.cambridgema.gov/historic/districtshistoricproperties/demolitionreview"
+    record = dict(property_record, zoning={"district": "C-1"}, redevelopment=redevelopment,
+                  cambridge_approvals={"pricing_on_hold": True, "checks": [{
+                      "text": "Confirm demolition review with the Historical Commission.", "url": source,
+                  }]})
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.route("**/api/property?*", lambda route: route.fulfill(json=record))
+    page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
+    page.goto(app_url)
+    page.get_by_role("combobox").fill("95 Magazine St, Cambridge, MA")
+    page.get_by_role("button", name="Explore property").click()
+    expect(page.locator("#potentialAnswer")).to_have_text("City review comes first for this rebuild.")
+    expect(page.locator("#redevelopmentMetrics")).to_be_hidden()
+    expect(page.locator("#autoSellout")).to_have_text("Estimate unavailable")
+    expect(page.locator("#cambridgeApprovalChecks")).to_be_hidden()
+    page.get_by_role("button", name="See what needs city review").click()
+    expect(page.locator("#cambridgeApprovalChecks")).to_contain_text("Confirm demolition review")
+    expect(page.locator("#cambridgeApprovalChecks").get_by_role("link")).to_have_attribute("href", source)
+
+
 def test_permit_history_loads_only_when_opened_and_keeps_city_links(page, app_url, property_record):
     coverage = {"source_url": "https://data.cambridgema.gov/d/3wsm-e5jx",
                 "official_lookup_url": "https://www.cambridgema.gov/inspection/codesandmaps/recordsandarchives",
@@ -370,27 +394,3 @@ def test_permit_history_loads_only_when_opened_and_keeps_city_links(page, app_ur
     page.get_by_text("Building permits and applications", exact=True).click()
     expect(page.locator("#permitRecords")).to_contain_text("Issued 2021-08-23")
     assert len(calls) == 1
-
-
-def test_cambridge_approval_step_is_visible_before_estimates(page, app_url, property_record):
-    from redevelopment import analyze_redevelopment
-
-    redevelopment = analyze_redevelopment({"gross_area_high_sqft": 12000, "stories": 4}, None)
-    source = "https://www.cambridgema.gov/historic/districtshistoricproperties/demolitionreview"
-    record = dict(property_record, zoning={"district": "C-1"}, redevelopment=redevelopment,
-                  cambridge_approvals={"pricing_on_hold": True, "checks": [{
-                      "text": "Confirm demolition review with the Historical Commission.", "url": source,
-                  }]})
-    page.set_viewport_size({"width": 390, "height": 844})
-    page.route("**/api/property?*", lambda route: route.fulfill(json=record))
-    page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
-    page.goto(app_url)
-    page.get_by_role("combobox").fill("95 Magazine St, Cambridge, MA")
-    page.get_by_role("button", name="Explore property").click()
-    expect(page.locator("#potentialAnswer")).to_have_text("City review comes first for this rebuild.")
-    expect(page.locator("#redevelopmentMetrics")).to_be_hidden()
-    expect(page.locator("#autoSellout")).to_have_text("Estimate unavailable")
-    expect(page.locator("#cambridgeApprovalChecks")).to_be_hidden()
-    page.get_by_role("button", name="See what needs city review").click()
-    expect(page.locator("#cambridgeApprovalChecks")).to_contain_text("Confirm demolition review")
-    expect(page.locator("#cambridgeApprovalChecks").get_by_role("link")).to_have_attribute("href", source)
