@@ -58,7 +58,7 @@
 <p id="salePreview" class="small" hidden></p>
 <div class="grid estimate-summary" id="redevelopmentMetrics" hidden>
 <div class="metric"><small>Proposed units</small><strong id="autoUnits"></strong></div>
-<div class="metric"><small>Estimated project cost</small><strong id="autoCost"></strong></div>
+<div class="metric" id="autoCostMetric" hidden><small>Estimated project cost</small><strong id="autoCost"></strong></div>
 <div class="metric"><small>Modeled gross floor area</small><strong id="autoGrossArea"></strong></div>
 </div>
 <p id="surplusSummary" class="small" hidden>Modeled surplus / loss <strong id="autoSurplus"></strong></p>
@@ -137,11 +137,14 @@ function renderValues(d){
   $('assessedValueContext').textContent=assessment
     ? (assessment.fiscal_year?'FY '+assessment.fiscal_year+' tax assessment':'Tax assessment')+' · '+money(assessment.amount)+'. Separate from the market estimate.'
     : '';
-  $('autoSellout').textContent=best?range(best.sellout_low,best.sellout_high):'Estimate unavailable';
-  const usesBenchmark=best?.unit_mix.some(unit=>unit.comparable_projects<3);
-  $('potentialValueBasis').textContent=best
-    ? 'Gross market-rate condo sales for the '+(best.conditional?'conditional ':'')+best.stories+'-story scenario, before project costs.'+
-      (usesBenchmark?' Uses Cambridge study pricing where matched sales are limited.':'')
+  const decision=d.redevelopment?.decision;
+  const priced=best?.sellout_high!=null&&decision!=='modeled_loss';
+  $('autoSellout').textContent=priced?range(best.sellout_low,best.sellout_high):'Estimate unavailable';
+  $('potentialValueBasis').textContent=priced
+    ? 'Gross market-rate condo sales for the '+(best.conditional?'conditional ':'')+best.stories+'-story scenario, before project costs.'
+    : decision==='retain_and_review'?'The screened rebuild would lose existing space or units.'
+    : decision==='modeled_loss'?'The priced rebuild shows a loss even in the upside case.'
+    : best?'Requires three deed-confirmed sales per market-rate unit type.'
     : 'Requires a parcel-specific zoning scenario and completed-project pricing.';
 }
 
@@ -165,12 +168,21 @@ function renderOpportunity(d) {
     answer=candidates?'Choose the assessor record for this address to see its property details.':'CanBuild could not match this address to a parcel.';
     limit='A parcel match is needed to assess development potential.';
     [action,target]=candidates?['Confirm parcel','recordDetails']:['Check address','address'];
+  } else if(d.redevelopment?.decision==='retain_and_review') {
+    answer='Start with the existing building. The screened rebuild would lose space or units.';
+    limit='Check whether an addition or alteration is feasible under the local rules.';
+    [action,target]=['View zoning comparison','envelopeDetails'];
+  } else if(d.redevelopment?.decision==='modeled_loss') {
+    answer='The priced rebuild shows a loss even in the upside case.';
+    limit='Review the existing building and the assumptions before considering redevelopment.';
+    [action,target]=['View development estimate','estimateDetails'];
   } else if(best) {
     answer='CanBuild modeled a '+best.stories+'-story redevelopment scenario.';
     const conditions=[];
     if(best.conditional) conditions.push('This option depends on meeting affordable-housing requirements.');
-    if(!d.redevelopment.acquisition_proxy) conditions.push('The project cost excludes acquisition.');
-    conditions.push('Confirm zoning and project-specific costs before relying on this estimate.');
+    if(best.sellout_high==null) conditions.push('Comparable sales are needed to price this buildout.');
+    else if(!d.redevelopment.acquisition_proxy) conditions.push('The project cost excludes acquisition.');
+    conditions.push('Confirm zoning and site conditions before relying on this scenario.');
     limit=conditions.join(' ');
     [action,target]=['View development estimate','estimateDetails'];
   } else if(envelope) {
@@ -269,6 +281,13 @@ function renderOpportunity(d) {
   $('opportunityNote').textContent=envelope
     ? 'Indicative '+envelope.stories+'-story envelope: '+fmt(envelope.gross_area_low_sqft)+'–'+fmt(envelope.gross_area_high_sqft)+' gross sq ft.'+additional+' '+(envelope.limitations||'')
     : '';
+  const rejected=d.redevelopment?.rejected_options;
+  if(rejected?.length){
+    const existing=building.residential_area_sqft
+      ? ' The assessor reports '+fmt(building.residential_area_sqft)+' sq ft of existing living area.' : '';
+    $('opportunityNote').textContent+=' The screened replacement fits up to '+
+      fmt(Math.max(...rejected.map(option=>option.proposed_living_area_sqft)))+' sq ft of modeled unit area.'+existing;
+  }
   const inc=envelope?.inclusionary_scenario;
   const conditional=$('inclusionaryScenario');
   conditional.classList.toggle('hide',!inc);
@@ -280,8 +299,10 @@ function renderOpportunity(d) {
 function renderRedevelopment(d){
   const screen=d.redevelopment, best=d.parcel&&screen?.best;
   $('estimateDetails').hidden=!best;
-  $('surplusSummary').hidden=!best||!screen.acquisition_proxy;
-  $('redevelopmentMetrics').hidden=!best;
+  const loss=screen?.decision==='modeled_loss';
+  $('surplusSummary').hidden=best?.surplus_high==null||loss;
+  $('redevelopmentMetrics').hidden=!best||loss;
+  $('autoCostMetric').hidden=best?.cost_high==null;
   $('redevelopmentStatus').textContent=best?best.name+' · '+best.stories+' stories'+(best.height_ft?' · '+best.height_ft+' ft height limit':'')+'. '+screen.ranking+' Confirm zoning and project-specific costs before relying on this estimate.':screen?.status||'';
   $('redevelopmentAreas').textContent='';
   $('redevelopmentMix').replaceChildren();
@@ -304,7 +325,8 @@ function renderRedevelopment(d){
     item.className='item';
     title.textContent=row.bedrooms+' bed / '+row.bathrooms_assumed+' bath · '+fmt(row.area_sqft)+' sq ft each';
     body.className='small muted';
-    body.textContent=row.market_units+' market / '+row.restricted_units+' restricted · '+range(row.price_per_sqft_low,row.price_per_sqft_high)+'/sq ft · '+row.pricing_basis;
+    const rates=row.price_per_sqft_low==null?'':range(row.price_per_sqft_low,row.price_per_sqft_high)+'/sq ft · ';
+    body.textContent=row.market_units+' market / '+row.restricted_units+' restricted · '+rates+row.pricing_basis;
     item.append(title,body);
     $('redevelopmentMix').append(item);
   }
@@ -318,16 +340,21 @@ function renderRedevelopment(d){
     return p;
   };
   paragraph(screen.assumptions);
-  paragraph(screen.acquisition_proxy
-    ? 'Acquisition is modeled from the assessor’s total property value of '+money(screen.acquisition_proxy)+', plus closing. This proxy can differ materially from the purchase price.'
-    : 'The budget excludes acquisition and its financing. The remaining amount before land is '+range(best.surplus_low,best.surplus_high)+'.');
+  if(best.sellout_high!=null){
+    paragraph('Gross market-rate sellout '+range(best.sellout_low,best.sellout_high)+'.');
+    paragraph(screen.acquisition_proxy
+      ? 'Modeled acquisition uses the midpoint of the as-is market range, '+money(screen.acquisition_proxy)+', plus closing costs.'
+      : 'The budget excludes acquisition and its financing. An as-is market estimate is required to model surplus.');
+    if(best.surplus_high!=null) paragraph('Modeled surplus / loss '+range(best.surplus_low,best.surplus_high)+'.');
+  }
   if(best.restricted_units) paragraph('Restricted-unit proceeds credited: $0 until project-specific caps are verified.');
-  for(const alt of screen.alternatives) paragraph(alt.name+': '+range(alt.surplus_low,alt.surplus_high)+(screen.acquisition_proxy?' modeled surplus.':' remaining before acquisition.'));
+  for(const alt of screen.alternatives) paragraph(alt.name+' · '+fmt(alt.gross_area_sqft)+' gross sq ft'+
+    (alt.surplus_high!=null?' · '+range(alt.surplus_low,alt.surplus_high)+' modeled surplus.':'.'));
   paragraph('Finished-condo references match the modeled bedroom and bathroom counts and are within 15% of modeled living area. Start at 0.5 mile and widen within Cambridge only when fewer than three independent projects match. Recorded build and sale dates are screening proxies.');
   for(const row of best.unit_mix){
     const matches=row.sale_matches||[];
     paragraph(row.bedrooms+' bed / '+row.bathrooms_assumed+' bath · '+matches.length+' matched project reference(s). '+
-      (matches.length<3?'Pricing uses the Cambridge study benchmark.':'Pricing uses these matched sales.'));
+      (matches.length<3?'More confirmed sales are needed for pricing.':'Pricing uses these matched sales.'));
     for(const comp of matches){
       const p=paragraph(comp.address+' · '+comp.sale_date+' · '+money(comp.sale_price)+' · '+fmt(comp.living_area_sqft)+' sq ft · '+
         Number(comp.distance_miles).toFixed(2)+' mi · built '+comp.year_built_reported+' · '+comp.record_reference+' ');
