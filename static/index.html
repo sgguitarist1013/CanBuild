@@ -58,7 +58,7 @@
 <p id="salePreview" class="small" hidden></p>
 <div class="grid estimate-summary" id="redevelopmentMetrics" hidden>
 <div class="metric"><small>Proposed units</small><strong id="autoUnits"></strong></div>
-<div class="metric" id="autoCostMetric" hidden><small id="autoCostLabel">Estimated project cost</small><strong id="autoCost"></strong></div>
+<div class="metric" id="autoCostMetric" hidden><small>Estimated project cost</small><strong id="autoCost"></strong></div>
 <div class="metric"><small>Modeled gross floor area</small><strong id="autoGrossArea"></strong></div>
 </div>
 <p id="surplusSummary" class="small" hidden>Modeled surplus / loss <strong id="autoSurplus"></strong></p>
@@ -319,7 +319,7 @@ function renderRedevelopment(d){
   $('autoUnits').textContent=fmt(best.market_units+best.restricted_units);
   $('autoGrossArea').textContent=fmt(best.gross_area_sqft)+' sq ft';
   const budget=[best.cost_low,best.cost_high].sort((a,b)=>a-b);
-  $('autoCostLabel').textContent=best.restricted_units?'Estimated costs (partial)':'Estimated project cost';
+  $('autoCostMetric').querySelector('small').textContent=best.restricted_units?'Estimated costs (partial)':'Estimated project cost';
   $('autoCost').textContent=range(...budget)+(screen.acquisition_proxy?'':' before acquisition');
   $('autoSurplus').textContent=best.surplus_high==null?'':range(best.surplus_low,best.surplus_high);
   $('redevelopmentAreas').textContent=fmt(best.market_units+best.restricted_units)+' proposed units ('+

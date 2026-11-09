@@ -257,7 +257,7 @@ def test_inclusionary_shortfall_explains_missing_overall_result_on_mobile(page, 
     expect(page.locator("#potentialAnswer")).to_have_text("Market-rate condo sales alone fall short of the modeled costs.")
     expect(page.locator("#potentialLimit")).to_contain_text("overall profit or loss is still unknown")
     expect(page.locator("#potentialValueLabel")).to_have_text("Market-rate condo sales only")
-    expect(page.locator("#autoCostLabel")).to_have_text("Estimated costs (partial)")
+    expect(page.locator("#autoCostMetric small")).to_have_text("Estimated costs (partial)")
     expect(page.locator("#surplusSummary")).to_be_hidden()
     assert page.locator('details.research-card[open]').count() == 0
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
