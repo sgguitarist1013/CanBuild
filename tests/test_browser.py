@@ -375,3 +375,68 @@ def test_permit_history_loads_only_when_opened_and_keeps_city_links(page, app_ur
     page.get_by_text("Building permits and applications", exact=True).click()
     expect(page.locator("#permitRecords")).to_contain_text("Issued 2021-08-23")
     assert len(calls) == 1
+
+
+def test_ask_report_routes_zoning_permits_and_unavailable_sales_on_mobile(page, app_url, property_record):
+    record = dict(property_record, zoning={"district": "C-1", "historical_reference": True},
+                  sales_research={"status": "MassGIS sale records are temporarily unavailable", "candidates": []},
+                  coverage={"municipality": "CAMBRIDGE"},
+                  permit_coverage={"coverage_note": "Cambridge permits"})
+    page.set_viewport_size({"width": 320, "height": 720})
+    page.route("**/api/property?*", lambda route: route.fulfill(json=record))
+    page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
+    page.route("**/api/permits?*", lambda route: route.fulfill(json={
+        "status": "found", "records": [{"permit_id": "BP-95", "permit_type": "Building", "issued_on": "2024-01-01"}],
+    }))
+    page.goto(app_url)
+    page.get_by_role("combobox").fill("95 Magazine St, Cambridge, MA")
+    page.get_by_role("button", name="Explore property").click()
+    page.get_by_text("Ask CanBuild about this report", exact=True).click()
+    question = page.get_by_role("textbox", name="Question about this property report")
+    answer = page.locator("#reportAnswerText")
+
+    question.fill("Is the addition zoning-compliant?")
+    question.press("Enter")
+    expect(answer).to_contain_text("historical map showing district C-1")
+    expect(answer).to_contain_text("Confirm the current district")
+    page.get_by_role("button", name="See supporting details").click()
+    expect(page.locator("#districtDetails > summary")).to_be_focused()
+
+    question.fill("What building permits have been issued?")
+    question.press("Enter")
+    expect(answer).to_contain_text("issued permits the city has published")
+    page.get_by_role("button", name="See supporting details").click()
+    expect(page.locator("#permitDetails > summary")).to_be_focused()
+    expect(page.locator("#permitRecords")).to_contain_text("BP-95")
+
+    question.fill("What is this home worth?")
+    question.press("Enter")
+    expect(answer).to_contain_text("Comparable sale records are unavailable")
+    page.get_by_role("button", name="See supporting details").click()
+    expect(page.locator("#salesDetails > summary")).to_be_focused()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+def test_ask_report_distinguishes_affordable_home_count_and_pricing(page, app_url, property_record):
+    from redevelopment import analyze_redevelopment
+
+    redevelopment = analyze_redevelopment({"gross_area_high_sqft": 12000, "stories": 4}, None)
+    restricted = redevelopment["best"]["restricted_units"]
+    assert restricted > 0
+    record = dict(property_record, zoning={"district": "C-1"}, redevelopment=redevelopment)
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.route("**/api/property?*", lambda route: route.fulfill(json=record))
+    page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
+    page.goto(app_url)
+    page.get_by_role("combobox").fill("95 Magazine St, Cambridge, MA")
+    page.get_by_role("button", name="Explore property").click()
+    page.get_by_text("Ask CanBuild about this report", exact=True).click()
+    question = page.get_by_role("textbox", name="Question about this property report")
+    answer = page.locator("#reportAnswerText")
+
+    question.fill("How many affordable homes could I build?")
+    question.press("Enter")
+    expect(answer).to_contain_text(f"This scenario models {restricted} income-restricted")
+    question.fill("What do income-restricted homes cost?")
+    question.press("Enter")
+    expect(answer).to_contain_text("The model leaves those proceeds out")
