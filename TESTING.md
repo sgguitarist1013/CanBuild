@@ -1,4 +1,4 @@
-# LotGenius testing and release
+# PlotDocket testing and release
 
 ## Local checks
 

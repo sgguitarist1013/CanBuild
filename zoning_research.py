@@ -249,7 +249,7 @@ async def discover(city, district, registered_url, section_urls=()):
     municipal_hosts = {host(url) for url in seeds} - PUBLISHERS
     found = []
     attempted = set()
-    async with httpx.AsyncClient(follow_redirects=False, headers={"User-Agent": "LotGenius zoning source research"}) as client:
+    async with httpx.AsyncClient(follow_redirects=False, headers={"User-Agent": "PlotDocket zoning source research"}) as client:
         try:
             async with asyncio.timeout(12):
                 while seeds and len(attempted) < MAX_DOCS:

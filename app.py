@@ -1,4 +1,4 @@
-"""LotGenius Massachusetts: statewide parcel matching with municipality-scoped zoning rules."""
+"""PlotDocket Massachusetts: statewide parcel matching with municipality-scoped zoning rules."""
 from collections import Counter
 from pathlib import Path
 from datetime import datetime, timezone
@@ -33,7 +33,7 @@ configure_monitoring()
 
 ROOT=Path(__file__).parent
 VERSION = "0.16.12"
-app=FastAPI(title="LotGenius Massachusetts",version=VERSION)
+app=FastAPI(title="PlotDocket Massachusetts",version=VERSION)
 app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
 CENSUS="https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress"
 PARCELS="https://services1.arcgis.com/hGdibHYSPO59RG1h/ArcGIS/rest/services/Massachusetts_Property_Tax_Parcels/FeatureServer/0/query"
@@ -252,7 +252,7 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
         parts["city"] = city
         parts["postal_city"] = postal_city
         if m and parts.get("state", "").upper() != "MA":
-            raise HTTPException(422, "LotGenius currently supports Massachusetts addresses.")
+            raise HTTPException(422, "PlotDocket currently supports Massachusetts addresses.")
         c = m.get("coordinates") or {}
         lon, lat = c.get("x"), c.get("y")
         geocoded = isinstance(lat, (int, float)) and isinstance(lon, (int, float))
@@ -471,7 +471,7 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
             result["warnings"].append("No verified zoning calculation rules configured for this municipality and district.")
     result["warnings"] += ["MassGIS assessor extracts can be stale; BLD_AREA and RES_AREA use different measurement conventions and may not equal zoning gross floor area.","Parcel maps are not legal surveys; legal units and additions require independent confirmation.","Only listed municipal layers are screened. Additional overlays, zoning amendments, site constraints and legal buildability remain unverified."]
     if not result.get("zoning"):
-        result["recommendations"].append({"title":"Verify the property's zoning district","reason":"LotGenius could not confirm a base district for the selected parcel. Base district standards are needed to evaluate expansion.","next_step":"Use the municipality's official zoning map and confirm the parcel's base and overlay districts with its planning or building department.","confidence":"Not yet verified"})
+        result["recommendations"].append({"title":"Verify the property's zoning district","reason":"PlotDocket could not confirm a base district for the selected parcel. Base district standards are needed to evaluate expansion.","next_step":"Use the municipality's official zoning map and confirm the parcel's base and overlay districts with its planning or building department.","confidence":"Not yet verified"})
     elif historical:
         triangle = city.upper() == "EVERETT" and district == "EDD"
         result["recommendations"].append({
@@ -488,7 +488,7 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
     elif city.upper() == "SOMERVILLE" and not result.get("zoning_potential"):
         result["recommendations"].append({
             "title": "Review the " + district + " building types and standards",
-            "reason": "LotGenius matched the city zoning district. Somerville development capacity depends on the applicable building type and use.",
+            "reason": "PlotDocket matched the city zoning district. Somerville development capacity depends on the applicable building type and use.",
             "next_step": "Open On-demand zoning research for the city ordinance sections. Confirm the building type, dimensional standards, overlays and approvals with Somerville Planning before estimating a buildout.",
             "confidence": "Municipal GIS match; automated buildout estimate unavailable",
         })
@@ -500,7 +500,7 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
             "confidence": "Development site ownership unresolved",
         })
     elif not result.get("zoning_potential"):
-        result["recommendations"].append({"title":"Check local expansion standards","reason":"The district is mapped, but a reviewed rule set for this district is not available in LotGenius.","next_step":"Confirm setbacks, height, lot coverage, open space, nonconforming-lot rules, overlays, and permit requirements with the municipality.","confidence":"District mapped; dimensional rules incomplete"})
+        result["recommendations"].append({"title":"Check local expansion standards","reason":"The district is mapped, but a reviewed rule set for this district is not available in PlotDocket.","next_step":"Confirm setbacks, height, lot coverage, open space, nonconforming-lot rules, overlays, and permit requirements with the municipality.","confidence":"District mapped; dimensional rules incomplete"})
     else:
         result["recommendations"].append({"title":"Review the preliminary zoning scenario","reason":"A district-specific scenario is available, subject to its stated assumptions and limitations.","next_step":"Have the city review a current survey and proposed footprint before paying for design work.","confidence":result["zoning_potential"].get("confidence")})
     market_range = (result.get("current_valuation") or {}).get("market_range")
@@ -549,21 +549,21 @@ async def validate_startup():
         return unittest.TextTestRunner(verbosity=1).run(suite)
     # IsolatedAsyncioTestCase must run outside the already-active server event loop.
     checks=await asyncio.to_thread(run_checks)
-    print("LOTGENIUS REGRESSION TESTS:",checks.testsRun,
+    print("PLOTDOCKET REGRESSION TESTS:",checks.testsRun,
           "passed" if checks.wasSuccessful() else "FAILED",flush=True)
     if not checks.wasSuccessful():
-        raise RuntimeError("LotGenius failed parcel and zoning regression tests.")
+        raise RuntimeError("PlotDocket failed parcel and zoning regression tests.")
     # Live integration check, independent of visitors. Logs only; no displayed guesses.
     async def smoke():
         try:
             result=await property_lookup("95 Magazine St, Cambridge, MA, 02139",None)
             p=result.get("parcel") or {}
-            print("LOTGENIUS 95 MAGAZINE SMOKE:",
+            print("PLOTDOCKET 95 MAGAZINE SMOKE:",
                 "parcel_id=",p.get("parcel_number"),
                 "site_address=",p.get("assessor_site_address"),
                 "building_units=",(result.get("existing_building") or {}).get("units"),
                 "geometry_available=",bool(result.get("zoning_potential")),
                 "warnings=",result.get("warnings",[])[:4],flush=True)
         except Exception as exc:
-            print("LOTGENIUS 95 MAGAZINE SMOKE ERROR:",type(exc).__name__,str(exc)[:120],flush=True)
+            print("PLOTDOCKET 95 MAGAZINE SMOKE ERROR:",type(exc).__name__,str(exc)[:120],flush=True)
     asyncio.create_task(smoke())

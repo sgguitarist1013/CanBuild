@@ -1,6 +1,6 @@
 # On-demand zoning research
 
-Selecting or submitting an address starts a normal parcel report. Once matched, LotGenius researches official zoning sources for the mapped district alongside sales and state overlay checks. If a current district cannot be established, the key is municipality-only. There are no extra user inputs.
+Selecting or submitting an address starts a normal parcel report. Once matched, PlotDocket researches official zoning sources for the mapped district alongside sales and state overlay checks. If a current district cannot be established, the key is municipality-only. There are no extra user inputs.
 
 Discovery starts at registered code links and the official municipality website. The checked-in directory was generated from the [Massachusetts Secretary of the Commonwealth directory](https://www.mass.gov/lists/massachusetts-city-and-town-websites), matching its 351 municipality links against `massachusetts_municipalities.json` (including the directory spelling “North Attleboro”). It follows a small number of zoning-related links on those municipal hosts or known code publishers. Some sites block automated requests, rely on client-side rendering, use scanned documents, or do not provide a discoverable code. The report identifies incomplete evidence. A linked source is not proof of an applicable or current regulation.
 

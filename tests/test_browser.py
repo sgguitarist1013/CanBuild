@@ -20,6 +20,7 @@ def test_search_displays_selected_property_and_withholds_estimates(page, app_url
     expect(page.locator("#propertyAddress")).to_have_text("95 MAGAZINE ST, CAMBRIDGE, MA")
     expect(page.locator("#facts")).to_contain_text("95 MAGAZINE ST")
     expect(page.locator("#facts")).not_to_contain_text("91 MAGAZINE")
+    expect(page.locator("#potentialAnswer")).to_contain_text("PlotDocket matched the parcel.")
     expect(page.locator("#potentialAnswer")).to_contain_text("Confirm its zoning district")
     expect(page.locator("#redevelopmentMetrics")).to_be_hidden()
     expect(page.locator("#go")).to_be_enabled()
@@ -61,9 +62,14 @@ def test_error_then_retry(page, app_url, property_record):
     expect(page.locator("#propertyAddress")).to_contain_text("95 MAGAZINE")
 
 
-def test_mobile_layout_and_input_validation(page, app_url):
-    page.set_viewport_size({"width": 390, "height": 844})
+@pytest.mark.parametrize("width", [320, 390])
+def test_mobile_layout_and_input_validation(page, app_url, width):
+    page.set_viewport_size({"width": width, "height": 844})
     page.goto(app_url)
+    expect(page).to_have_title("PlotDocket | Discover your property's potential")
+    expect(page.locator("header .brand")).to_have_text("PlotDocket")
+    expect(page.locator("footer")).to_contain_text("PlotDocket")
+    assert page.request.get(f"{app_url}/static/plotdocket.svg").ok
     page.get_by_role("button", name="Explore property").click()
     expect(page.locator("#status")).to_have_text("Enter a full Massachusetts address.")
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
