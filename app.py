@@ -34,7 +34,7 @@ configure_monitoring()
 
 ROOT=Path(__file__).parent
 VERSION = "0.16.12"
-app=FastAPI(title="LotGenius Massachusetts",version=VERSION)
+app=FastAPI(title="PlotDocket Massachusetts",version=VERSION)
 app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
 CENSUS="https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress"
 PARCELS="https://services1.arcgis.com/hGdibHYSPO59RG1h/ArcGIS/rest/services/Massachusetts_Property_Tax_Parcels/FeatureServer/0/query"
