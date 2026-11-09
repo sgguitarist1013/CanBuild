@@ -186,7 +186,7 @@ function renderOpportunity(d) {
     answer='CanBuild modeled a '+best.stories+'-story redevelopment scenario.';
     const conditions=[];
     if(best.conditional) conditions.push('This option depends on meeting affordable-housing requirements.');
-    if(best.sellout_high==null) conditions.push('Comparable sales are needed to price this buildout.');
+    if(best.sellout_high==null) conditions.push('Comparable sales are needed to estimate sale proceeds and profit.');
     else if(!d.redevelopment.acquisition_proxy) conditions.push('The project cost excludes acquisition.');
     if(best.sellout_high!=null&&best.restricted_units) conditions.push('Affordable-unit prices are needed to estimate overall profit or loss.');
     conditions.push('Confirm zoning and site conditions before relying on this scenario.');
@@ -319,7 +319,8 @@ function renderRedevelopment(d){
   $('autoUnits').textContent=fmt(best.market_units+best.restricted_units);
   $('autoGrossArea').textContent=fmt(best.gross_area_sqft)+' sq ft';
   const budget=[best.cost_low,best.cost_high].sort((a,b)=>a-b);
-  $('autoCostMetric').querySelector('small').textContent=best.restricted_units?'Estimated costs (partial)':'Estimated project cost';
+  const partial=best.sellout_high==null||best.restricted_units||!screen.acquisition_proxy;
+  $('autoCostMetric').querySelector('small').textContent=partial?'Estimated costs (partial)':'Estimated project cost';
   $('autoCost').textContent=range(...budget)+(screen.acquisition_proxy?'':' before acquisition');
   $('autoSurplus').textContent=best.surplus_high==null?'':range(best.surplus_low,best.surplus_high);
   $('redevelopmentAreas').textContent=fmt(best.market_units+best.restricted_units)+' proposed units ('+
@@ -350,9 +351,12 @@ function renderRedevelopment(d){
   paragraph(screen.assumptions);
   if(best.sellout_high!=null){
     paragraph('Gross market-rate sellout '+range(best.sellout_low,best.sellout_high)+'.');
+  }
+  if(best.cost_high!=null){
     paragraph(screen.acquisition_proxy
       ? 'Modeled acquisition uses the midpoint of the as-is market range, '+money(screen.acquisition_proxy)+', plus closing costs.'
       : 'The budget excludes acquisition and its financing. An as-is market estimate is required to model surplus.');
+    if(best.sellout_high==null) paragraph('The budget excludes selling costs until comparable sales support a sale proceeds estimate.');
     if(best.surplus_high!=null) paragraph('Modeled surplus / loss '+range(best.surplus_low,best.surplus_high)+'.');
   }
   if(best.restricted_units) paragraph('Affordable-unit sale prices are pending. Modeled costs include building these units and exclude their selling costs. Overall profit or loss requires project-specific affordable-unit pricing.');
@@ -372,7 +376,7 @@ function renderRedevelopment(d){
     }
   }
   for(const line of best.cost_lines){
-    paragraph(line.name+': '+range(...[line.upside,line.downside].sort((a,b)=>(a??0)-(b??0))));
+    paragraph(line.name+': '+(line.upside==null?'Unavailable':range(...[line.upside,line.downside].sort((a,b)=>a-b))));
   }
   for(const source of screen.sources){
     const p=paragraph('');

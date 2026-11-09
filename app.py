@@ -504,7 +504,9 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
     else:
         result["recommendations"].append({"title":"Review the preliminary zoning scenario","reason":"A district-specific scenario is available, subject to its stated assumptions and limitations.","next_step":"Have the city review a current survey and proposed footprint before paying for design work.","confidence":result["zoning_potential"].get("confidence")})
     market_range = (result.get("current_valuation") or {}).get("market_range")
-    result["redevelopment"] = analyze_redevelopment(result.get("zoning_potential"), result.get("existing_building"))
+    result["redevelopment"] = analyze_redevelopment(
+        result.get("zoning_potential"), result.get("existing_building"), include_costs=False,
+    )
     if result["redevelopment"].get("best"):
         references = None
         try:

@@ -223,7 +223,9 @@ def test_automatic_redevelopment_shows_default_estimate_without_input(page, app_
     expect(page.locator("#autoSellout")).to_have_text("Estimate unavailable")
     expect(page.locator("#potentialValueBasis")).to_contain_text("three deed-confirmed sales")
     expect(page.locator("#autoGrossArea")).to_have_text("12,000 sq ft")
-    expect(page.locator("#autoCostMetric")).to_be_hidden()
+    expect(page.locator("#autoCostMetric small")).to_have_text("Estimated costs (partial)")
+    expect(page.locator("#autoCost")).to_contain_text("before acquisition")
+    expect(page.locator("#surplusSummary")).to_be_hidden()
     expect(page.locator("#autoUnits")).to_have_text(str(redevelopment["best"]["market_units"] + redevelopment["best"]["restricted_units"]))
     expect(page.locator("#potentialLimit")).to_contain_text("affordable-housing requirements")
     expect(page.locator("#redevelopmentAreas")).to_be_hidden()
@@ -236,6 +238,8 @@ def test_automatic_redevelopment_shows_default_estimate_without_input(page, app_
     expect(page.locator("#redevelopmentAreas")).to_be_visible()
     expect(page.locator("#redevelopmentAreas")).to_contain_text("restricted")
     expect(page.locator("#redevelopmentMix")).to_contain_text("Insufficient matching deed-confirmed sales")
+    expect(page.locator("#redevelopmentEvidence")).to_contain_text("excludes selling costs")
+    expect(page.locator("#redevelopmentEvidence")).to_contain_text("closing, excise and concessions: Unavailable")
     assert not page.get_by_text("Optional manual condo scenario", exact=True).evaluate("(el) => el.parentElement.open")
 
 

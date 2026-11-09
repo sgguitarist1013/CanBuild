@@ -100,12 +100,14 @@ def cost_budget(gross_area, existing_area, stories, units, acquisition, sellout,
         .70 * development * (.0125 + .075 * .5 * months / 12)
         + .70 * (acquisition or 0) * (.0125 + .075 * months / 12)
     )
-    lines["Brokerage, marketing, closing, excise and concessions"] = sellout * (.075 if stress else .055)
+    lines["Brokerage, marketing, closing, excise and concessions"] = (
+        sellout * (.075 if stress else .055) if sellout is not None else None
+    )
     lines["Acquisition proxy and buyer closing costs"] = acquisition * 1.02 if acquisition else None
     return {key: round(value) if value is not None else None for key, value in lines.items()}
 
 
-def analyze_redevelopment(massing, building, references=(), *, current_market_range=None):
+def analyze_redevelopment(massing, building, references=(), *, current_market_range=None, include_costs=True):
     if not massing or not massing.get("gross_area_high_sqft"):
         return {"status": "No supported redevelopment envelope for this parcel."}
     building = building or {}
@@ -158,16 +160,18 @@ def analyze_redevelopment(massing, building, references=(), *, current_market_ra
             "surplus_low": None, "surplus_high": None, "cost_lines": [],
         }
         market_mix = [row for row in mix if row["market_units"]]
-        if market_mix and all(row["price_per_sqft_low"] is not None for row in market_mix):
-            sale_low, sale_high = (
-                sum(row["market_units"] * row["area_sqft"] * row[f"price_per_sqft_{band}"] for row in market_mix)
-                for band in ("low", "high")
-            )
+        if include_costs:
+            sale_low = sale_high = None
+            if market_mix and all(row["price_per_sqft_low"] is not None for row in market_mix):
+                sale_low, sale_high = (
+                    sum(row["market_units"] * row["area_sqft"] * row[f"price_per_sqft_{band}"] for row in market_mix)
+                    for band in ("low", "high")
+                )
             downside = cost_budget(gross, demolition_area, option["stories"], sum(counts), acquisition, sale_low, stress=True)
             upside = cost_budget(gross, demolition_area, option["stories"], sum(counts), acquisition, sale_high, stress=False)
             costs_high = sum(x for x in downside.values() if x is not None)
             costs_low = sum(x for x in upside.values() if x is not None)
-            complete_project = acquisition is not None and not scenario["restricted_units"]
+            complete_project = sale_high is not None and acquisition is not None and not scenario["restricted_units"]
             scenario.update(
                 sellout_low=sale_low, sellout_high=sale_high, cost_low=costs_low, cost_high=costs_high,
                 surplus_low=sale_low - costs_high if complete_project else None,

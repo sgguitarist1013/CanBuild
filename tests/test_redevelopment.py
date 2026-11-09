@@ -1,3 +1,5 @@
+import pytest
+
 from redevelopment import analyze_redevelopment
 from condo_analysis import reference_summary
 
@@ -46,17 +48,37 @@ def test_smaller_rebuild_is_rejected_before_pricing():
     ]
 
 
-def test_larger_scenario_stays_unpriced_without_verified_sales_for_each_unit_type():
+@pytest.mark.parametrize("market_range", [None, {"low": 1000000, "high": 1200000}])
+def test_missing_comps_leave_sellout_and_selling_costs_unpriced(market_range):
     comps = verified_condos(1700)
     for comp in comps:
         if comp["bedrooms_reported"] == 2:
             comp["deed_verification"]["status"] = "pending"
     result = analyze_redevelopment({"gross_area_high_sqft": 12000, "stories": 4},
-                                   {"assessed_value": 1932200, "residential_area_sqft": 2083}, comps)
-    assert result["best"]["sellout_high"] is None
-    assert result["best"]["cost_high"] is None
-    assert result["best"]["surplus_high"] is None
-    assert result["acquisition_proxy"] is None
+                                   {"assessed_value": 1932200, "residential_area_sqft": 2083},
+                                   comps, current_market_range=market_range)
+    best = result["best"]
+    assert best["sellout_low"] is best["sellout_high"] is None
+    assert best["surplus_low"] is best["surplus_high"] is None
+    assert 0 < best["cost_low"] < best["cost_high"]
+    lines = {line["name"]: line for line in best["cost_lines"]}
+    selling = lines["Brokerage, marketing, closing, excise and concessions"]
+    assert selling["upside"] is selling["downside"] is None
+    assert lines["Building construction, GC overhead and profit"]["upside"] == 12000 * 320
+    land = lines["Acquisition proxy and buyer closing costs"]
+    assert result["acquisition_proxy"] == (1100000 if market_range else None)
+    assert land["upside"] == land["downside"] == (1122000 if market_range else None)
+    assert sum(line["upside"] for line in lines.values() if line["upside"] is not None) == best["cost_low"]
+
+
+def test_approval_hold_can_keep_geometry_without_costs_or_sellout():
+    result = analyze_redevelopment(
+        {"gross_area_high_sqft": 8000, "stories": 4}, {}, verified_condos(1700), include_costs=False,
+    )
+    best = result["best"]
+    assert best["market_units"] > 0
+    assert best["cost_high"] is best["sellout_high"] is best["surplus_high"] is None
+    assert not best["cost_lines"]
 
 
 def test_priced_rebuild_that_loses_money_before_land_is_flagged():
