@@ -87,6 +87,7 @@ def shortlist(city, candidates, limit=12):
     ranked = sorted(candidates, key=lambda row: (
         bool(row.get("older_reference")),
         row.get("comparison_label", "Same assessor class") != "Same assessor class",
+        row.get("layout_match", "similar") != "similar",
         row["distance_miles"],
         -int(row["sale_date"].replace("-", "")),
     ))
@@ -95,7 +96,8 @@ def shortlist(city, candidates, limit=12):
         group = verified if sale_deed(city, sale)["status"] == "verified" else pending
         group.append(sale)
     recent = [sale for sale in verified if not sale.get("older_reference")
-              and sale.get("comparison_label", "Same assessor class") == "Same assessor class"]
+              and sale.get("comparison_label", "Same assessor class") == "Same assessor class"
+              and sale.get("layout_match", "similar") == "similar"]
     close = [sale for sale in recent if sale["distance_miles"] <= .5]
     if len(close) >= 3:
         return close[:min(4, limit)]
@@ -119,7 +121,8 @@ def sale_report(city, report):
             lead = {"address": sale.get("address"), "deed_verification": deed}
             if report.get("expanded_search"):
                 lead.update({key: sale[key] for key in ("sale_date", "distance_miles", "comparison_area_sqft",
-                            "comparison_area_basis", "older_reference", "source_url") if key in sale})
+                            "comparison_area_basis", "older_reference", "source_url", "bedrooms_reported",
+                            "bathrooms_reported", "layout_match", "layout_note") if key in sale})
             pending.append(lead)
     recent = [sale for sale in verified if not sale.get("older_reference")]
     result = {**report, "candidates": verified, "pending_registry_review": pending, "count": len(verified)}
