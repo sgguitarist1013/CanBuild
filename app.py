@@ -378,10 +378,6 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
           except (httpx.HTTPError,ValueError,TypeError):
             result["warnings"].append("Cambridge zoning GIS unavailable; district not verified.")
           result["constraints"] = await constraint_task
-          if result.get("parcel"):
-              result["cambridge_approvals"] = municipal_zoning.cambridge_approval_screen(
-                  result["constraints"], result.get("existing_building"),
-              )
         elif parts.get('city','').upper() in municipal_zoning.LOCAL_CONNECTORS:
             try:
                 local=await municipal_zoning.lookup(client,parts['city'],polygon,lat,result.get('parcel') or {})
@@ -486,6 +482,10 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
             result["warnings"].append("Cannot calculate buildable envelope until selected parcel polygon is available.")
         elif not result.get("buildout_review"):
             result["warnings"].append("No verified zoning calculation rules configured for this municipality and district.")
+    if parcel and city.upper() == "CAMBRIDGE":
+        result["cambridge_approvals"] = municipal_zoning.cambridge_approval_screen(
+            result["constraints"], result.get("existing_building"), c1_envelope=result.get("zoning_potential"),
+        )
     result["warnings"] += ["MassGIS assessor extracts can be stale; BLD_AREA and RES_AREA use different measurement conventions and may not equal zoning gross floor area.","Parcel maps are not legal surveys; legal units and additions require independent confirmation.","Only listed municipal layers are screened. Additional overlays, zoning amendments, site constraints and legal buildability remain unverified."]
     if not result.get("zoning"):
         result["recommendations"].append({"title":"Verify the property's zoning district","reason":"CanBuild could not confirm a base district for the selected parcel. Base district standards are needed to evaluate expansion.","next_step":"Use the municipality's official zoning map and confirm the parcel's base and overlay districts with its planning or building department.","confidence":"Not yet verified"})

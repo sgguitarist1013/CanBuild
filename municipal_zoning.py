@@ -295,6 +295,7 @@ CAMBRIDGE_APPROVAL_LAYERS = (
     ("Landmarks and preservation easements", "Landmarks_and_Easements", "HISTORIC_N", "historical/historical_landmarkseasements"),
 )
 CAMBRIDGE_DEMOLITION = "https://www.cambridgema.gov/historic/districtshistoricproperties/demolitionreview"
+CAMBRIDGE_NEIGHBOR_NOTICE = "https://www.cambridgema.gov/cdd/zoninganddevelopment/developmentreview/residentialneighbornotification"
 # Parenthesized green dimensions on the Cambridge FY2027 assessor block maps.
 CAMBRIDGE_MAPPED_FRONTAGE = {
     "101-200": ("95 Magazine Street", 70.0, "https://gis.cambridgema.gov/blockmaps/Block_101.pdf"),
@@ -353,7 +354,7 @@ async def cambridge_constraints(client, parcel, latitude):
     ]
 
 
-def cambridge_approval_screen(constraints, building, today=None):
+def cambridge_approval_screen(constraints, building, today=None, *, c1_envelope=None):
     current_year = (today or date.today()).year
     building = building or {}
     year = building.get("year_built")
@@ -375,7 +376,16 @@ def cambridge_approval_screen(constraints, building, today=None):
         elif item["status"] == "unavailable":
             notes.append({"text": item["name"] + " could not be checked. Confirm it with the city.",
                           "url": item["source_url"]})
-    return {"pricing_on_hold": bool(notes), "checks": notes}
+    pricing_on_hold = bool(notes)
+    if c1_envelope and c1_envelope["stories"] > 3 and c1_envelope["height_ft"] > 35:
+        notes.append({
+            "text": "Neighbor meeting before a building permit (§5.40, footnote 37). If the actual plan exceeds both "
+                    "3 stories and 35 feet above grade, check whether Planning Board advisory consultation or a "
+                    "Planning Board special permit applies. If neither applies, notify neighbors and hold a meeting "
+                    "for feedback. The feedback is nonbinding.",
+            "url": CAMBRIDGE_NEIGHBOR_NOTICE,
+        })
+    return {"pricing_on_hold": pricing_on_hold, "checks": notes}
 
 
 async def cambridge_lookup(client, parcel, latitude):

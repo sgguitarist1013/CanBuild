@@ -340,19 +340,19 @@ def test_verified_deed_and_pending_lead_stay_visibly_distinct(page, app_url, pro
     expect(page.locator("#pendingRegistryList")).to_contain_text("Awaiting MassLandRecords confirmation")
 
 
-def test_cambridge_approval_step_is_visible_before_estimates(page, app_url, property_record):
+@pytest.mark.parametrize("width", [320, 390])
+def test_cambridge_approval_step_is_visible_before_estimates(page, app_url, property_record, width):
+    from municipal_zoning import CAMBRIDGE_DEMOLITION, CAMBRIDGE_NEIGHBOR_NOTICE, cambridge_approval_screen
     from redevelopment import analyze_redevelopment
 
     redevelopment = analyze_redevelopment({"gross_area_high_sqft": 12000, "stories": 4}, None)
-    source = "https://www.cambridgema.gov/historic/districtshistoricproperties/demolitionreview"
     frontage_source = "https://gis.cambridgema.gov/blockmaps/Block_101.pdf"
+    review = cambridge_approval_screen([], {"year_built": 1873}, c1_envelope={"stories": 4, "height_ft": 45})
     record = dict(property_record, zoning={"district": "C-1"}, redevelopment=redevelopment,
                   cambridge_mapped_frontage={"frontage_ft": 70, "street": "Magazine Street",
                                              "source_url": frontage_source},
-                  cambridge_approvals={"pricing_on_hold": True, "checks": [{
-                      "text": "Confirm demolition review with the Historical Commission.", "url": source,
-                  }]})
-    page.set_viewport_size({"width": 390, "height": 844})
+                  cambridge_approvals=review)
+    page.set_viewport_size({"width": width, "height": 844})
     page.route("**/api/property?*", lambda route: route.fulfill(json=record))
     page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
     page.goto(app_url)
@@ -366,8 +366,11 @@ def test_cambridge_approval_step_is_visible_before_estimates(page, app_url, prop
     page.get_by_role("button", name="See what needs city review").click()
     expect(page.locator("#cambridgeMappedFrontage")).to_contain_text("70 feet along Magazine Street")
     expect(page.locator("#cambridgeMappedFrontage").get_by_role("link")).to_have_attribute("href", frontage_source)
-    expect(page.locator("#cambridgeApprovalChecks")).to_contain_text("Confirm demolition review")
-    expect(page.locator("#cambridgeApprovalChecks").get_by_role("link")).to_have_attribute("href", source)
+    expect(page.locator("#cambridgeApprovalChecks")).to_contain_text("demolition review with the Historical Commission")
+    expect(page.locator("#cambridgeApprovalChecks")).to_contain_text("Neighbor meeting before a building permit")
+    expect(page.locator(f'#cambridgeApprovalChecks a[href="{CAMBRIDGE_DEMOLITION}"]')).to_be_visible()
+    expect(page.locator(f'#cambridgeApprovalChecks a[href="{CAMBRIDGE_NEIGHBOR_NOTICE}"]')).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
 
 
 def test_permit_history_loads_only_when_opened_and_keeps_city_links(page, app_url, property_record):

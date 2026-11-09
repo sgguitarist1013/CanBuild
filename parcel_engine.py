@@ -285,7 +285,7 @@ def conceptual_massing(polygon, parcel, building, city, district):
             "additional_area_high_sqft":round(max(0,base_high-existing)) if existing is not None else None,
             "stories":rules["stories"],"height_ft":rules["height_ft"],
             "source":rules["source"],
-            "limitations":"Conceptual envelope only. Confirm front, side and rear setbacks, qualifying open space, overlays, historic limits, Green Factor and zoning GFA. Cambridge also requires neighborhood outreach for buildings over three stories and 35 feet when Planning Board advisory consultation or special-permit review does not apply."}
+            "limitations":"Conceptual envelope only. Confirm front, side and rear setbacks, qualifying open space, overlays, historic limits, Green Factor and zoning GFA."}
     threshold = rules["inclusionary_min_lot_sqft"]
     assessor_area = parcel.get("gis_area_sqft_approx")
     if area >= threshold and (not assessor_area or assessor_area >= threshold):
