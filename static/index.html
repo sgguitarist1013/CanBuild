@@ -17,6 +17,13 @@
 .value-summary small+strong+small{margin-top:5px}
 .value-card h3{margin:0}
 #ownershipSummary{overflow-wrap:anywhere}
+.ask-form{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
+.ask-form input{flex:1 1 210px;min-width:0;border:1px solid #c7dad3;border-radius:8px;padding:10px 12px;font-size:16px}
+.ask-examples{display:flex;gap:6px;flex-wrap:wrap}
+.ask-examples button{font-size:12px;padding:6px 9px}
+.ask-result{background:#f2f7f5;border-radius:10px;padding:12px;margin:12px 0 0}
+.ask-result p{margin:0 0 8px}
+.ask-result p:last-child{margin:0}
 .estimate-summary strong{font-size:clamp(16px,2.2vw,24px);letter-spacing:-.4px;margin-top:3px}
 .research-card{margin:0 0 10px;border-top:1px solid #e1e9e6}
 .research-card summary{min-height:36px;align-content:center}
@@ -73,6 +80,20 @@
 </div>
 <p id="assessedValueContext" class="small muted" hidden></p>
 </section>
+<details class="card research-card" id="askDetails" hidden>
+<summary>Ask CanBuild about this report</summary>
+<p class="small muted">Ask what the numbers mean or what to check next.</p>
+<div class="ask-examples">
+<button class="secondary" type="button">What can I build?</button>
+<button class="secondary" type="button">How much is it worth?</button>
+<button class="secondary" type="button">What could it cost?</button>
+</div>
+<form class="ask-form" id="askReport">
+<input id="reportQuestion" aria-label="Question about this property report" placeholder="Ask a question about this property" maxlength="240" required>
+<button class="secondary" type="submit">Ask</button>
+</form>
+<div class="ask-result small" id="reportAnswer" role="status" hidden></div>
+</details>
 <details class="card research-card" id="recordDetails"><summary>Property records</summary>
 <div id="parcelResearch"><h3>Ownership &amp; parcel identity</h3><p id="ownerStatus" class="small muted"></p><p id="lastTransfer" class="small muted"></p><div id="parcelCandidates" class="details"></div></div>
 <p id="sourceStatus" class="small muted"></p>
@@ -260,19 +281,7 @@ function renderOpportunity(d) {
   $('potentialLimit').textContent=limit;
   $('potentialLimit').hidden=!limit;
   $('resultAction').textContent=action;
-  $('resultAction').onclick=()=>{
-    const destination=$(target);
-    if(destination.tagName==='DETAILS'){
-      const parent=destination.parentElement.closest('details');
-      if(parent) parent.open=true;
-      destination.open=true;
-      if(target==='districtDetails'&& !$('onDemandZoning').classList.contains('hide')) $('onDemandZoning').open=true;
-      destination.querySelector('summary').focus({preventScroll:true});
-    } else {
-      destination.focus({preventScroll:true});
-    }
-    destination.scrollIntoView({block:'start'});
-  };
+  $('resultAction').onclick=()=>openReportSection(target);
 
   $('envelopeDetails').hidden=!envelope;
   const additional=envelope?.additional_area_high_sqft!=null
@@ -375,8 +384,106 @@ function renderRedevelopment(d){
   }
 }
 
+function openReportSection(target){
+  const destination=$(target);
+  if(destination.tagName==='DETAILS'){
+    const parent=destination.parentElement.closest('details');
+    if(parent) parent.open=true;
+    destination.open=true;
+    if(target==='districtDetails'&& !$('onDemandZoning').classList.contains('hide')) $('onDemandZoning').open=true;
+    destination.querySelector('summary').focus({preventScroll:true});
+  } else {
+    destination.focus({preventScroll:true});
+  }
+  destination.scrollIntoView({block:'start'});
+}
+
+function explainReport(question, report){
+  const text=question.toLowerCase();
+  const screen=report.redevelopment;
+  const best=screen?.best;
+  const market=report.current_valuation?.market_range;
+  const assessment=report.current_valuation?.assessment;
+  const sales=report.sales_research;
+  const deed=report.parcel?.deed_verification;
+  if(/profit|loss|sellout|break.even|cost|budget|financ|return|afford/.test(text)){
+    const answer=[];
+    if(best?.cost_high!=null){
+      const budget=[best.cost_low,best.cost_high].sort((a,b)=>a-b);
+      answer.push('The modeled project budget is '+range(...budget)+(screen.acquisition_proxy?' including modeled acquisition.':' before acquiring the property.'));
+      answer.push('Total market-rate condo sales are modeled at '+range(best.sellout_low,best.sellout_high)+'.');
+    }
+    if(best?.surplus_high!=null) answer.push('After modeled costs, the project result ranges from '+range(best.surplus_low,best.surplus_high)+'.');
+    if(!answer.length) answer.push(screen?.decision==='retain_and_review'
+      ? 'The screened rebuild would lose existing space or homes, so the report leaves it unpriced.'
+      : 'A cost and profit estimate needs a supported building plan and comparable closed condo sales.');
+    else if(best?.surplus_high==null) answer.push('Estimating profit also requires an as-is market value to model acquisition.');
+    return {answer:answer.join(' '),target:best?'estimateDetails':report.zoning_potential?'envelopeDetails':'districtDetails'};
+  }
+  if(/comp|sale|price|worth|value|assess|market/.test(text)){
+    const answer=[];
+    if(market) answer.push('The as-is market estimate is '+range(market.low,market.high)+', based on '+market.comp_count+' similar deed-confirmed sales.');
+    else answer.push('The as-is market estimate needs three similar local sales with confirmed deed prices.');
+    if(assessment) answer.push('The assessor lists '+money(assessment.amount)+(assessment.fiscal_year?' for FY '+assessment.fiscal_year:'')+' for tax purposes.');
+    if(sales?.pending_registry_review?.length) answer.push('Check Comparable sales for possible matches still being reviewed.');
+    return {answer:answer.join(' '),target:'salesDetails'};
+  }
+  if(/own|title|entity|transfer|deed/.test(text)){
+    const owners=report.parcel?.recorded_owners||[];
+    let answer=owners.length?'The assessor lists '+owners.join('; ')+' on the property records.':'The assessor record did not identify an owner here.';
+    if(deed?.status==='verified') answer+=' CanBuild confirmed a transfer recorded on '+deed.recorded_date+'.';
+    return {answer:answer+' Current ownership requires checking the latest deed.',target:'recordDetails'};
+  }
+  if(/build|zon|unit|home|permit|addition|adu|height|floor|redevelop|expand|setback|alter/.test(text)){
+    if(screen?.decision==='retain_and_review') return {
+      answer:'Start with the existing building. The screened rebuild would lose space or homes. An addition or alteration needs a separate review of the local rules and site.',
+      target:'envelopeDetails',
+    };
+    if(best) return {
+      answer:'The report models '+fmt(best.market_units+best.restricted_units)+' homes and '+fmt(best.gross_area_sqft)+' sq ft of total floor area. '+(best.conditional?'This option depends on meeting affordable-housing requirements. ':'')+'Setbacks, overlays and approvals can change what fits.',
+      target:'estimateDetails',
+    };
+    if(report.buildout_review) return {answer:report.buildout_review.summary+' '+report.buildout_review.limit,target:'buildoutDetails'};
+    if(report.zoning_potential) return {answer:'The initial zoning screen models '+fmt(report.zoning_potential.gross_area_low_sqft)+'–'+fmt(report.zoning_potential.gross_area_high_sqft)+' sq ft of total floor area. Review parcel conditions before using this as a building plan.',target:'envelopeDetails'};
+    return {answer:report.zoning
+      ? 'The report identifies zoning district '+report.zoning.district+'. The parcel still needs a site-specific check before we can estimate what fits.'
+      : 'We need to confirm the parcel’s zoning district before we can estimate what fits.',
+      target:'districtDetails'};
+  }
+  return {answer:'I can explain the building options, value, comparable sales, project costs, or ownership shown in this report. Try one of the example questions above.',target:null};
+}
+
+$('askReport').addEventListener('submit',event=>{
+  event.preventDefault();
+  if(!last?.parcel||!$('reportQuestion').value.trim()) return;
+  const {answer,target}=explainReport($('reportQuestion').value,last);
+  const box=$('reportAnswer');
+  const message=document.createElement('p');
+  message.textContent=answer;
+  box.replaceChildren(message);
+  if(target){
+    const link=document.createElement('button');
+    link.className='secondary';
+    link.type='button';
+    link.textContent='See supporting details';
+    link.onclick=()=>openReportSection(target);
+    box.append(link);
+  }
+  box.hidden=false;
+});
+$('askDetails').querySelectorAll('.ask-examples button').forEach(button=>{
+  button.onclick=()=>{
+    $('reportQuestion').value=button.textContent;
+    $('askReport').requestSubmit();
+  };
+});
+
 function render(d) {
   last=d;
+  $('askDetails').hidden=!d.parcel;
+  $('reportQuestion').value='';
+  $('reportAnswer').hidden=true;
+  $('reportAnswer').replaceChildren();
   document.body.classList.add('has-results');
   $('intro').classList.add('hide');
   $('results').classList.remove('hide');

@@ -256,7 +256,11 @@ def test_smaller_rebuild_leads_with_existing_building_on_mobile(page, app_url, p
     expect(page.locator("#redevelopmentMetrics")).to_be_hidden()
     expect(page.locator("#surplusSummary")).to_be_hidden()
     expect(page.locator("#autoSellout")).to_have_text("Estimate unavailable")
-    page.get_by_role("button", name="View zoning comparison").click()
+    page.get_by_text("Ask CanBuild about this report", exact=True).click()
+    page.get_by_role("textbox", name="Question about this property report").fill("Can I build more homes here?")
+    page.get_by_role("button", name="Ask", exact=True).click()
+    expect(page.locator("#reportAnswer")).to_contain_text("would lose space or homes")
+    page.get_by_role("button", name="See supporting details").click()
     expect(page.locator("#opportunityNote")).to_contain_text("1,050 sq ft of modeled unit area")
     expect(page.locator("#opportunityNote")).to_contain_text("2,083 sq ft of existing living area")
 

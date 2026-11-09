@@ -45,20 +45,55 @@ async def search(client, lon, lat, city, parcel, building, limit=12):
     area_field = "RES_AREA" if (building or {}).get("residential_area_sqft") else "BLD_AREA"
     params={"f":"json","where":f"CITY = '{str(city).replace(chr(39),chr(39)*2)}' AND LS_PRICE > 0 AND LS_DATE >= '{since}'"
         f" AND {area_field} BETWEEN {area*.85} AND {area*1.15}",
-        "geometry":f"{lon},{lat}","geometryType":"esriGeometryPoint","inSR":4326,"distance":4829,
+        "geometry":f"{lon},{lat}","geometryType":"esriGeometryPoint","inSR":4326,
         "units":"esriSRUnit_Meter","spatialRel":"esriSpatialRelIntersects",
         "outFields":"OBJECTID,MAP_PAR_ID,LOC_ID,SITE_ADDR,CITY,LS_DATE,LS_PRICE,LS_BOOK,LS_PAGE,BLD_AREA,RES_AREA,UNITS,YEAR_BUILT,USE_DESC,LOT_SIZE,LOT_UNITS",
-        "returnGeometry":"true","returnCentroid":"true","outSR":4326,"resultRecordCount":500,"orderByFields":"LS_DATE DESC"}
+        "returnGeometry":"false","returnCentroid":"true","outSR":4326,"resultRecordCount":500,"orderByFields":"LS_DATE DESC"}
+
+    async def fetch(radius, timeout):
+        response = await client.get(SERVICE, params={**params, "distance": 1609.344 * radius},
+                                    timeout=httpx.Timeout(timeout, connect=4))
+        response.raise_for_status()
+        data = response.json()
+        if data.get("error") or not isinstance(data.get("features"), list):
+            raise ValueError("MassGIS sales query failed")
+        return data
+
     try:
-        response=await client.get(SERVICE,params=params,timeout=httpx.Timeout(18,connect=4))
-        response.raise_for_status(); data=response.json()
-        if data.get("error"): raise ValueError("MassGIS sales query failed")
-    except (httpx.HTTPError,ValueError):
+        data = await fetch(1, 12)
+    except (httpx.HTTPError, ValueError):
         return {"status":"MassGIS sale records are temporarily unavailable","candidates":[],"source_url":SOURCE}
+    candidates = matching_sales(data["features"], lon, lat, city, parcel, building, today)
+    confirmed = sum(not row["older_reference"] and registry.sale_deed(city, row)["status"] == "verified"
+                    for row in candidates)
+    expansion_failed = False
+    if confirmed < 3 or data.get("exceededTransferLimit"):
+        try:
+            expanded = await fetch(3, 8)
+            candidates = matching_sales(expanded["features"], lon, lat, city, parcel, building, today)
+            data = expanded
+        except (httpx.HTTPError, ValueError):
+            expansion_failed = True
+    selected = registry.shortlist(city, candidates, limit)
+    limitations = "MassGIS assessor-reported last-sale data can be stale, bundled, non-arm's-length, or have differing property measurements. Confirm deed, transaction conditions, condition, units and adjustments before relying on these candidates. This is not an appraisal."
+    if expansion_failed:
+        limitations += " The wider query was unavailable. Results shown are within the initial one-mile search."
+    return {"status":f"{len(selected)} local assessor-reported sale candidate(s)" if selected else "No sufficiently similar recent local sale records found",
+        "candidates":selected,"median_sale_price":None,"count":len(selected),"source_url":SOURCE,"expanded_search":True,
+        "checked_at":datetime.now(timezone.utc).isoformat(),
+        "truncated":bool(data.get('exceededTransferLimit')),
+        "method":"Same municipality and property-use group, within 15% of subject size. Prefer sales within 0.5 mile, then widen up to 3 miles when needed. Sales older than 3 years, up to 5 years, are historical references. This source lacks room counts.",
+        "limitations":limitations}
+
+
+def matching_sales(features, lon, lat, city, parcel, building, today):
+    living = bool(building.get("residential_area_sqft"))
+    area = building.get("residential_area_sqft") if living else building.get("building_area_sqft")
+    subject_use = building.get("use_description")
     subject_id=str(parcel.get("loc_id") or parcel.get("parcel_number") or "")
     candidates=[]; seen=set()
-    for feature in data.get("features",[]):
-        a=feature.get("attributes") or {}; geom=feature.get("geometry") or {}
+    for feature in features:
+        a=feature.get("attributes") or {}
         if str(a.get("CITY") or "").upper()!=str(city).upper(): continue
         if str(a.get("LOC_ID") or a.get("MAP_PAR_ID") or "")==subject_id: continue
         identifier=str(a.get("LOC_ID") or a.get("MAP_PAR_ID") or a.get("OBJECTID"))
@@ -71,7 +106,6 @@ async def search(client, lon, lat, city, parcel, building, limit=12):
         age = (today - sale_day).days
         if not 0 <= age <= 1827: continue
         # Compare like measurements: living area to living area, gross to gross.
-        living=bool((building or {}).get('residential_area_sqft'))
         size=a.get('RES_AREA') if living else a.get('BLD_AREA')
         if not isinstance(area,(int,float)) or area<=0 or not isinstance(size,(int,float)) or size<=0 or abs(size - area) > .15 * area: continue
         use=a.get("USE_DESC")
@@ -91,10 +125,4 @@ async def search(client, lon, lat, city, parcel, building, limit=12):
             "record_reference":("Book "+str(a.get("LS_BOOK"))+" page "+str(a.get("LS_PAGE"))) if a.get("LS_BOOK") and a.get("LS_PAGE") else None,
             "distance_miles":round(distance,3),"source_url":SOURCE,"source_name":"MassGIS assessor-reported last sale",
             "older_reference":age > 1096})
-    selected = registry.shortlist(city, candidates, limit)
-    return {"status":f"{len(selected)} local assessor-reported sale candidate(s)" if selected else "No sufficiently similar recent local sale records found",
-        "candidates":selected,"median_sale_price":None,"count":len(selected),"source_url":SOURCE,"expanded_search":True,
-        "checked_at":datetime.now(timezone.utc).isoformat(),
-        "truncated":bool(data.get('exceededTransferLimit')),
-        "method":"Same municipality and property-use group, within 15% of subject size. Prefer sales within 0.5 mile, then widen up to 3 miles when needed. Sales older than 3 years, up to 5 years, are historical references. This source lacks room counts.",
-        "limitations":"MassGIS assessor-reported last-sale data can be stale, bundled, non-arm's-length, or have differing property measurements. Confirm deed, transaction conditions, condition, units and adjustments before relying on these candidates. This is not an appraisal."}
+    return candidates
