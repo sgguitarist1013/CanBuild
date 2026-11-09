@@ -446,6 +446,47 @@ def test_ask_report_distinguishes_affordable_home_count_and_pricing(page, app_ur
     expect(answer).to_contain_text("needs a supported building plan and comparable closed condo sales")
 
 
+@pytest.mark.parametrize("width", [320, 390])
+@pytest.mark.parametrize("restricted", [False, True])
+def test_ask_report_explains_what_partial_pricing_excludes(page, app_url, property_record, width, restricted):
+    from redevelopment import analyze_redevelopment
+
+    market = {"low": 1000000, "high": 1200000, "comp_count": 3}
+    area = 12000 if restricted else 6000
+    redevelopment = analyze_redevelopment({"gross_area_high_sqft": area, "stories": 4}, None,
+                                          current_market_range=market)
+    best = redevelopment["best"]
+    assert bool(best["restricted_units"]) is restricted
+    best.update(cost_low=2800000, cost_high=3000000)
+    if restricted:
+        # Legacy payloads may carry a surplus that excludes restricted-home proceeds.
+        best.update(sellout_low=2900000, sellout_high=3200000, surplus_low=-100000, surplus_high=400000)
+    record = dict(property_record, zoning={"district": "C-1"}, redevelopment=redevelopment)
+    page.set_viewport_size({"width": width, "height": 844})
+    page.route("**/api/property?*", lambda route: route.fulfill(json=record))
+    page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
+    page.goto(app_url)
+    page.get_by_role("combobox").fill("95 Magazine St, Cambridge, MA")
+    page.get_by_role("button", name="Explore property").click()
+    page.get_by_text("Ask PlotDocket about this report", exact=True).click()
+    page.get_by_role("button", name="Could this project make money?").click()
+    answer = page.locator("#reportAnswerText")
+    missing = "restricted-home sale proceeds" if restricted else "comparable closed condo sales"
+    excluded = "restricted-home selling costs" if restricted else "selling costs"
+    expect(answer).to_contain_text(f"Estimating project profit still requires {missing}.")
+    expect(answer).to_contain_text(f"The partial modeled budget is $2,800,000 to $3,000,000 and excludes {excluded}.")
+    expect(answer).not_to_contain_text("acquisition estimate")
+    expect(answer).not_to_contain_text("$400,000")
+    if restricted:
+        expect(answer).to_contain_text("Total market-rate condo sales are modeled at $2,900,000 to $3,200,000.")
+    else:
+        expect(answer).not_to_contain_text("condo sales are modeled at")
+    assert not page.locator("#estimateDetails").evaluate("element => element.open")
+    page.get_by_role("button", name="See supporting details").click()
+    expect(page.locator("#estimateDetails > summary")).to_be_focused()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
 def test_ask_report_distinguishes_project_upside_from_as_is_value(page, app_url, property_record):
     from redevelopment import analyze_redevelopment
 

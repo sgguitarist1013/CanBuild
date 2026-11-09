@@ -444,23 +444,40 @@ function explainReport(question, report){
   if(cost||upside){
     if(historical||approvalHold) return historical||approvalHold;
     const answer=[];
-    if(best?.cost_high!=null){
+    const hasBudget=best?.cost_low!=null&&best?.cost_high!=null;
+    const hasSellout=best?.sellout_low!=null&&best?.sellout_high!=null;
+    const restrictedHomes=best?.restricted_units>0;
+    const acquisition=Boolean(screen?.acquisition_proxy);
+    if(hasBudget){
       const budget=[best.cost_low,best.cost_high].sort((a,b)=>a-b);
-      answer.push('The modeled project budget is '+range(...budget)+(screen.acquisition_proxy?' including modeled acquisition.':' before acquiring the property.'));
+      const exclusions=[];
+      if(!acquisition) exclusions.push('acquisition');
+      if(!hasSellout) exclusions.push('selling costs');
+      else if(restrictedHomes) exclusions.push('restricted-home selling costs');
+      answer.push(exclusions.length
+        ? 'The partial modeled budget is '+range(...budget)+' and excludes '+exclusions.join(' and ')+'.'
+        : 'The modeled project budget is '+range(...budget)+' including modeled acquisition.');
+    }
+    if(hasSellout){
       answer.push('Total market-rate condo sales are modeled at '+range(best.sellout_low,best.sellout_high)+'.');
     }
-    if(best?.surplus_high!=null){
-      const result=range(best.surplus_low,best.surplus_high);
-      const outcome=best.restricted_units
-        ? 'Market-rate sales less modeled costs range from '+result+', before any restricted-home sale proceeds.'
-        : 'Modeled profit or loss ranges from '+result+'.';
+    if(hasBudget&&hasSellout&&acquisition&&!restrictedHomes&&best.surplus_low!=null&&best.surplus_high!=null){
+      const outcome='Modeled profit or loss ranges from '+range(best.surplus_low,best.surplus_high)+'.';
       if(upside) answer.unshift(outcome);
       else answer.push(outcome);
-    }
-    if(!answer.length) answer.push(screen?.decision==='retain_and_review'
+    } else if(answer.length) {
+      const missing=[];
+      if(!hasBudget) missing.push('a modeled budget');
+      if(!hasSellout) missing.push('comparable closed condo sales');
+      if(!acquisition) missing.push('a supported acquisition estimate');
+      if(restrictedHomes) missing.push('restricted-home sale proceeds');
+      const limitation=missing.length?'Estimating project profit still requires '+missing.join(', ')+'.'
+        :'The report does not show a project profit estimate.';
+      if(upside) answer.unshift(limitation);
+      else answer.push(limitation);
+    } else answer.push(screen?.decision==='retain_and_review'
       ? 'The screened rebuild would lose existing space or homes, so the report leaves it unpriced.'
       : 'A cost and profit estimate needs a supported building plan and comparable closed condo sales.');
-    else if(best?.surplus_high==null) answer.push('Estimating profit also requires an as-is market value to model acquisition.');
     return {answer:answer.join(' '),target:best?'estimateDetails':report.zoning_potential?'envelopeDetails':'districtDetails'};
   }
   if(/\b(?:own|owns|owned|owners?|ownership|title|entity|transfers?)\b|\b(?:last|latest|recorded)\s+(?:deed|sale)\b|\b(?:it|this|the property)\s+sell\b/.test(text)){
