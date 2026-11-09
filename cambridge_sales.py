@@ -43,7 +43,10 @@ async def search(client, lon, lat, parcel, building):
                 or pid == parcel.get("parcel_number") or not sold or not cutoff <= sold <= today
                 or not registry.reference_pair(ref)):
             continue
-        size, price = int(row["interior_livingarea"]), int(row["saleprice"])
+        try:
+            size, price = int(row["interior_livingarea"]), int(row["saleprice"])
+        except (KeyError, TypeError, ValueError):
+            continue
         if not low <= size <= high or price < 10000:
             continue
         candidates.setdefault(pid, {"address": address, "project_key": pid, "parcel_number": pid,
