@@ -220,10 +220,10 @@ def test_automatic_redevelopment_shows_default_estimate_without_input(page, app_
     expect(page.locator("#currentMarketValue")).to_have_text("$1,000,000 to $1,200,000")
     expect(page.locator("#currentMarketBasis")).to_contain_text("3 Registry-confirmed sales")
     expect(page.locator("#assessedValueContext")).to_contain_text("FY 2026 tax assessment · $900,000")
-    expect(page.locator("#autoSellout")).to_contain_text("$")
-    expect(page.locator("#potentialValueBasis")).to_contain_text("Gross market-rate condo sales")
+    expect(page.locator("#autoSellout")).to_have_text("Estimate unavailable")
+    expect(page.locator("#potentialValueBasis")).to_contain_text("three deed-confirmed sales")
     expect(page.locator("#autoGrossArea")).to_have_text("12,000 sq ft")
-    expect(page.locator("#autoCost")).to_contain_text("$")
+    expect(page.locator("#autoCostMetric")).to_be_hidden()
     expect(page.locator("#autoUnits")).to_have_text(str(redevelopment["best"]["market_units"] + redevelopment["best"]["restricted_units"]))
     expect(page.locator("#potentialLimit")).to_contain_text("affordable-housing requirements")
     expect(page.locator("#redevelopmentAreas")).to_be_hidden()
@@ -235,8 +235,30 @@ def test_automatic_redevelopment_shows_default_estimate_without_input(page, app_
     expect(page.locator("#estimateDetails > summary")).to_be_focused()
     expect(page.locator("#redevelopmentAreas")).to_be_visible()
     expect(page.locator("#redevelopmentAreas")).to_contain_text("restricted")
-    expect(page.locator("#redevelopmentMix")).to_contain_text("Cambridge 2026 study")
+    expect(page.locator("#redevelopmentMix")).to_contain_text("Insufficient matching deed-confirmed sales")
     assert not page.get_by_text("Optional manual condo scenario", exact=True).evaluate("(el) => el.parentElement.open")
+
+
+def test_smaller_rebuild_leads_with_existing_building_on_mobile(page, app_url, property_record):
+    from redevelopment import analyze_redevelopment
+
+    building = {"assessed_value": 1932200, "residential_area_sqft": 2083, "units": 1}
+    envelope = {"gross_area_high_sqft": 1703, "gross_area_low_sqft": 900, "stories": 4}
+    record = dict(property_record, zoning={"district": "C-1"}, existing_building=building,
+                  zoning_potential=envelope, redevelopment=analyze_redevelopment(envelope, building))
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.route("**/api/property?*", lambda route: route.fulfill(json=record))
+    page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
+    page.goto(app_url)
+    page.get_by_role("combobox").fill("95 Magazine St, Cambridge, MA")
+    page.get_by_role("button", name="Explore property").click()
+    expect(page.locator("#potentialAnswer")).to_contain_text("Start with the existing building")
+    expect(page.locator("#redevelopmentMetrics")).to_be_hidden()
+    expect(page.locator("#surplusSummary")).to_be_hidden()
+    expect(page.locator("#autoSellout")).to_have_text("Estimate unavailable")
+    page.get_by_role("button", name="View zoning comparison").click()
+    expect(page.locator("#opportunityNote")).to_contain_text("1,050 sq ft of modeled unit area")
+    expect(page.locator("#opportunityNote")).to_contain_text("2,083 sq ft of existing living area")
 
 
 def test_somerville_zoning_details_open_from_mobile_summary(page, app_url, property_record):

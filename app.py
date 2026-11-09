@@ -32,7 +32,7 @@ import permit_research
 configure_monitoring()
 
 ROOT=Path(__file__).parent
-VERSION = "0.16.11"
+VERSION = "0.16.12"
 app=FastAPI(title="CanBuild Massachusetts",version=VERSION)
 app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
 CENSUS="https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress"
@@ -503,6 +503,7 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
         result["recommendations"].append({"title":"Check local expansion standards","reason":"The district is mapped, but a reviewed rule set for this district is not available in CanBuild.","next_step":"Confirm setbacks, height, lot coverage, open space, nonconforming-lot rules, overlays, and permit requirements with the municipality.","confidence":"District mapped; dimensional rules incomplete"})
     else:
         result["recommendations"].append({"title":"Review the preliminary zoning scenario","reason":"A district-specific scenario is available, subject to its stated assumptions and limitations.","next_step":"Have the city review a current survey and proposed footprint before paying for design work.","confidence":result["zoning_potential"].get("confidence")})
+    market_range = (result.get("current_valuation") or {}).get("market_range")
     result["redevelopment"] = analyze_redevelopment(result.get("zoning_potential"), result.get("existing_building"))
     if result["redevelopment"].get("best"):
         references = None
@@ -525,7 +526,8 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
         comparable = [candidate for candidate in candidates if candidate.get("project_key") != subject_parcel]
         result["redevelopment"] = analyze_redevelopment(
             result["zoning_potential"], result.get("existing_building"),
-            comparable if references and not references["truncated"] else [],
+            comparable if references and not references.get("truncated") else [],
+            current_market_range=market_range,
         )
         result["redevelopment"]["sale_references"] = references
     if scenario := result["redevelopment"].get("best"):

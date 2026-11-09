@@ -2,11 +2,22 @@ from redevelopment import analyze_redevelopment
 from condo_analysis import reference_summary
 
 
+def verified_condos(rate):
+    return [
+        {"project_key": str(project), "living_area_sqft": area, "distance_miles": .2,
+         "bedrooms_reported": beds, "bathrooms_reported": baths, "sale_price": area * rate,
+         "price_per_living_sqft": rate, "deed_verification": {"status": "verified", "consideration": area * rate}}
+        for project in range(3) for beds, baths, area in ((1, 1, 700), (2, 2, 1050), (3, 2, 1400))
+    ]
+
+
 def test_automatic_scenario_reserves_whole_affordable_units_and_ranks_after_costs():
     envelope = {"gross_area_high_sqft": 12000, "stories": 4, "inclusionary_scenario": {
         "gross_area_high_sqft": 18000, "stories": 6,
     }}
-    result = analyze_redevelopment(envelope, {"assessed_value": 900000, "building_area_sqft": 3000})
+    result = analyze_redevelopment(envelope, {"assessed_value": 900000, "building_area_sqft": 3000},
+                                   verified_condos(1700), current_market_range={"low": 1000000, "high": 1200000})
+    assert result["acquisition_proxy"] == 1100000
     best = result["best"]
     assert best["common_area_sqft"] + best["market_area_sqft"] + best["restricted_area_sqft"] + best["unallocated_area_sqft"] == best["gross_area_sqft"]
     assert best["restricted_area_sqft"] >= .20 * (best["restricted_area_sqft"] + best["market_area_sqft"])
@@ -21,6 +32,37 @@ def test_area_threshold_includes_exactly_10000_sqft_below_ten_units():
     assert result["best"]["market_units"] + result["best"]["restricted_units"] < 10
     assert result["best"]["restricted_units"] > 0
     assert result["acquisition_proxy"] is None
+
+
+def test_smaller_rebuild_is_rejected_before_pricing():
+    result = analyze_redevelopment({"gross_area_high_sqft": 1703, "stories": 4},
+                                   {"assessed_value": 1932200, "residential_area_sqft": 2083, "units": 1})
+    assert result["decision"] == "retain_and_review"
+    assert "best" not in result
+    assert result["rejected_options"] == [
+        {"name": "Base redevelopment", "proposed_gross_area_sqft": 1703,
+         "proposed_living_area_sqft": 1050, "proposed_units": 1},
+    ]
+
+
+def test_larger_scenario_stays_unpriced_without_verified_sales_for_each_unit_type():
+    comps = verified_condos(1700)
+    for comp in comps:
+        if comp["bedrooms_reported"] == 2:
+            comp["deed_verification"]["status"] = "pending"
+    result = analyze_redevelopment({"gross_area_high_sqft": 12000, "stories": 4},
+                                   {"assessed_value": 1932200, "residential_area_sqft": 2083}, comps)
+    assert result["best"]["sellout_high"] is None
+    assert result["best"]["cost_high"] is None
+    assert result["best"]["surplus_high"] is None
+    assert result["acquisition_proxy"] is None
+
+
+def test_priced_rebuild_that_loses_money_before_land_is_flagged():
+    result = analyze_redevelopment({"gross_area_high_sqft": 12000, "stories": 4}, {}, verified_condos(350))
+    assert result["decision"] == "modeled_loss"
+    assert result["best"]["sellout_high"] <= result["best"]["cost_low"]
+    assert result["best"]["surplus_high"] is None
 
 
 def test_new_build_sales_screen_excludes_repeat_projects_and_later_resales():
