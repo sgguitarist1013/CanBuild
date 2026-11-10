@@ -97,7 +97,7 @@
 </details>
 <details id="districtDetails"><summary>District standards</summary>
 <div id="localZoning"><p id="zoningStatus" class="small muted"></p><div id="zoningStandards" class="details"></div><p id="zoningConditions" class="small muted"></p><div id="constraintChecks" class="details"></div><div id="multifamilyScreen" class="item hide"></div></div>
-<details id="onDemandZoning" class="hide"><summary>On-demand zoning research</summary><p id="onDemandStatus" class="muted small"></p><div id="onDemandPassages"></div><div id="onDemandSources" class="links"></div></details></details>
+<details id="onDemandZoning" class="hide"><summary>On-demand zoning research</summary><p id="onDemandStatus" class="muted small"></p><div id="onDemandSources" class="links"></div></details></details>
 <details id="estimateDetails" hidden><summary>Development estimate details</summary>
 <p id="redevelopmentStatus" class="small muted"></p>
 <p id="redevelopmentAreas" class="small"></p>
@@ -522,8 +522,11 @@ $('onDemandZoning').open=false;
 $('onDemandStatus').textContent=discovery
   ? discovery.status+(discovery.collected_at?' Sources collected '+new Date(discovery.collected_at).toLocaleDateString()+'.':'')
   : '';
-const passages=$('onDemandPassages');
-passages.replaceChildren();
+const sources=$('onDemandSources');
+sources.replaceChildren();
+const passages=document.createElement('div');
+passages.id='onDemandPassages';
+sources.append(passages);
 if(discovery?.passages?.length){
   const context=document.createElement('p');
   context.className='small muted';
@@ -544,13 +547,13 @@ if(discovery?.passages?.length){
     passages.append(row);
   }
 }
-$('onDemandSources').replaceChildren();
+passages.hidden=!passages.childElementCount;
 for(const source of discovery?.sources||[]){
   if(!source.url?.startsWith('https://'))continue;
   const a=document.createElement('a');
   a.href=source.url;a.target='_blank';a.rel='noopener noreferrer';a.textContent=source.title+' ↗';
   if(source.topics?.length)a.title=source.topics.join(', ');
-  $('onDemandSources').append(a);
+  sources.append(a);
 }
 const p=d.parcel, owners=p?.recorded_owners||[];
 $('ownerStatus').textContent=owners.length?'Assessor-reported owner / entity: '+owners.join('; ')+'. Source: '+(p.data_source||'MassGIS assessor extract')+'. Check the latest deed for current title.':'No owner attributed until an assessor record provides the name or entity.';
