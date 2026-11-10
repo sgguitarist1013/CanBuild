@@ -130,6 +130,27 @@ def test_boston_assessor_failure_returns_actionable_error(monkeypatch, mock_cens
     atlas.assert_not_awaited()
 
 
+@pytest.mark.parametrize("truncated", [False, True])
+def test_boston_empty_candidate_search_reports_source_completeness(monkeypatch, mock_census, truncated):
+    matched = census_match("BOSTON", "Boston city", "Boston")
+    matched["matchedAddress"] = "1 LEWIS WHARF, BOSTON, MA"
+    matched["addressComponents"].update(streetName="LEWIS", suffixType="WHARF")
+    mock_census([matched])
+    monkeypatch.setattr(server.boston, "fetch", AsyncMock(side_effect=[
+        {"features": []}, {"features": [], "exceededTransferLimit": truncated},
+    ]))
+    monkeypatch.setattr(server.municipal_zoning, "multifamily_screen", AsyncMock(return_value={}))
+    monkeypatch.setattr(server, "search_zoning_sources", AsyncMock(return_value={}))
+
+    response = TestClient(server.app).get("/api/property", params={"address": "One Lewis Wharf, Boston, MA"})
+
+    assert response.status_code == 200
+    report = response.json()
+    assert report["parcel"] is None
+    assert report["parcel_candidates"] == []
+    assert report["parcel_candidates_truncated"] is truncated
+
+
 @pytest.mark.parametrize(("address", "house", "conflict"), [
     ("106 Magazine Avenue, Cambridge, MA", 106, True),
     ("106 Magazine Ave Cambridge MA 02139", 106, True),

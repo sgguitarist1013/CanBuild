@@ -331,8 +331,9 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
         if parts.get("city","").upper()=="BOSTON":
             result["sources"].insert(0, {"name": "Boston municipal assessor FY2026 and recorded sales", "url": boston.SOURCE})
             try:
-                record,candidates,method=await boston.lookup(client,lon,lat,parts,address,boston_pid)
+                record,candidates,method,truncated=await boston.lookup(client,lon,lat,parts,address,boston_pid)
                 result["parcel_candidates"]=candidates
+                result["parcel_candidates_truncated"]=truncated
                 if record:
                     result["parcel"],result["existing_building"]=boston.to_result(record,method)
                     result["verification"]["parcel"]=method

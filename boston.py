@@ -60,25 +60,31 @@ async def lookup(client,lon,lat,parts,address,pid=None):
     if pid:
         # Explicit user-selected Boston record, kept distinct from an address-verified match.
         d=await fetch(client,0,{'where':f"PID = '{pid}'",'resultRecordCount':20})
+        if d.get('exceededTransferLimit'):
+            raise ValueError('Boston assessor response for selected parcel is incomplete')
         rows=[x['attributes'] for x in d.get('features',[])]
         if len(rows)!=1:raise ParcelSelectionError('Selected Boston parcel is not unique')
-        return rows[0],[], 'User-selected Boston assessor record; address alias not verified'
+        return rows[0],[], 'User-selected Boston assessor record; address alias not verified', False
     safe=street.replace("'","''")
     # Street predicate prevents broad house-number searches truncating in large cities.
     d=await fetch(client,0,{'where':f"ST_NUM = {int(house)} AND UPPER(ST_NAME) LIKE '{safe.upper().split()[0]}%'" if house and house.isdigit() and safe else '1=0','resultRecordCount':500})
     rows=[x['attributes'] for x in d.get('features',[])]
     exact={x['PID']:x for x in rows if matches(x,house,street)}
-    if len(exact)==1:return next(iter(exact.values())),[], 'Exact Boston municipal street and house-number match'
+    address_truncated=bool(d.get('exceededTransferLimit'))
+    if len(exact)==1 and not address_truncated:
+        return next(iter(exact.values())),[], 'Exact Boston municipal street and house-number match', False
     # Nearby records are candidates only. No owner, area or value is attributed to the subject yet.
     d=await fetch(client,0,{'geometry':f'{lon},{lat}','geometryType':'esriGeometryPoint','inSR':4326,
                           'distance':150,'units':'esriSRUnit_Meter','spatialRel':'esriSpatialRelIntersects','resultRecordCount':1000})
     nearby={x['attributes']['PID']:x['attributes'] for x in d.get('features',[])}
+    nearby.update(exact)
     words=set(clean(address.split(',')[0]).split())-{'1','ONE'}
     def relevance(a):
         text=set(clean(str(a.get('OWNER',''))+' '+str(a.get('FULL_ADDRESS',''))).split())
-        return (len(words&text),not bool(a.get('UNIT_NUM')),bool(a.get('GROSS_AREA')))
+        return (a['PID'] in exact,len(words&text),not bool(a.get('UNIT_NUM')),bool(a.get('GROSS_AREA')))
     ordered=sorted(nearby.values(),key=relevance,reverse=True)
-    return None,[candidate(x) for x in ordered[:20]],'No exact municipal address match; review candidate records'
+    truncated=address_truncated or bool(d.get('exceededTransferLimit'))
+    return None,[candidate(x) for x in ordered[:20]],'Review candidate assessor records',truncated
 
 
 def sale_date(value):

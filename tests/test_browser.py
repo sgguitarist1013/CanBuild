@@ -211,7 +211,7 @@ def test_alias_selection_owner_and_sales(page, app_url, property_record, width):
     page.set_viewport_size({"width": width, "height": 844})
     alias = "One Lewis Wharf, Boston, MA"
     outage = "Boston assessor records are temporarily unavailable. Try the same address again shortly."
-    first=dict(property_record,address=alias,parcel=None,existing_building=None,parcel_candidates=[{
+    first=dict(property_record,address=alias,parcel=None,existing_building=None,parcel_candidates_truncated=True,parcel_candidates=[{
         'parcel_number':'0303029000','address':'38-34 ATLANTIC AV, BOSTON, MA 02110',
         'recorded_owner':'ONE LEWIS WHARF LLC','use_description':'OFFICE 3-9 STORY'}])
     selected=dict(property_record,address=alias,assessor_address='38-34 ATLANTIC AV, BOSTON, MA 02110',
@@ -238,7 +238,7 @@ def test_alias_selection_owner_and_sales(page, app_url, property_record, width):
     expect(page.locator('#results')).to_be_hidden()
     field.press('Enter')
     expect(page.locator('#ownerStatus')).to_contain_text('No owner attributed')
-    expect(page.locator('#potentialAnswer')).to_contain_text('Choose the assessor record')
+    expect(page.locator('#potentialAnswer')).to_have_text('Boston returned only part of its assessor results.')
     expect(page.locator('#redevelopmentMetrics')).to_be_hidden()
     expect(page.get_by_role('button',name='Review this assessor record')).to_be_hidden()
     page.get_by_role('button',name='Confirm parcel').click()
@@ -259,6 +259,26 @@ def test_alias_selection_owner_and_sales(page, app_url, property_record, width):
     assert requests[0] == requests[1]
     assert requests[2] == requests[3]
     assert 'boston_pid=0303029000' in requests[3]
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+@pytest.mark.parametrize("width", [320, 390])
+def test_empty_partial_boston_search_explains_how_to_refine_address(page, app_url, property_record, width):
+    address = "One Lewis Wharf, Boston, MA"
+    record = dict(property_record, address=address, parcel=None, existing_building=None,
+                  parcel_candidates=[], parcel_candidates_truncated=True)
+    page.set_viewport_size({"width": width, "height": 844})
+    page.route("**/api/property?*", lambda route: route.fulfill(json=record))
+    page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
+    page.goto(app_url)
+    field = page.get_by_role("combobox")
+    field.fill(address)
+    field.press("Enter")
+    expect(page.locator("#potentialAnswer")).to_have_text("Boston returned only part of its assessor results.")
+    expect(page.locator("#potentialLimit")).to_contain_text("narrowing the search")
+    expect(page.locator("#redevelopmentMetrics")).to_be_hidden()
+    page.get_by_role("button", name="Check address").click()
+    expect(field).to_be_focused()
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
 
 

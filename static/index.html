@@ -168,6 +168,11 @@ function renderOpportunity(d) {
     answer=candidates?'Choose the assessor record for this address to see its property details.':'PlotDocket could not match this address to a parcel.';
     limit='A parcel match is needed to assess development potential.';
     [action,target]=candidates?['Confirm parcel','recordDetails']:['Check address','address'];
+    if(d.parcel_candidates_truncated) {
+      answer='Boston returned only part of its assessor results.';
+      limit=candidates?'Review the choices and select a record only if it matches your property.'
+        :'Try narrowing the search with the street address shown on your assessor record.';
+    }
   } else if(d.redevelopment?.decision==='retain_and_review') {
     answer='Start with the existing building. The screened rebuild would lose space or units.';
     limit='Check whether an addition or alteration is feasible under the local rules.';
@@ -417,6 +422,7 @@ function render(d) {
     $('links').append(a);
   }
   $('status').textContent=d.parcel?'Property records loaded.':d.parcel_candidates?.length?'Address found. Confirm the parcel below.':'Parcel match unavailable.';
+  if(!d.parcel&&d.parcel_candidates_truncated) $('status').textContent='Boston returned only part of its assessor results.';
   $('propertyAddress').focus({preventScroll:true});
   $('results').scrollIntoView({block:'start'});
 }

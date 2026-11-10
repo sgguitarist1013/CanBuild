@@ -1,4 +1,5 @@
 from datetime import date
+import asyncio
 from unittest.mock import AsyncMock, patch
 import pytest
 import boston
@@ -37,9 +38,29 @@ def test_sale_filters_exclude_subject_wrong_use_stale_and_nominal_transfers():
 
 
 def test_ambiguous_alias_returns_candidate_without_selecting():
-    import asyncio
     row={'attributes':{'PID':'0303029000','OWNER':'ONE LEWIS WHARF LLC','FULL_ADDRESS':'38-34 ATLANTIC AV','ST_NUM':38,'ST_NAME':'ATLANTIC AV'}}
     with patch('boston.fetch',new=AsyncMock(side_effect=[{'features':[]},{'features':[row]}])):
-        record,candidates,method=asyncio.run(boston.lookup(None,-71.05,42.36,{'streetName':'LEWIS WHARF'},'1 Lewis Wharf, Boston, MA'))
+        record,candidates,method,truncated=asyncio.run(boston.lookup(None,-71.05,42.36,{'streetName':'LEWIS WHARF'},'1 Lewis Wharf, Boston, MA'))
     assert record is None
     assert candidates[0]['parcel_number']=='0303029000'
+    assert truncated is False
+
+
+def test_incomplete_exact_search_keeps_candidate_without_verifying_parcel():
+    row = {"attributes": {"PID": "0303029000", "FULL_ADDRESS": "1 LEWIS WHARF",
+                          "ST_NUM": 1, "ST_NAME": "LEWIS WHARF"}}
+    with patch("boston.fetch", new=AsyncMock(side_effect=[
+        {"features": [row], "exceededTransferLimit": True}, {"features": []},
+    ])):
+        result = asyncio.run(boston.lookup(None, -71.05, 42.36, {"streetName": "LEWIS WHARF"},
+                                           "1 Lewis Wharf, Boston, MA"))
+    assert result[0] is None
+    assert result[1][0]["parcel_number"] == "0303029000"
+    assert result[3] is True
+
+
+def test_incomplete_explicit_id_search_does_not_verify_parcel():
+    row = {"attributes": {"PID": "0303029000"}}
+    with patch("boston.fetch", new=AsyncMock(return_value={"features": [row], "exceededTransferLimit": True})):
+        with pytest.raises(ValueError, match="incomplete"):
+            asyncio.run(boston.lookup(None, -71.05, 42.36, {}, "1 Lewis Wharf, Boston, MA", "0303029000"))
