@@ -176,15 +176,32 @@ def lot_area_sqft(feature):
         return round(value)
     return None
 
+class IncompleteParcelSearch(Exception):
+    """MassGIS returned only part of an assessor search."""
+
+
 async def query(client, params, timeout=12.0):
-    r = await client.get(SERVICE, params={"f":"json", "outFields":FIELDS,
-        "returnGeometry":"false", "resultRecordCount":100, **params},
-        timeout=httpx.Timeout(timeout, connect=4.0))
-    r.raise_for_status()
-    data = r.json()
-    if "error" in data:
-        raise ValueError(str(data["error"].get("message","ArcGIS parcel error")))
+    request = {"f": "json", "outFields": FIELDS, "returnGeometry": "false",
+               "resultRecordCount": 100, **params}
+    async def fetch():
+        response = await client.get(SERVICE, params=request, timeout=httpx.Timeout(timeout, connect=4.0))
+        response.raise_for_status()
+        data = response.json()
+        if "error" in data:
+            raise ValueError(str(data["error"].get("message", "ArcGIS parcel error")))
+        return data
+
+    data = await fetch()
+    if data.get("exceededTransferLimit"):
+        request["resultRecordCount"] = 1000
+        try:
+            data = await fetch()
+        except (httpx.HTTPError, ValueError) as exc:
+            raise IncompleteParcelSearch from exc
+        if data.get("exceededTransferLimit"):
+            raise IncompleteParcelSearch
     return data.get("features", [])
+
 
 def polygon_from_rings(rings):
     """Read an ArcGIS exterior ring, excluding any enclosed interior rings."""
@@ -254,11 +271,15 @@ async def resolve_parcel(client, lon, lat, components, warnings, requested_addre
     async def attempt(p, label):
         try:
             return await query(client,p)
+        except IncompleteParcelSearch:
+            return None
         except (httpx.HTTPError, ValueError) as exc:
             warnings.append(label+": "+type(exc).__name__+".")
             return []
     responses=await asyncio.gather(attempt(params[0],"Point parcel search"),
                                    attempt(params[1],"Address parcel search"))
+    if any(response is None for response in responses):
+        raise IncompleteParcelSearch
     def matches(features):
         return [f for f in features if clean((f.get("attributes") or {}).get("POLY_TYPE")) not in ("ROW","RAIL ROW","WATER")
                 and exact_address_match(f.get("attributes") or {},house,street,city,components.get("postal_city"))]
@@ -271,7 +292,10 @@ async def resolve_parcel(client, lon, lat, components, warnings, requested_addre
         nearby={"geometry":f"{lon-dlon},{lat-dlat},{lon+dlon},{lat+dlat}",
                 "geometryType":"esriGeometryEnvelope","inSR":4326,
                 "spatialRel":"esriSpatialRelIntersects","resultRecordCount":200}
-        choices=matches(await attempt(nearby,"Nearby parcel search"))
+        nearby_features = await attempt(nearby, "Nearby parcel search")
+        if nearby_features is None:
+            raise IncompleteParcelSearch
+        choices = matches(nearby_features)
     if not choices:
         # Explain why nearby candidates were rejected without exposing owner information.
         sample=[]

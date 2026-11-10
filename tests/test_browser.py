@@ -44,12 +44,18 @@ def test_keyboard_search_works_without_a_suggestion(page, app_url, property_reco
     assert len(calls) == 1
 
 
-def test_error_then_retry(page, app_url, property_record):
+@pytest.mark.parametrize(("width", "detail"), [
+    (390, "Census geocoding is temporarily unavailable."),
+    (320, "MassGIS returned an incomplete parcel search. Try the same address again shortly."),
+    (390, "MassGIS returned an incomplete parcel search. Try the same address again shortly."),
+])
+def test_error_then_retry(page, app_url, property_record, width, detail):
+    page.set_viewport_size({"width": width, "height": 844})
     calls = []
     def respond(route):
         calls.append(1)
         if len(calls) == 1:
-            route.fulfill(status=503, json={"detail": "Census geocoding is temporarily unavailable."})
+            route.fulfill(status=503, json={"detail": detail})
         else:
             route.fulfill(json=property_record)
     page.route("**/api/property?*", respond)
@@ -57,7 +63,9 @@ def test_error_then_retry(page, app_url, property_record):
     page.goto(app_url)
     page.get_by_role("combobox").fill("95 Magazine St, Cambridge, MA")
     page.get_by_role("button", name="Explore property").click()
-    expect(page.locator("#status")).to_contain_text("temporarily unavailable")
+    expect(page.locator("#status")).to_have_text(detail)
+    expect(page.locator("#results")).to_be_hidden()
+    expect(page.get_by_role("combobox")).to_have_value("95 Magazine St, Cambridge, MA")
     expect(page.locator("#go")).to_be_enabled()
     page.get_by_role("combobox").press("Enter")
     expect(page.locator("#propertyAddress")).to_contain_text("95 MAGAZINE")

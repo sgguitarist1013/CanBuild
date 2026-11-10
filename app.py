@@ -15,7 +15,7 @@ from typing import Literal
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from parcel_engine import (
-    resolve_parcel, conceptual_massing, has_explicit_unit, normalize_address, same_street,
+    IncompleteParcelSearch, resolve_parcel, conceptual_massing, has_explicit_unit, normalize_address, same_street,
     street_name_conflicts, street_type_conflicts,
 )
 import boston
@@ -298,6 +298,8 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
                 print("Parcel match:",parcel.get("parcel_number"),"polygon:",polygon is not None,flush=True)
             else:
                 print("Parcel match unavailable for",parts.get("city","MA"),flush=True)
+        except IncompleteParcelSearch as exc:
+            raise HTTPException(503, "MassGIS returned an incomplete parcel search. Try the same address again shortly.") from exc
         except Exception as exc:
             result["warnings"].append("Statewide parcel matcher unavailable: "+type(exc).__name__+".")
             print("Statewide parcel lookup failed:",type(exc).__name__,str(exc)[:200],flush=True)

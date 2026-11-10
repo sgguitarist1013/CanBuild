@@ -277,3 +277,75 @@ def test_street_name_guard_accepts_normalized_equivalents(address, name, suffix)
     assert not parcel_engine.street_name_conflicts(address, {
         "streetName": name, "suffixType": suffix, "postal_city": "CAMBRIDGE",
     })
+
+
+@pytest.mark.parametrize(("incomplete_search", "expanded_result"), [
+    ("address", "incomplete"),
+    ("point", "incomplete"),
+    ("nearby", "incomplete"),
+    ("address", "unavailable"),
+    ("address", "complete"),
+])
+def test_massgis_requires_a_complete_parcel_search(monkeypatch, incomplete_search, expanded_result):
+    match = census_match("CAMBRIDGE", None)
+    match["addressComponents"]["streetName"] = "MAGAZINE"
+    match["matchedAddress"] = "106 MAGAZINE ST, CAMBRIDGE, MA"
+    record = {"attributes": {
+        "OBJECTID": 106, "CITY": "CAMBRIDGE", "ADDR_NUM": "106",
+        "SITE_ADDR": "106 MAGAZINE ST", "FULL_STR": "MAGAZINE ST",
+        "MAP_PAR_ID": "102-51", "LOC_ID": "102-51", "OWNER1": "FIXTURE OWNER",
+    }}
+    downstream = []
+    expanded_searches = []
+    retry = False
+
+    async def respond(request):
+        if str(request.url.copy_with(query=None)) == server.CENSUS:
+            return httpx.Response(200, json={"result": {"addressMatches": [match]}})
+        assert str(request.url.copy_with(query=None)) == parcel_engine.SERVICE
+        search = {"esriGeometryPoint": "point", "esriGeometryEnvelope": "nearby"}.get(
+            request.url.params.get("geometryType"), "address",
+        )
+        incomplete = not retry and search == incomplete_search
+        if request.url.params["resultRecordCount"] == "1000":
+            expanded_searches.append(search)
+            if expanded_result == "unavailable":
+                return httpx.Response(503)
+            incomplete = expanded_result != "complete"
+        return httpx.Response(200, json={
+            "features": [record] if retry or incomplete_search != "nearby" or search == "nearby" else [],
+            "exceededTransferLimit": incomplete,
+        })
+
+    client_class = httpx.AsyncClient
+    monkeypatch.setattr(server.httpx, "AsyncClient", lambda **kwargs: client_class(
+        transport=httpx.MockTransport(respond), **kwargs,
+    ))
+    for module, method, result in [
+        (parcel_engine, "selected_geometry", None),
+        (server.municipal_zoning, "cambridge_lookup", None),
+        (server.municipal_zoning, "multifamily_screen", {}),
+        (server.ma_sales, "search", {"candidates": []}),
+        (server, "search_zoning_sources", {}),
+        (server.permit_research, "search", {}),
+    ]:
+        mock = AsyncMock(return_value=result)
+        monkeypatch.setattr(module, method, mock)
+        downstream.append(mock)
+    monkeypatch.setattr(server, "queue_registry_review", lambda *args: None)
+    client = TestClient(server.app)
+    params = {"address": "106 Magazine St, Cambridge, MA"}
+
+    response = client.get("/api/property", params=params)
+    assert expanded_searches == [incomplete_search]
+    if expanded_result != "complete":
+        assert response.status_code == 503
+        assert "incomplete" in response.json()["detail"]
+        for mock in downstream:
+            mock.assert_not_awaited()
+
+        retry = True
+        response = client.get("/api/property", params=params)
+        assert expanded_searches == [incomplete_search]
+    assert response.status_code == 200
+    assert response.json()["parcel"]["parcel_number"] == "102-51"
