@@ -122,3 +122,42 @@ def test_somerville_ordinance_uses_fetchable_district_sections():
     doc = zr.parse_document(html, "text/html", urls[0], "SOMERVILLE")
     assert "Development standards" in doc["title"]
     assert zr.evidence([doc], "MR6")
+
+
+def test_public_zoning_passages_are_grounded_and_scoped_to_the_mapped_district(tmp_path):
+    cache = zr.ResearchCache(tmp_path / "research.sqlite")
+    source = {"url": "https://www.chicopeema.gov/zoning", "title": "Zoning Ordinance", "digest": "ordinance"}
+    earlier = "In the Residence A district, the minimum lot size is described in a separate schedule."
+    matched = "In the Residence B district the minimum front setback is 20 feet, subject to other provisions."
+    town_guidance = "Check the town’s zoning amendment register for the latest adopted amendments."
+    payload = {
+        "sources": [source],
+        "candidates": [
+            {"source_index": 0, "topic": "dimensional standards", "excerpt": earlier, "district_text_match": False},
+            {"source_index": 0, "topic": "dimensional standards", "excerpt": matched, "district_text_match": True},
+            {"source_index": 0, "topic": "allowed uses", "excerpt": matched, "district_text_match": True},
+            {"source_index": 0, "topic": "overlay and amendments", "excerpt": town_guidance,
+             "district_text_match": False},
+        ],
+        "rule_candidates": [
+            {"excerpt_index": 1, "field": "setback", "source_text": "20 feet"},
+            {"excerpt_index": 0, "field": "lot area", "source_text": "9000 sq ft"},
+        ],
+    }
+    row = cache.save("CHICOPEE", "RESB", payload)
+    report = zr.public_report(row, "on demand")
+    assert report["passage_scope"] == "district_mentions"
+    assert report["passages"] == [{
+        "topic": "dimensional standards", "excerpt": matched, "source_url": source["url"],
+        "source_title": source["title"],
+    }]
+    general = cache.save("CHICOPEE", "", payload)
+    different_district = cache.save("CHICOPEE", "RESC", {
+        **payload, "candidates": [dict(entry, district_text_match=False) for entry in payload["candidates"]],
+    })
+    for lookup in (general, different_district):
+        report = zr.public_report(lookup, "on demand")
+        assert report["passage_scope"] == "municipal_guidance"
+        assert [p["excerpt"] for p in report["passages"]] == [town_guidance]
+    assert not zr.public_report({**row, "refresh_failed": 1}, "cache")["passages"]
+    assert not zr.public_report({**row, "decision": "rejected"}, "cache")["passages"]
