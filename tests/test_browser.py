@@ -63,6 +63,43 @@ def test_error_then_retry(page, app_url, property_record):
     expect(page.locator("#propertyAddress")).to_contain_text("95 MAGAZINE")
 
 
+@pytest.mark.parametrize("width", [320, 390])
+def test_street_type_conflict_keeps_the_typed_address_for_retry(page, app_url, property_record, width):
+    page.set_viewport_size({"width": width, "height": 844})
+    corrected_address = "106 Magazine St, Cambridge, MA"
+    corrected = dict(property_record, address=corrected_address,
+                     parcel={"parcel_number": "102-51", "assessor_site_address": "106 MAGAZINE ST"})
+
+    def respond(route):
+        url = route.request.url
+        if "Avenue" in url:
+            route.fulfill(status=409, json={"detail": "The address match uses a different street type. Check the street name and try again."})
+        else:
+            route.fulfill(json=corrected if "106" in url else property_record)
+
+    page.route("**/api/property?*", respond)
+    page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
+    page.goto(app_url)
+    field = page.get_by_role("combobox")
+    field.fill("95 Magazine St, Cambridge, MA")
+    field.press("Enter")
+    expect(page.locator("#propertyAddress")).to_contain_text("95 MAGAZINE ST")
+
+    incorrect_address = "106 Magazine Avenue, Cambridge, MA"
+    field.fill(incorrect_address)
+    field.press("Enter")
+    expect(page.locator("#status")).to_contain_text("different street type")
+    expect(field).to_have_value(incorrect_address)
+    expect(page.locator("#results")).to_be_hidden()
+    expect(page.get_by_role("button", name="Explore property")).to_be_enabled()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+    field.fill(corrected_address)
+    field.press("Enter")
+    expect(page.locator("#propertyAddress")).to_have_text(corrected_address)
+    expect(page.locator("#facts")).to_contain_text("102-51")
+
+
 def test_failed_address_search_hides_the_previous_property(page, app_url, property_record):
     def respond(route):
         if "Missing" in route.request.url:

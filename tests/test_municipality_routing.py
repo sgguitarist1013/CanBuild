@@ -102,3 +102,42 @@ def test_conflicting_municipalities_require_a_more_specific_address(mock_census)
     response = TestClient(server.app).get("/api/property", params={"address": "367 Main St, MA"})
     assert response.status_code == 409
     assert "multiple municipalities" in response.json()["detail"]
+
+
+@pytest.mark.parametrize(("address", "house", "conflict"), [
+    ("106 Magazine Avenue, Cambridge, MA", 106, True),
+    ("106 Magazine Ave Cambridge MA 02139", 106, True),
+    ("106 Magazine Ave Cambridge", 106, True),
+    ("106 Magazine Ave Apt. 2, Cambridge, MA", 106, True),
+    ("106 Magazine St., Cambridge, MA", 106, False),
+    ("106 Magazine Street Cambridge MA 02139", 106, False),
+    ("106 Magazine #2, Cambridge, MA", 106, False),
+    ("95 Magazine St, Cambridge, MA", 95, False),
+])
+def test_cambridge_street_type_must_agree_before_parcel_lookup(monkeypatch, mock_census, address, house, conflict):
+    matched = census_match("CAMBRIDGE", "Cambridge city", "Cambridge")
+    matched["matchedAddress"] = f"{house} MAGAZINE ST, CAMBRIDGE, MA"
+    matched["addressComponents"]["streetName"] = "MAGAZINE"
+    mock_census([matched])
+    lot = "102-51" if house == 106 else "101-200"
+    parcel_query = AsyncMock(return_value=[{"attributes": {
+        "OBJECTID": 1, "CITY": "CAMBRIDGE", "ADDR_NUM": str(house),
+        "SITE_ADDR": f"{house} MAGAZINE ST", "FULL_STR": "MAGAZINE ST", "MAP_PAR_ID": lot, "LOC_ID": lot,
+    }}])
+    monkeypatch.setattr(parcel_engine, "query", parcel_query)
+    monkeypatch.setattr(parcel_engine, "selected_geometry", AsyncMock(return_value=None))
+    monkeypatch.setattr(server.municipal_zoning, "cambridge_lookup", AsyncMock(return_value=None))
+    monkeypatch.setattr(server.municipal_zoning, "multifamily_screen", AsyncMock(return_value={}))
+    monkeypatch.setattr(server.ma_sales, "search", AsyncMock(return_value={"candidates": []}))
+    monkeypatch.setattr(server, "search_zoning_sources", AsyncMock(return_value={}))
+    monkeypatch.setattr(server, "queue_registry_review", lambda *args: None)
+
+    response = TestClient(server.app).get("/api/property", params={"address": address})
+
+    if conflict:
+        assert response.status_code == 409
+        assert "different street type" in response.json()["detail"]
+        parcel_query.assert_not_awaited()
+    else:
+        assert response.status_code == 200
+        assert response.json()["parcel"]["parcel_number"] == lot

@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from typing import Literal
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from parcel_engine import resolve_parcel, conceptual_massing, normalize_address, same_street
+from parcel_engine import resolve_parcel, conceptual_massing, normalize_address, same_street, street_type_conflicts
 import boston
 import ma_sales
 import municipal_zoning
@@ -267,6 +267,8 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
                 jurisdiction_source = "Somerville address request"
         elif not geocoded:
             raise HTTPException(502, "Geocoder returned no coordinates.")
+        elif city != "BOSTON" and street_type_conflicts(address, parts):
+            raise HTTPException(409, "The address match uses a different street type. Check the street name and try again.")
         result["address"] = m.get("matchedAddress") if geocoded else address
         if jurisdiction_source == "Census municipal boundary":
             result["sources"].append({"name": "Census municipality boundary lookup", "url": CENSUS_GEOGRAPHIES})

@@ -75,6 +75,34 @@ def same_street(actual, requested):
     return a == b or (a[-1] in types and a[:-1] == b) or (b[-1] in types and b[:-1] == a)
 
 
+def street_type_conflicts(address, components):
+    """Detect a known street type that Census replaced with another known type."""
+    matched_type = clean(components.get("suffixType"))
+    matched_type = STREET_TYPES.get(matched_type, matched_type)
+    types = STREET_TYPES.values()
+    if matched_type not in types or not requested_house_number(address):
+        return False
+
+    segment, _, remainder = normalize_address(address).partition(",")
+    segment = re.split(r"\s*(?:#|\s(?:unit|apt\.?)\s+)", segment, maxsplit=1, flags=re.I)[0].strip()
+    segment = re.sub(r"\s+(?:MA|Massachusetts)(?:\s+\d{5}(?:-\d{4})?)?$|\s+\d{5}(?:-\d{4})?$",
+                     "", segment, flags=re.I)
+    tokens = clean(segment).split()[1:]
+    if not remainder or re.match(r"\s*(?:MA|Massachusetts|\d{5})\b", remainder, flags=re.I):
+        localities = (clean(components.get(key)).split() for key in ("postal_city", "city"))
+        for locality in sorted(localities, key=len, reverse=True):
+            if locality and tokens[-len(locality):] == locality:
+                tokens = tokens[:-len(locality)]
+                break
+    suffix_direction = clean(components.get("suffixDirection"))
+    if tokens and suffix_direction and DIRECTIONS.get(tokens[-1], tokens[-1]) == DIRECTIONS.get(suffix_direction, suffix_direction):
+        tokens.pop()
+    if len(tokens) < 2:
+        return False
+    requested_type = STREET_TYPES.get(tokens[-1], tokens[-1])
+    return requested_type in types and requested_type != matched_type
+
+
 def exact_address_match(feature, house, street, city, postal_city=None):
     """Reject a nearby parcel unless its assessor address matches all supplied components."""
     if not house or not street or not city:
