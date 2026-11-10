@@ -413,23 +413,55 @@ class ResearchCache:
         return result.rowcount == 1
 
 
+def public_passages(payload, district):
+    entries = payload["candidates"]
+    general_topics = {"overlay and amendments", "existing nonconformity", "parking and review"}
+    # AI can prioritize only passages whose proposed text appears in the fetched source.
+    grounded = grounded_rules(payload.get("rule_candidates", []), entries)
+    ordered = dict.fromkeys([rule["excerpt_index"] for rule in grounded] + list(range(len(entries))))
+    readable = [entries[index] for index in ordered if payload["sources"][entries[index]["source_index"]]["digest"]]
+    district_passages = [entry for entry in readable if district and entry.get("district_text_match")]
+    selected = district_passages or [entry for entry in readable if entry["topic"] in general_topics]
+    passages = []
+    seen = set()
+    for entry in selected:
+        source = payload["sources"][entry["source_index"]]
+        excerpt = entry["excerpt"]
+        key = (source["url"], excerpt)
+        if key in seen:
+            continue
+        seen.add(key)
+        passages.append({"topic": entry["topic"], "excerpt": excerpt,
+                         "source_title": source["title"], "source_url": source["url"]})
+        if len(passages) == 3:
+            break
+    return passages, "district_mentions" if district_passages else "municipal_guidance"
+
+
 def public_report(row, lookup):
     payload = json.loads(row["payload"])
     sources = []
     for index, source in enumerate(payload["sources"]):
         topics = sorted({e["topic"] for e in payload["candidates"] if e["source_index"] == index})
         sources.append({"title": source["title"], "url": source["url"], "topics": topics})
+    fresh = ResearchCache.fresh(row)
     if row["refresh_failed"]:
         status = "Latest official-source check was incomplete. Available references are shown below."
     elif row["decision"] == "rejected":
         status = "The current research was rejected in review. Links are retained for reference."
+    elif not fresh:
+        status = "The saved zoning research needs a fresh source check. Available references are shown below."
     elif row["decision"] == "reviewed":
         status = "The evidence has been reviewed. These references are separate from the calculation rules."
     elif payload["candidates"]:
         status = "Official-source passages found. District applicability and amendments still need review."
     else:
         status = "Official sources located. Usable ordinance text or district rules still need review."
-    return {"status": status, "sources": sources, "municipality": row["city"], "district": row["district"] or None,
+    passages, scope = [], None
+    if fresh and not row["refresh_failed"] and row["decision"] != "rejected":
+        passages, scope = public_passages(payload, row["district"])
+    return {"status": status, "sources": sources, "passages": passages, "passage_scope": scope if passages else None,
+            "municipality": row["city"], "district": row["district"] or None,
             "lookup": lookup, "checked_at": row["checked_at"], "collected_at": row["discovered_at"],
             "needs_review": row["decision"] == "pending"}
 

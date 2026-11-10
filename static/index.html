@@ -53,6 +53,7 @@
 <p class="tag" id="zoneStatus"></p>
 <h3 id="potentialTitle">What can I do here?</h3>
 <p id="potentialAnswer" class="answer"></p>
+<p id="useRecommendation" class="small" hidden></p>
 <p id="propertyFactsSummary" class="small muted" hidden></p>
 <p id="deedSummary" class="small muted" hidden></p>
 <p id="salePreview" class="small" hidden></p>
@@ -154,6 +155,8 @@ function renderOpportunity(d) {
   const best=d.redevelopment?.best;
   const envelope=d.zoning_potential;
   const buildout=d.buildout_review;
+  const research=d.on_demand_zoning_research;
+  const zoningPassages=research?.passages?.length;
   const sharedSite=d.parcel?.assessor_account_count>1;
   const ownershipReview=d.recommendations?.some(check=>check.confidence==='Development site ownership unresolved');
   const candidates=d.parcel_candidates?.length;
@@ -200,10 +203,17 @@ function renderOpportunity(d) {
     if(ownershipReview) limit='Confirm which ownership rights apply to the whole site before estimating redevelopment.';
     answer=d.zoning_review?.lot_area_status
       ? 'PlotDocket found local expansion standards. '+d.zoning_review.lot_area_status+'.'
-      : 'PlotDocket matched the zoning district. An automated buildout estimate is currently unavailable.';
+      : zoningPassages
+        ? (research.passage_scope==='district_mentions'
+            ? 'PlotDocket matched the zoning district and found official passages that mention it.'
+            : 'PlotDocket matched the zoning district and found local guidance. The district-specific rules still need checking.')
+        : 'PlotDocket matched the zoning district. An automated buildout estimate is currently unavailable.';
+    if(zoningPassages&&!limit) limit='Confirm which rules, overlays and amendments apply to this lot before estimating what fits.';
     [action,target]=linkedStandards?['View district standards','districtDetails']:['View zoning sources','districtDetails'];
   } else {
-    answer='PlotDocket matched the parcel. Confirm its zoning district before estimating what can be built.';
+    answer=zoningPassages
+      ? 'PlotDocket matched the parcel and found local zoning guidance. The zoning district for this lot is still unconfirmed.'
+      : 'PlotDocket matched the parcel. Confirm its zoning district before estimating what can be built.';
     [action,target]=['View zoning sources','districtDetails'];
   }
 
@@ -254,7 +264,12 @@ function renderOpportunity(d) {
     link.href=source.url;link.target='_blank';link.rel='noopener noreferrer';link.textContent=source.name+' ↗';
     $('buildoutSources').append(link);
   }
-  $('potentialAnswer').textContent=answer;
+  const recommendation=d.use_recommendation;
+  const leadsWithUse=best&&recommendation?.status==='conceptual_redevelopment';
+  $('potentialAnswer').textContent=leadsWithUse?recommendation.summary:answer;
+  if(leadsWithUse) limit='';
+  $('useRecommendation').hidden=!recommendation||leadsWithUse||recommendation.status==='retain_and_review';
+  $('useRecommendation').textContent=recommendation?.summary||'';
   $('potentialLimit').textContent=limit;
   $('potentialLimit').hidden=!limit;
   $('resultAction').textContent=action;
@@ -419,6 +434,7 @@ function render(d) {
   $('status').textContent=d.parcel?'Property records loaded.':d.parcel_candidates?.length?'Address found. Confirm the parcel below.':'Parcel match unavailable.';
   $('propertyAddress').focus({preventScroll:true});
   $('results').scrollIntoView({block:'start'});
+  void loadPermits();
 }
 function permitLink(container, label, url) {
   if(!url?.startsWith('https://')) return;
@@ -444,12 +460,12 @@ function resetPermits(report) {
 
 async function loadPermits() {
   const report=last;
-  if(!report?.permit_coverage||report.permitLookup) return;
+  if(!report?.parcel||!report.permit_coverage||report.permitLookup) return;
   report.permitLookup='loading';
   $('retryPermits').hidden=true;
   $('permitStatus').textContent='Checking city permit records…';
   const query=new URLSearchParams({
-    municipality:report.coverage.municipality,
+    municipality:report.municipality_match?.municipality||report.coverage.municipality,
     address:report.assessor_address||report.parcel.assessor_site_address||report.address,
     parcel:report.parcel.parcel_number||'',
   });
@@ -483,9 +499,6 @@ async function loadPermits() {
   }
 }
 
-$('permitDetails').addEventListener('toggle',()=>{
-  if($('permitDetails').open) loadPermits();
-});
 $('retryPermits').onclick=loadPermits;
 
 function appendDeed(container,deed){
@@ -509,13 +522,38 @@ $('onDemandZoning').open=false;
 $('onDemandStatus').textContent=discovery
   ? discovery.status+(discovery.collected_at?' Sources collected '+new Date(discovery.collected_at).toLocaleDateString()+'.':'')
   : '';
-$('onDemandSources').replaceChildren();
+const sources=$('onDemandSources');
+sources.replaceChildren();
+const passages=document.createElement('div');
+passages.id='onDemandPassages';
+sources.append(passages);
+if(discovery?.passages?.length){
+  const context=document.createElement('p');
+  context.className='small muted';
+  context.textContent=discovery.passage_scope==='district_mentions'
+    ? 'These passages mention the mapped district. Confirm the current rules and any exceptions for this lot.'
+    : 'These passages describe municipal zoning. Check the district-specific rules before applying them to this lot.';
+  passages.append(context);
+  for(const passage of discovery.passages){
+    const row=document.createElement('div');
+    row.className='item';
+    const label=document.createElement('strong');
+    label.textContent=passage.topic;
+    const quote=document.createElement('p');
+    quote.className='small';
+    quote.textContent=passage.excerpt;
+    row.append(label,quote);
+    permitLink(row,'Read official source',passage.source_url);
+    passages.append(row);
+  }
+}
+passages.hidden=!passages.childElementCount;
 for(const source of discovery?.sources||[]){
   if(!source.url?.startsWith('https://'))continue;
   const a=document.createElement('a');
   a.href=source.url;a.target='_blank';a.rel='noopener noreferrer';a.textContent=source.title+' ↗';
   if(source.topics?.length)a.title=source.topics.join(', ');
-  $('onDemandSources').append(a);
+  sources.append(a);
 }
 const p=d.parcel, owners=p?.recorded_owners||[];
 $('ownerStatus').textContent=owners.length?'Assessor-reported owner / entity: '+owners.join('; ')+'. Source: '+(p.data_source||'MassGIS assessor extract')+'. Check the latest deed for current title.':'No owner attributed until an assessor record provides the name or entity.';

@@ -59,7 +59,7 @@ def mock_census(monkeypatch):
     return configure
 
 
-def test_hyannis_uses_barnstable_parcel_sales_zoning_and_deed_route(monkeypatch, mock_census):
+def test_hyannis_uses_barnstable_parcel_sales_zoning_and_deed_route(monkeypatch, mock_census, tmp_path):
     mock_census([census_match("HYANNIS", "Barnstable Town city", "Barnstable Town")])
     record = {"attributes": {
         "OBJECTID": 1, "CITY": "BARNSTABLE", "ADDR_NUM": "367", "SITE_ADDR": "367 MAIN STREET (HYANNIS), HYANNIS",
@@ -76,8 +76,15 @@ def test_hyannis_uses_barnstable_parcel_sales_zoning_and_deed_route(monkeypatch,
     monkeypatch.setattr(server.municipal_zoning, "multifamily_screen", atlas)
     sales = AsyncMock(return_value={"candidates": []})
     monkeypatch.setattr(server.ma_sales, "search", sales)
-    research = AsyncMock(return_value={})
-    monkeypatch.setattr(server, "search_zoning_sources", research)
+    ordinance = "https://townofbarnstable.us/zoning"
+    guidance = "Check the town’s zoning amendment register for the latest adopted amendments."
+    research = AsyncMock(return_value={
+        "sources": [{"url": ordinance, "title": "Zoning amendments", "digest": "example"}],
+        "candidates": [{"source_index": 0, "topic": "overlay and amendments", "excerpt": guidance}],
+    })
+    cache = server.zoning_research.ResearchCache(tmp_path / "research.sqlite")
+    monkeypatch.setattr(server.zoning_research, "cache", lambda: cache)
+    monkeypatch.setattr(server.zoning_research, "discover", research)
     monkeypatch.setattr(server, "queue_registry_review", lambda *args: None)
 
     response = TestClient(server.app).get("/api/property", params={"address": "367 Main St, Hyannis, MA"})
@@ -92,6 +99,11 @@ def test_hyannis_uses_barnstable_parcel_sales_zoning_and_deed_route(monkeypatch,
     assert result["parcel"]["parcel_number"] == "test-lot"
     assert atlas.await_args.args[1] == sales.await_args.args[3] == research.await_args.args[0] == "BARNSTABLE"
     assert result["registry"]["district"] == result["parcel"]["deed_verification"]["district"] == "Barnstable"
+    assert result["on_demand_zoning_research"]["district"] is None
+    assert result["on_demand_zoning_research"]["passages"][0]["excerpt"] == guidance
+    assert result["on_demand_zoning_research"]["passages"][0]["source_url"] == ordinance
+    assert result["zoning"] is None
+    assert result["zoning_potential"] is None
 
 
 def test_conflicting_municipalities_require_a_more_specific_address(mock_census):

@@ -105,6 +105,44 @@ def cost_budget(gross_area, existing_area, stories, units, acquisition, sellout,
     return {key: round(value) if value is not None else None for key, value in lines.items()}
 
 
+def recommend_use(report, *, site_control_unresolved=False):
+    """Select the next use to investigate from the evidence in an address report."""
+    if not report.get("parcel"):
+        return None
+    if site_control_unresolved:
+        return {"status": "site_control_unresolved", "summary": "Evaluate the property as it exists today. Whole-site development depends on confirming which ownership rights are included."}
+
+    screen = report.get("redevelopment") or {}
+    best = screen.get("best")
+    if screen.get("decision") == "retain_and_review":
+        return {"status": "retain_and_review", "summary": "Start with the existing building. The screened rebuild would reduce existing space or homes."}
+    if (report.get("cambridge_approvals") or {}).get("pricing_on_hold"):
+        return {"status": "approval_review", "summary": "Start with the existing use while the city reviews the proposed change. The approval path can affect what fits and what it costs."}
+    if screen.get("decision") == "modeled_loss" and best and not best.get("restricted_units"):
+        return {"status": "retain_and_review", "summary": "Start with the existing use. The screened rebuild shows a loss even under the favorable assumptions."}
+    if best:
+        conditions = ["parcel fit and approvals"]
+        if best.get("conditional"):
+            conditions.append("affordable-housing eligibility")
+        if best.get("restricted_units"):
+            conditions.append("restricted-home proceeds")
+        if best.get("sellout_high") is None:
+            conditions.append("qualifying closed sales")
+        if not screen.get("acquisition_proxy"):
+            conditions.append("acquisition cost")
+        return {"status": "conceptual_redevelopment", "summary": (
+            f"Investigate the {best['stories']}-story redevelopment option. "
+            f"Confirm {', '.join(conditions)} before ranking it against the existing use."
+        )}
+    if report.get("buildout_review"):
+        return {"status": "building_types_to_screen", "summary": "Compare retaining the existing use with the local residential building types. Parcel fit and additional homes are unresolved."}
+    if report.get("zoning_review"):
+        return {"status": "expansion_to_screen", "summary": "Screen an addition to the existing property using the local dimensional rules. Confirm lot and approval requirements before estimating an addition."}
+    if (report.get("multifamily_screen") or {}).get("districts"):
+        return {"status": "overlay_to_screen", "summary": "Investigate the mapped multifamily district. Its parcel-specific rules and approval path need confirmation."}
+    return {"status": "unresolved", "summary": "Use the property's current condition as the starting point. Available evidence does not establish a higher-value use for this parcel."}
+
+
 def analyze_redevelopment(massing, building, references=(), *, current_market_range=None):
     if not massing or not massing.get("gross_area_high_sqft"):
         return {"status": "No supported redevelopment envelope for this parcel."}

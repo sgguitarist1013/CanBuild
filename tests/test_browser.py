@@ -267,31 +267,57 @@ def test_smaller_rebuild_leads_with_existing_building_on_mobile(page, app_url, p
     expect(page.locator("#opportunityNote")).to_contain_text("2,083 sq ft of existing living area")
 
 
-def test_somerville_zoning_details_open_from_mobile_summary(page, app_url, property_record):
-    page.set_viewport_size({"width": 390, "height": 844})
+@pytest.mark.parametrize("width", [320, 390])
+@pytest.mark.parametrize("zoning_state", ["mapped", "guidance", "unmatched", "unavailable", "stale"])
+def test_address_report_displays_live_zoning_evidence(page, app_url, property_record, width, zoning_state):
+    page.set_viewport_size({"width": width, "height": 844})
     section = "https://online.encodeplus.com/regs/somerville-ma/doc-view.aspx?pn=0&ajax=0&secid=540"
+    mapped = zoning_state != "unmatched"
+    district_passage = zoning_state == "mapped"
+    excerpt = ("The MR6 development standards specify how to check maximum building height." if district_passage
+               else "The town publishes a register of zoning amendments.")
+    available = zoning_state not in ("unavailable", "stale")
     report = {
-        "status": "Official-source passages found. District applicability and amendments still need review.",
+        "district": "MR6" if mapped else None,
+        "passage_scope": "district_mentions" if district_passage else "municipal_guidance",
+        "status": ("Official-source passages found. District applicability and amendments still need review."
+                   if available else "The saved zoning research needs a fresh source check. Available references are shown below."
+                   if zoning_state == "stale" else "Latest official-source check was incomplete. Available references are shown below."),
         "sources": [{"title": "Dimensional regulations", "url": section, "topics": ["dimensional standards"]}],
-        "collected_at": "2026-11-07T18:30:00+00:00",
+        "passages": [{"topic": "dimensional standards" if district_passage else "overlay and amendments",
+                      "excerpt": excerpt, "source_url": section}] if available else [],
     }
     record = dict(property_record, address="50 PROSPECT ST, SOMERVILLE, MA",
-                  zoning={"district": "MR6"}, on_demand_zoning_research=report)
+                  zoning={"district": "MR6"} if mapped else None, on_demand_zoning_research=report)
     page.route("**/api/property?*", lambda route: route.fulfill(json=record))
     page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
     page.goto(app_url)
     page.get_by_role("combobox").fill("50 Prospect St, Somerville, MA")
     page.get_by_role("button", name="Explore property").click()
-    expect(page.locator("#zoneStatus")).to_have_text("MR6 · City zoning map matched")
-    expect(page.locator("#potentialAnswer")).to_contain_text("automated buildout estimate is currently unavailable")
+    expect(page.locator("#zoneStatus")).to_have_text(
+        "MR6 · City zoning map matched" if mapped else "Zoning district unconfirmed",
+    )
+    expected = {
+        "mapped": "found official passages that mention it",
+        "guidance": "The district-specific rules still need checking",
+        "unmatched": "The zoning district for this lot is still unconfirmed",
+        "unavailable": "automated buildout estimate is currently unavailable",
+        "stale": "automated buildout estimate is currently unavailable",
+    }
+    expect(page.locator("#potentialAnswer")).to_contain_text(expected[zoning_state])
     expect(page.locator("#redevelopmentMetrics")).to_be_hidden()
     expect(page.get_by_text("On-demand zoning research", exact=True)).to_be_hidden()
-    page.get_by_role("button", name="View district standards").click()
+    page.get_by_role("button", name="View district standards" if mapped else "View zoning sources").click()
     expect(page.locator("#districtDetails > summary")).to_be_focused()
     expect(page.locator("#onDemandStatus")).to_be_visible()
-    expect(page.locator("#onDemandStatus")).to_contain_text("amendments still need review")
     expect(page.get_by_role("link", name="Dimensional regulations")).to_have_attribute("href", section)
-    assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+    if available:
+        expect(page.locator("#onDemandPassages")).to_contain_text(excerpt)
+        expect(page.get_by_role("link", name="Read official source")).to_have_attribute("href", section)
+    else:
+        expect(page.locator("#onDemandStatus")).to_contain_text("fresh source check" if zoning_state == "stale" else "incomplete")
+        expect(page.locator("#onDemandPassages")).to_be_empty()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
 
 
 def test_nr_buildout_and_size_matched_sales_are_visible_on_mobile(page, app_url, property_record):
@@ -346,12 +372,16 @@ def test_verified_deed_and_pending_lead_stay_visibly_distinct(page, app_url, pro
     expect(page.locator("#pendingRegistryList")).to_contain_text("Awaiting MassLandRecords confirmation")
 
 
-def test_permit_history_loads_only_when_opened_and_keeps_city_links(page, app_url, property_record):
+def test_address_loads_use_guidance_and_permits_without_more_input(page, app_url, property_record):
     coverage = {"source_url": "https://data.cambridgema.gov/d/3wsm-e5jx",
                 "official_lookup_url": "https://www.cambridgema.gov/inspection/codesandmaps/recordsandarchives",
                 "coverage_note": "City permit dataset"}
     property_record["coverage"] = {"municipality": "CAMBRIDGE"}
     property_record["permit_coverage"] = coverage
+    property_record["use_recommendation"] = {
+        "status": "unresolved",
+        "summary": "Use the property's current condition as the starting point.",
+    }
     calls = []
 
     def respond(route):
@@ -367,8 +397,11 @@ def test_permit_history_loads_only_when_opened_and_keeps_city_links(page, app_ur
     page.goto(app_url)
     page.get_by_role("combobox").fill("95 Magazine St, Cambridge, MA")
     page.get_by_role("button", name="Explore property").click()
+    expect(page.locator("#useRecommendation")).to_have_text(property_record["use_recommendation"]["summary"])
+    expect(page.locator("#permitStatus")).to_contain_text("1 permit record(s) shown.")
+    assert not page.locator("#permitDetails").evaluate("el => el.open")
+    assert not page.locator("#advancedDetails").evaluate("el => el.open")
     page.get_by_text("Property records", exact=True).click()
-    assert not calls
     page.get_by_text("Building permits and applications", exact=True).click()
     expect(page.locator("#permitRecords")).to_contain_text("138721")
     expect(page.get_by_role("link", name="City permit lookup")).to_have_attribute("href", coverage["official_lookup_url"])
