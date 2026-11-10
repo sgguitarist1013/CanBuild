@@ -497,7 +497,11 @@ $('retryPermits').onclick=loadPermits;
 function appendDeed(container,deed){
   if(!deed) return;
   const line=document.createElement('span');
-  const reference=deed.book&&deed.page?'Book '+deed.book+', page '+deed.page:deed.registered_reference?'Registered reference '+deed.registered_reference:'Search by property address';
+  const references=[
+    deed.book&&deed.page?'Book '+deed.book+', page '+deed.page:null,
+    deed.registered_reference?'Registered reference '+deed.registered_reference:null
+  ].filter(Boolean);
+  const reference=references.join(' · ')||'Search by property address';
   const status=deed.status==='verified'
     ? 'Registry deed matched · recorded '+deed.recorded_date+' · $'+fmt(deed.consideration)+' consideration · checked '+deed.checked_on
     : deed.status==='conflict'?'Registry and assessor figures differ · sale excluded'

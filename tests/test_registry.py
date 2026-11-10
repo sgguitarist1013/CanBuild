@@ -23,6 +23,28 @@ def test_registry_match_requires_exact_address_reference_and_consideration():
     assert land_court["office"] == "Registered Land (Land Court)"
 
 
+@pytest.mark.parametrize(("address", "reference", "price"), [
+    ("9 Gorham St", (80505, 62), 1650000),
+    ("62 Chandler St", (1631, 16), 2150000),
+])
+def test_unreviewed_registered_reference_stays_pending(address, reference, price):
+    deed = registry.check("Somerville", address, reference, price, "C-9999")
+
+    assert deed["status"] == "pending"
+    assert deed["registered_reference"] == "C-9999"
+    assert "consideration" not in deed
+
+
+def test_registration_reference_matches_only_reviewed_land_court_record(monkeypatch):
+    address = "62 Chandler St"
+    reference = (1631, 16)
+    key = ("SOMERVILLE", registry.address_key(address), reference)
+    monkeypatch.setitem(registry.VERIFIED, key, {**registry.VERIFIED[key], "registered_reference": "C-123"})
+    assert registry.check("Somerville", address, reference, 2150000, " C-123 ")["status"] == "verified"
+    assert registry.check("Somerville", address, reference, 2150000, "C-124")["status"] == "pending"
+    assert registry.check("Somerville", address, reference, 2000000, "C-123")["status"] == "conflict"
+
+
 @pytest.mark.parametrize("address", [
     "9 Gorham St, Unit 1, Somerville, MA",
     "9 Gorham St, Apt. 1",
@@ -67,13 +89,18 @@ def test_registry_queue_deduplicates_and_resolves_seeded_matches(tmp_path):
         return db
     leads = [{"address": "1 Unchecked St", "deed_verification": registry.check("Somerville", "1 Unchecked St", (3, 4))},
              {"address": "9 Jay St", "deed_verification": {**registry.check("Somerville", "9 Jay St", (84631, 516)), "status": "pending"}}]
+    leads.append({"address": "9 Gorham St", "deed_verification": {
+        "status": "pending", "book": 80505, "page": 62, "registered_reference": "C-9999",
+    }})
     registry.enqueue(connect, "Somerville", leads)
     registry.enqueue(connect, "Somerville", leads)
     pending = registry.review_queue(connect, 40)
-    assert [row["address"] for row in pending] == ["1 Unchecked St"]
+    assert [row["address"] for row in pending] == ["9 Gorham St", "1 Unchecked St"]
+    assert pending[0]["deed_verification"]["registered_reference"] == "C-9999"
 
 
-def test_property_endpoint_combines_local_zoning_research_and_registry_check(monkeypatch):
+@pytest.mark.parametrize(("registered_reference", "expected"), [(None, "verified"), ("C-9999", "pending")])
+def test_property_endpoint_combines_local_zoning_research_and_registry_check(monkeypatch, registered_reference, expected):
     from unittest.mock import AsyncMock
     import httpx
     from fastapi.testclient import TestClient
@@ -96,7 +123,8 @@ def test_property_endpoint_combines_local_zoning_research_and_registry_check(mon
             return response
 
     parcel = {"parcel_number": "17-A-6", "assessor_site_address": "9 GORHAM ST",
-              "last_transfer": {"book": "80505", "page": "0062", "price_reported": 1650000}}
+              "last_transfer": {"book": "80505", "page": "0062", "price_reported": 1650000,
+                                "registered_reference": registered_reference}}
     monkeypatch.setattr(server.httpx, "AsyncClient", CensusClient)
     monkeypatch.setattr(server, "resolve_parcel", AsyncMock(return_value=(parcel, {"use_description": "Multiple houses on one parcel"}, None)))
     monkeypatch.setattr(server.municipal_zoning, "somerville_parcel", AsyncMock(return_value=None))
@@ -108,4 +136,4 @@ def test_property_endpoint_combines_local_zoning_research_and_registry_check(mon
     response = TestClient(server.app).get("/api/property", params={"address": "9 Gorham St, Somerville, MA"})
     assert response.status_code == 200
     assert response.json()["on_demand_zoning_research"]["status"] == "Sources located"
-    assert response.json()["parcel"]["deed_verification"]["status"] == "verified"
+    assert response.json()["parcel"]["deed_verification"]["status"] == expected
