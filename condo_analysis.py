@@ -95,7 +95,8 @@ def reference_summary(candidates, source_url, truncated=False, min_year_built=No
         by_project = {}
         for c in sorted(clean, key=lambda c: c['sale_date'], reverse=True):
             year = c.get('year_built_reported')
-            if not c.get('project_key') or not c.get('record_reference') or not isinstance(year, (int, float)):
+            if (not c.get('project_key') or not (c.get('record_reference') or c.get('registered_reference'))
+                    or not isinstance(year, (int, float))):
                 continue
             if 0 <= int(c['sale_date'][:4]) - year <= 1:
                 if retain_unit_layouts:
@@ -250,7 +251,7 @@ async def condo_sales(client, lon, lat, city, boston_pid=None, min_year_built=No
     response=await client.get(ma_sales.SERVICE,params={'f':'json',
         'where':"CITY = '"+city.upper().replace("'","''")+"' AND UPPER(USE_DESC) LIKE '%CONDO%' AND LS_PRICE >= 10000 AND RES_AREA > 0"+(f' AND YEAR_BUILT >= {min_year_built}' if min_year_built else ''),
         'geometry':f'{lon},{lat}','geometryType':'esriGeometryPoint','inSR':4326,'distance':1609 * radius_miles,'units':'esriSRUnit_Meter',
-        'spatialRel':'esriSpatialRelIntersects','outFields':'OBJECTID,PROP_ID,MAP_PAR_ID,LOC_ID,SITE_ADDR,CITY,LS_DATE,LS_PRICE,LS_BOOK,LS_PAGE,RES_AREA,YEAR_BUILT,USE_DESC',
+        'spatialRel':'esriSpatialRelIntersects','outFields':'OBJECTID,PROP_ID,MAP_PAR_ID,LOC_ID,SITE_ADDR,CITY,LS_DATE,LS_PRICE,LS_BOOK,LS_PAGE,REG_ID,RES_AREA,YEAR_BUILT,USE_DESC',
         'returnGeometry':'false','resultRecordCount':500,'orderByFields':'LS_DATE DESC'},timeout=httpx.Timeout(18,connect=4))
     response.raise_for_status();data=response.json()
     if data.get('error'):
@@ -266,6 +267,6 @@ async def condo_sales(client, lon, lat, city, boston_pid=None, min_year_built=No
         if key is None or key in seen:continue
         seen.add(key)
         a['_record_reference']=f"Book {a['LS_BOOK']}, page {a['LS_PAGE']}" if a.get('LS_BOOK') and a.get('LS_PAGE') else None
-        rows.append(reference(a,price,sold,area,ma_sales.SOURCE))
+        rows.append({**reference(a,price,sold,area,ma_sales.SOURCE), 'registered_reference': a.get('REG_ID')})
     return reference_summary(rows,ma_sales.SOURCE,bool(data.get('exceededTransferLimit')),min_year_built,
                              new_build_only=new_build_only,radius_miles=radius_miles)

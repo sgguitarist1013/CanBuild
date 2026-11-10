@@ -13,6 +13,7 @@ HOME = "https://www.masslandrecords.com/"
 DISTRICTS = json.loads((DOCS / "massachusetts_registry_districts.json").read_text())
 # Use the statewide selector until a district-specific portal URL is reviewed.
 PORTALS = {"Middlesex South": HOME + "MiddlesexSouth/D/", "Suffolk": HOME + "Suffolk/"}
+LAND_COURT = "Registered Land (Land Court)"
 BOOK_PAGE = re.compile(r"(?:BOOK\s*)?([0-9]+)\s*(?:/|,?\s*PAGE\s*)\s*([0-9]+)", re.I)
 
 
@@ -64,13 +65,17 @@ def district_for(municipality):
 def check(municipality, address, reference, reported_price=None, registered_reference=None):
     city = city_key(municipality)
     route = district_for(city)
+    registered_reference = str(registered_reference or "").strip()
     result = {**route, "status": "pending" if reference or registered_reference else "reference_needed"}
     if reference:
         result.update(book=reference[0], page=reference[1])
     if registered_reference:
-        result["registered_reference"] = str(registered_reference)
+        result["registered_reference"] = registered_reference
     reviewed = VERIFIED.get((city, address_key(address), reference))
     if not reviewed:
+        return result
+    if registered_reference and (reviewed["office"] != LAND_COURT
+                                 or reviewed.get("registered_reference") != registered_reference):
         return result
     if reported_price is not None and reported_price != reviewed["consideration"]:
         result["status"] = "conflict"
@@ -79,7 +84,8 @@ def check(municipality, address, reference, reported_price=None, registered_refe
 
 
 def sale_deed(city, sale):
-    return check(city, sale.get("address"), reference_pair(sale.get("record_reference")), sale.get("sale_price"))
+    return check(city, sale.get("address"), reference_pair(sale.get("record_reference")),
+                 sale.get("sale_price"), registered_reference=sale.get("registered_reference"))
 
 
 def shortlist(city, candidates, limit=12):
@@ -156,7 +162,9 @@ def pending_review(row):
     evidence = json.loads(row["evidence"])
     pair = transfer_pair(evidence)
     # Preserve price conflicts as outstanding even when a deed exists.
-    if evidence["status"] == "conflict" or check(row["city"], row["address"], pair)["status"] != "verified":
+    if evidence["status"] == "conflict" or check(
+        row["city"], row["address"], pair, registered_reference=evidence.get("registered_reference"),
+    )["status"] != "verified":
         return {"id": row["id"], "municipality": row["city"], "address": row["address"],
                 "deed_verification": evidence}
     return None

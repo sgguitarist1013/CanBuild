@@ -47,7 +47,7 @@ async def search(client, lon, lat, city, parcel, building, limit=12):
         f" AND {area_field} BETWEEN {area*.85} AND {area*1.15}",
         "geometry":f"{lon},{lat}","geometryType":"esriGeometryPoint","inSR":4326,
         "units":"esriSRUnit_Meter","spatialRel":"esriSpatialRelIntersects",
-        "outFields":"OBJECTID,MAP_PAR_ID,LOC_ID,SITE_ADDR,CITY,LS_DATE,LS_PRICE,LS_BOOK,LS_PAGE,BLD_AREA,RES_AREA,UNITS,YEAR_BUILT,USE_DESC,LOT_SIZE,LOT_UNITS",
+        "outFields":"OBJECTID,MAP_PAR_ID,LOC_ID,SITE_ADDR,CITY,LS_DATE,LS_PRICE,LS_BOOK,LS_PAGE,REG_ID,BLD_AREA,RES_AREA,UNITS,YEAR_BUILT,USE_DESC,LOT_SIZE,LOT_UNITS",
         "returnGeometry":"false","returnCentroid":"true","outSR":4326,"resultRecordCount":500,"orderByFields":"LS_DATE DESC"}
 
     async def fetch(radius, timeout):
@@ -123,6 +123,7 @@ def matching_sales(features, lon, lat, city, parcel, building, today):
             "price_per_comparison_sqft":round(price/size),"arm_length_status":"Not verified; assessor last-sale record only",
             "units":a.get("UNITS"),"use_description":use,"parcel_number":a.get("MAP_PAR_ID"),
             "record_reference":("Book "+str(a.get("LS_BOOK"))+" page "+str(a.get("LS_PAGE"))) if a.get("LS_BOOK") and a.get("LS_PAGE") else None,
+            "registered_reference":a.get("REG_ID"),
             "distance_miles":round(distance,3),"source_url":SOURCE,"source_name":"MassGIS assessor-reported last sale",
             "older_reference":age > 1096})
     return candidates
