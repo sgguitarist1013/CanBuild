@@ -17,17 +17,28 @@ def current_valuation(parcel, building, sales):
     area = building.get("residential_area_sqft")
     beds = building.get("bedrooms_reported")
     baths = building.get("bathrooms_reported")
+    confirmed = [sale for sale in sales.get("candidates", ())
+                 if (sale.get("deed_verification") or {}).get("status") == "verified"]
+    evidence = {
+        "confirmed_count": len(confirmed),
+        "different_property_class_count": sum(
+            sale.get("comparison_label") == "Similar residential sale · different assessor class"
+            for sale in confirmed
+        ),
+        "qualifying_count": None,
+    }
+    result["market_evidence"] = evidence
     if sales.get("truncated") or not all(positive_number(n) for n in (area, beds, baths)):
         return result
 
     eligible = []
-    for sale in sales.get("candidates", ()):
+    for sale in confirmed:
         deed = sale.get("deed_verification") or {}
         size = sale.get("comparison_area_sqft")
         sale_beds, sale_baths = sale.get("bedrooms_reported"), sale.get("bathrooms_reported")
         distance = sale.get("distance_miles")
         price = deed.get("consideration")
-        if (not sale.get("older_reference") and deed.get("status") == "verified" and price == sale.get("sale_price")
+        if (not sale.get("older_reference") and price == sale.get("sale_price")
                 and sale.get("comparison_label") == "Same assessor class"
                 and sale.get("arm_length_status") == "City sale flag Q"
                 and sale.get("comparison_area_basis") == "assessor living area"
@@ -40,6 +51,7 @@ def current_valuation(parcel, building, sales):
     matches = {}
     for sale in sorted(eligible, key=lambda row: (row["distance_miles"], abs(row["comparison_area_sqft"] - area))):
         matches.setdefault(sale["parcel_number"], sale)
+    evidence["qualifying_count"] = len(matches)
     nearby = [sale for sale in matches.values() if sale["distance_miles"] <= .5]
     selected = nearby[:4] if len(nearby) >= 3 else list(matches.values())[:3]
     if len(selected) >= 3:

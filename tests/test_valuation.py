@@ -30,11 +30,35 @@ def test_as_is_estimate_uses_three_distinct_registry_confirmed_like_sales():
     assert report["market_range"] == {"low": 1000000, "high": 1200000, "comp_count": 3,
                                        "radius_miles": .55, "comp_addresses": ["a", "b", "c"]}
     assert report["assessment"] == {"amount": 900000, "fiscal_year": 2026}
-    assert current_valuation(parcel, building, {"candidates": candidates[:7]})["market_range"] is None
+    insufficient = current_valuation(parcel, building, {"candidates": candidates[:7]})
+    assert insufficient["market_range"] is None
+    assert insufficient["market_evidence"]["qualifying_count"] == 2
     assert current_valuation(parcel, building, {"candidates": candidates, "truncated": True})["market_range"] is None
     historical = [dict(sale, older_reference=True) if sale["parcel_number"] == "c" else sale for sale in candidates[:8]]
     assert current_valuation(parcel, building, {"candidates": historical})["market_range"] is None
 
 
 def test_missing_assessment_and_comps_stay_unavailable():
-    assert current_valuation({}, {"assessed_value": float("inf")}, {}) == {"market_range": None, "assessment": None}
+    report = current_valuation({}, {"assessed_value": float("inf")}, {})
+    assert report["market_range"] is None
+    assert report["assessment"] is None
+    assert report["market_evidence"]["qualifying_count"] is None
+
+
+def test_different_property_classes_count_as_references_only():
+    parcel = {"parcel_number": "subject", "fiscal_year": 2025}
+    building = {"residential_area_sqft": 2722, "bedrooms_reported": 5, "bathrooms_reported": 2}
+    candidates = [
+        {"parcel_number": str(i), "sale_price": 1430000, "deed_verification": {
+            "status": "verified", "consideration": 1430000,
+        }, "comparison_label": "Similar residential sale · different assessor class",
+         "comparison_area_sqft": 2945, "bedrooms_reported": 6, "bathrooms_reported": 3,
+         "arm_length_status": "City sale flag Q", "comparison_area_basis": "assessor living area",
+         "distance_miles": .05 + i * .05}
+        for i in range(4)
+    ]
+    report = current_valuation(parcel, building, {"candidates": candidates})
+    assert report["market_range"] is None
+    assert report["market_evidence"] == {
+        "confirmed_count": 4, "different_property_class_count": 4, "qualifying_count": 0,
+    }

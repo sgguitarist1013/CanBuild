@@ -148,6 +148,22 @@ const $=id=>document.getElementById(id);const fmt=n=>Number.isFinite(Number(n))&
 function addFact(label,value){if(value===null||value===undefined||value==='')return;const d=document.createElement('div');d.className='item';const a=document.createElement('span');a.textContent=label;const b=document.createElement('strong');b.textContent=String(value);d.append(a,b);$('facts').append(d)}
 const money=n=>n==null?'Unavailable':(n<0?'−':'')+'$'+fmt(Math.abs(n));
 const range=(low,high)=>money(low)+' to '+money(high);
+function missingMarketEstimate(valuation,sales){
+  if(sales?.truncated) return 'The sales search returned incomplete results. We need a complete search to estimate market value.';
+  if(/\b(?:temporarily unavailable|unavailable|not configured)\b/i.test(sales?.status||'')) return 'Comparable sale records are unavailable for this report.';
+  const evidence=valuation?.market_evidence;
+  if(evidence?.qualifying_count===null) return 'We need the property’s living area, bedroom count and bathroom count to compare sales.';
+  if(evidence?.confirmed_count>0){
+    const total=evidence.confirmed_count;
+    const count=evidence.qualifying_count;
+    const allDifferent=count===0&&evidence.different_property_class_count===total;
+    const detail=allDifferent
+      ? (total===1?'The sale was for':'All '+total+' sales were for')+' a different property type in the assessor’s records.'
+      : 'Only '+count+' '+(count===1?'qualifies':'qualify')+' for this estimate.';
+    return total+' deed-confirmed '+(total===1?'sale found. ':'sales found. ')+detail+' We need three qualifying sales.';
+  }
+  return 'We need at least three similar local sales with confirmed deed prices.';
+}
 function renderValues(d){
   $('valueComparison').hidden=!d.parcel;
   const valuation=d.current_valuation;
@@ -157,7 +173,7 @@ function renderValues(d){
   $('currentMarketValue').textContent=market?range(market.low,market.high):'Estimate unavailable';
   $('currentMarketBasis').textContent=market
     ? market.comp_count+' Registry-confirmed sales within '+market.radius_miles+' mi, scaled to subject living area.'
-    : 'We need at least three similar local sales with confirmed deed prices.';
+    : missingMarketEstimate(valuation,d.sales_research);
   $('assessedValueContext').hidden=!assessment;
   $('assessedValueContext').textContent=assessment
     ? (assessment.fiscal_year?'FY '+assessment.fiscal_year+' tax assessment':'Tax assessment')+' · '+money(assessment.amount)+'. Separate from the market estimate.'
@@ -494,9 +510,7 @@ function explainReport(question, report){
   if(/\b(?:comps?|comparables?|sales?|prices?|worth|value|assess(?:ed|ment|or)?|market)\b/.test(text)){
     const answer=[];
     if(market) answer.push('The as-is market estimate is '+range(market.low,market.high)+', based on '+market.comp_count+' similar deed-confirmed sales.');
-    else if(sales?.truncated) answer.push('The sales source returned an incomplete set of records. PlotDocket cannot give a market estimate from those results.');
-    else if(/\b(?:temporarily unavailable|unavailable|not configured)\b/i.test(sales?.status||'')) answer.push('Comparable sale records are unavailable for this report, so there is no market estimate.');
-    else answer.push('The as-is market estimate needs three similar local sales with confirmed deed prices.');
+    else answer.push(missingMarketEstimate(report.current_valuation,sales));
     if(assessment) answer.push('The assessor lists '+money(assessment.amount)+(assessment.fiscal_year?' for FY '+assessment.fiscal_year:'')+' for tax purposes.');
     if(sales?.pending_registry_review?.length) answer.push('Check Comparable sales for possible matches still being reviewed.');
     return {answer:answer.join(' '),target:'salesDetails'};

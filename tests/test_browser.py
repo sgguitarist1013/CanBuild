@@ -572,3 +572,32 @@ def test_ask_report_distinguishes_project_upside_from_as_is_value(page, app_url,
     page.get_by_role("button", name="How much is it worth?").click()
     expect(answer).to_contain_text("The as-is market estimate is $1,000,000 to $1,200,000")
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+@pytest.mark.parametrize("width", [320, 390])
+def test_market_summary_and_ask_explain_nonqualifying_sales(page, app_url, property_record, width):
+    record = dict(property_record, address="9 GORHAM ST, SOMERVILLE, MA",
+                  current_valuation={
+                      "market_range": None,
+                      "assessment": {"amount": 1645700, "fiscal_year": 2025},
+                      "market_evidence": {
+                          "confirmed_count": 4, "different_property_class_count": 4, "qualifying_count": 0,
+                      },
+                  })
+    page.set_viewport_size({"width": width, "height": 844})
+    page.route("**/api/property?*", lambda route: route.fulfill(json=record))
+    page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
+    page.goto(app_url)
+    page.get_by_role("combobox").fill("9 Gorham St, Somerville, MA")
+    page.get_by_role("button", name="Explore property").click()
+    reason = "4 deed-confirmed sales found. All 4 sales were for a different property type in the assessor’s records."
+    expect(page.locator("#currentMarketValue")).to_have_text("Estimate unavailable")
+    expect(page.locator("#currentMarketBasis")).to_contain_text(reason)
+    expect(page.locator("#assessedValueContext")).to_contain_text("FY 2025 tax assessment · $1,645,700")
+    assert not page.locator("#salesDetails").evaluate("element => element.open")
+    page.get_by_text("Ask PlotDocket about this report", exact=True).click()
+    page.get_by_role("button", name="How much is it worth?").click()
+    expect(page.locator("#reportAnswerText")).to_contain_text(reason)
+    page.get_by_role("button", name="See supporting details").click()
+    expect(page.locator("#salesDetails > summary")).to_be_focused()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
