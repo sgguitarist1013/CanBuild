@@ -1,6 +1,7 @@
 import asyncio
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 from app import app
@@ -161,3 +162,47 @@ def test_public_zoning_passages_are_grounded_and_scoped_to_the_mapped_district(t
         assert [p["excerpt"] for p in report["passages"]] == [town_guidance]
     assert not zr.public_report({**row, "refresh_failed": 1}, "cache")["passages"]
     assert not zr.public_report({**row, "decision": "rejected"}, "cache")["passages"]
+
+
+@pytest.mark.parametrize("fallback", ["busy", "timeout"])
+def test_expired_zoning_fallback_does_not_publish_reviewed_passages_as_current(tmp_path, monkeypatch, fallback):
+    cache = zr.ResearchCache(tmp_path / "research.sqlite")
+    source = {"title": "Zoning Ordinance", "url": zr.WEBSITES["REVERE"], "digest": "reviewed-document"}
+    excerpt = "In the GB district the maximum building height is subject to the district standards."
+    original = cache.save("REVERE", "GB", {
+        "sources": [source],
+        "candidates": [{"source_index": 0, "topic": "dimensional standards",
+                        "excerpt": excerpt, "district_text_match": True}],
+    })
+    assert cache.review(original["id"], "reviewed", "Reviewed source")
+    assert zr.public_report(cache.current("REVERE", "GB"), "cache")["passages"]
+    with cache.connect() as db:
+        db.execute("UPDATE current_research SET checked_at = ?", ("2000-01-01T00:00:00+00:00",))
+    original_refresh = cache.refresh
+    if fallback == "busy":
+        cache.inflight = {("OTHER", str(i)): object() for i in range(12)}
+    else:
+        async def timeout(*_):
+            raise TimeoutError
+        monkeypatch.setattr(cache, "refresh", timeout)
+
+    report = asyncio.run(cache.search("REVERE", "GB", source["url"]))
+
+    assert report["passages"] == []
+    assert report["passage_scope"] is None
+    assert "fresh source check" in report["status"]
+    assert report["sources"][0]["url"] == source["url"]
+
+    cache.inflight.clear()
+    monkeypatch.setattr(cache, "refresh", original_refresh)
+
+    async def discover(*_):
+        return {"sources": [source], "candidates": [{
+            "source_index": 0, "topic": "dimensional standards",
+            "excerpt": excerpt, "district_text_match": True,
+        }]}
+
+    monkeypatch.setattr(zr, "discover", discover)
+    refreshed = asyncio.run(cache.search("REVERE", "GB", source["url"]))
+    assert refreshed["passages"][0]["excerpt"] == excerpt
+    assert "reviewed" in refreshed["status"]

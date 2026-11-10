@@ -268,7 +268,7 @@ def test_smaller_rebuild_leads_with_existing_building_on_mobile(page, app_url, p
 
 
 @pytest.mark.parametrize("width", [320, 390])
-@pytest.mark.parametrize("zoning_state", ["mapped", "guidance", "unmatched", "unavailable"])
+@pytest.mark.parametrize("zoning_state", ["mapped", "guidance", "unmatched", "unavailable", "stale"])
 def test_address_report_displays_live_zoning_evidence(page, app_url, property_record, width, zoning_state):
     page.set_viewport_size({"width": width, "height": 844})
     section = "https://online.encodeplus.com/regs/somerville-ma/doc-view.aspx?pn=0&ajax=0&secid=540"
@@ -276,12 +276,13 @@ def test_address_report_displays_live_zoning_evidence(page, app_url, property_re
     district_passage = zoning_state == "mapped"
     excerpt = ("The MR6 development standards specify how to check maximum building height." if district_passage
                else "The town publishes a register of zoning amendments.")
-    available = zoning_state != "unavailable"
+    available = zoning_state not in ("unavailable", "stale")
     report = {
         "district": "MR6" if mapped else None,
         "passage_scope": "district_mentions" if district_passage else "municipal_guidance",
         "status": ("Official-source passages found. District applicability and amendments still need review."
-                   if available else "Latest official-source check was incomplete. Available references are shown below."),
+                   if available else "The saved zoning research needs a fresh source check. Available references are shown below."
+                   if zoning_state == "stale" else "Latest official-source check was incomplete. Available references are shown below."),
         "sources": [{"title": "Dimensional regulations", "url": section, "topics": ["dimensional standards"]}],
         "passages": [{"topic": "dimensional standards" if district_passage else "overlay and amendments",
                       "excerpt": excerpt, "source_url": section}] if available else [],
@@ -301,6 +302,7 @@ def test_address_report_displays_live_zoning_evidence(page, app_url, property_re
         "guidance": "The district-specific rules still need checking",
         "unmatched": "The zoning district for this lot is still unconfirmed",
         "unavailable": "automated buildout estimate is currently unavailable",
+        "stale": "automated buildout estimate is currently unavailable",
     }
     expect(page.locator("#potentialAnswer")).to_contain_text(expected[zoning_state])
     expect(page.locator("#redevelopmentMetrics")).to_be_hidden()
@@ -313,7 +315,7 @@ def test_address_report_displays_live_zoning_evidence(page, app_url, property_re
         expect(page.locator("#onDemandPassages")).to_contain_text(excerpt)
         expect(page.get_by_role("link", name="Read official source")).to_have_attribute("href", section)
     else:
-        expect(page.locator("#onDemandStatus")).to_contain_text("incomplete")
+        expect(page.locator("#onDemandStatus")).to_contain_text("fresh source check" if zoning_state == "stale" else "incomplete")
         expect(page.locator("#onDemandPassages")).to_be_empty()
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
 

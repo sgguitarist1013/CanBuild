@@ -444,10 +444,13 @@ def public_report(row, lookup):
     for index, source in enumerate(payload["sources"]):
         topics = sorted({e["topic"] for e in payload["candidates"] if e["source_index"] == index})
         sources.append({"title": source["title"], "url": source["url"], "topics": topics})
+    fresh = ResearchCache.fresh(row)
     if row["refresh_failed"]:
         status = "Latest official-source check was incomplete. Available references are shown below."
     elif row["decision"] == "rejected":
         status = "The current research was rejected in review. Links are retained for reference."
+    elif not fresh:
+        status = "The saved zoning research needs a fresh source check. Available references are shown below."
     elif row["decision"] == "reviewed":
         status = "The evidence has been reviewed. These references are separate from the calculation rules."
     elif payload["candidates"]:
@@ -455,7 +458,7 @@ def public_report(row, lookup):
     else:
         status = "Official sources located. Usable ordinance text or district rules still need review."
     passages, scope = [], None
-    if not row["refresh_failed"] and row["decision"] != "rejected":
+    if fresh and not row["refresh_failed"] and row["decision"] != "rejected":
         passages, scope = public_passages(payload, row["district"])
     return {"status": status, "sources": sources, "passages": passages, "passage_scope": scope if passages else None,
             "municipality": row["city"], "district": row["district"] or None,
