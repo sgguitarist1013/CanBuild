@@ -14,14 +14,20 @@ DISTRICTS = json.loads((DOCS / "massachusetts_registry_districts.json").read_tex
 # Use the statewide selector until a district-specific portal URL is reviewed.
 PORTALS = {"Middlesex South": HOME + "MiddlesexSouth/D/", "Suffolk": HOME + "Suffolk/"}
 BOOK_PAGE = re.compile(r"(?:BOOK\s*)?([0-9]+)\s*(?:/|,?\s*PAGE\s*)\s*([0-9]+)", re.I)
+UNIT_DESIGNATOR = r"(?:(?:UNIT|APT\.?|APARTMENT|STE\.?|SUITE)(?:\s+|(?=\d))|#\s*)([\w-]+)"
 
 
 def address_key(address):
     # Keep unit designators and house ranges; a building match cannot verify a condo unit.
-    line = str(address or "").split(",", 1)[0].strip()
-    unit = re.search(r"\s+(?:UNIT|APT\.?|#)\s*([\w-]+)$", line, re.I)
-    street = line[:unit.start()] if unit else line
-    return " ".join(street_tokens(street)), unit[1].upper() if unit else ""
+    line, *segments = (segment.strip() for segment in str(address or "").split(","))
+    units = {match[1].upper() for segment in segments if (match := re.fullmatch(UNIT_DESIGNATOR, segment, re.I))}
+    inline = re.search(r"(?:\s+|(?=#))" + UNIT_DESIGNATOR + r"$", line, re.I)
+    if inline:
+        units.add(inline[1].upper())
+        line = line[:inline.start()]
+    if len(units) > 1:
+        return None
+    return " ".join(street_tokens(line)), next(iter(units), "")
 
 
 def reference_pair(reference):
@@ -39,7 +45,7 @@ def verified_index():
     for row in json.loads((DOCS / "verified_registry_sales.json").read_text()):
         city = row["municipality"].upper()
         key = (city, address_key(row["address"]), (row["book"], row["page"]))
-        if (key in index or city not in DISTRICTS or row["office"] not in ("Recorded Land", "Registered Land (Land Court)")
+        if (key[1] is None or key in index or city not in DISTRICTS or row["office"] not in ("Recorded Land", "Registered Land (Land Court)")
                 or not isinstance(row["consideration"], int) or row["consideration"] <= 0
                 or not 0 < row["book"] or not 0 < row["page"]
                 or date.fromisoformat(row["checked_on"]) < date.fromisoformat(row["recorded_date"])):

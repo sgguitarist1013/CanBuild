@@ -1,5 +1,6 @@
 import sqlite3
 
+import pytest
 import registry
 
 
@@ -22,14 +23,37 @@ def test_registry_match_requires_exact_address_reference_and_consideration():
     assert land_court["office"] == "Registered Land (Land Court)"
 
 
+@pytest.mark.parametrize("address", [
+    "9 Gorham St, Unit 1, Somerville, MA",
+    "9 Gorham St, Apt. 1",
+    "9 Gorham St, #1, Somerville, MA",
+    "9 Gorham St, Suite 1, Somerville, MA",
+])
+def test_comma_delimited_unit_does_not_inherit_building_deed(address):
+    assert registry.check("Somerville", address, (80505, 62), 1650000)["status"] == "pending"
+
+
+def test_exact_unit_deed_still_matches_across_address_formats(monkeypatch):
+    address = "9 Gorham St, Unit 1, Somerville, MA"
+    deed = {"address": address, "consideration": 500000}
+    monkeypatch.setattr(registry, "VERIFIED", {("SOMERVILLE", registry.address_key(address), (10, 20)): deed})
+    assert registry.check("Somerville", "9 Gorham Street#1", (10, 20), 500000)["status"] == "verified"
+    assert registry.check("Somerville", "9 Gorham Street #2", (10, 20), 500000)["status"] == "pending"
+    assert registry.check("Somerville", "9 Gorham Street", (10, 20), 500000)["status"] == "pending"
+    assert registry.check("Somerville", "9 Gorham Street Apt 1, Unit 2", (10, 20), 500000)["status"] == "pending"
+
+
 def test_pending_deeds_cannot_influence_sale_ranges():
     report = {"candidates": [
         {"address": "9 Jay St", "record_reference": "84631/516", "sale_price": 1430000, "price_per_living_sqft": 600},
+        {"address": "9 Jay St, Unit 1", "record_reference": "84631/516", "sale_price": 1430000, "price_per_living_sqft": 900},
         {"address": "1 Unchecked St", "record_reference": "3/4", "sale_price": 2500000, "price_per_living_sqft": 2000},
     ], "observed_price_per_sqft_low": 600, "observed_price_per_sqft_high": 2000, "median_sale_price": 1965000}
     result = registry.sale_report("Somerville", report)
     assert [r["address"] for r in result["candidates"]] == ["9 Jay St"]
     assert result["pending_registry_review"] == [{
+        "address": "9 Jay St, Unit 1", "deed_verification": registry.check("Somerville", "9 Jay St, Unit 1", (84631, 516)),
+    }, {
         "address": "1 Unchecked St", "deed_verification": registry.check("Somerville", "1 Unchecked St", (3, 4)),
     }]
     assert result["observed_price_per_sqft_low"] is None and result["observed_price_per_sqft_high"] is None
