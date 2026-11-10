@@ -113,8 +113,8 @@ def reference_summary(candidates, source_url, truncated=False, min_year_built=No
         'truncated': truncated, 'possible_bundled_records_excluded': len(candidates)-len([c for c,key in zip(candidates,keys) if not key[0] or counts[key]==1]),
         'min_year_built':min_year_built,
         'radius_miles': radius_miles, 'new_build_screen': new_build_only,
-        'method': ('Cambridge-wide assessor condominium records.' if citywide else f'Condominium records within approximately {radius_miles} mile(s).')+' Sale reported within three years and positive residential living area.'+(f' Reported year built is at least {min_year_built}.' if min_year_built else '')+' An observed min–max price/sq ft is shown only with at least three references.',
-        'limitations': 'These are condominium sale references, not verified new-construction comps. Deed consideration, arm’s-length status, unit size, condition, parking, floor level, views and concessions need review before adopting a pricing assumption. An observed range is not a valuation.'}
+        'method': ('Cambridge-wide assessor condominium records.' if citywide else f'Condominium records within approximately {radius_miles} mile(s).')+' Sale reported within three years and positive residential living area.'+(f' Reported year built is at least {min_year_built}.' if min_year_built else ''),
+        'limitations': 'These are condominium sale references, not verified new-construction comps. Deed consideration, arm’s-length status, unit size, condition, parking, floor level, views and concessions need review before adopting a pricing assumption.'}
 
 
 def reference(attrs, price, sold, area, source_url):

@@ -138,7 +138,8 @@ async def condo_references(municipality:str=Query(min_length=2,max_length=80,pat
             report = await condo_sales(client,lon,lat,municipality,boston_pid,min_year_built)
         report = registry.sale_report(municipality, report)
         queue_registry_review(municipality, report.get("pending_registry_review", []))
-        return report
+        # Nearby reference sales are not matched to the manual program's individual unit layouts.
+        return {**report, "observed_price_per_sqft_low": None, "observed_price_per_sqft_high": None}
     except (httpx.HTTPError,ValueError,TypeError):
         raise HTTPException(503,'Condominium sale references are temporarily unavailable. Your scenario inputs are preserved; try again later.')
 def matching_suggestions(values, query):

@@ -161,7 +161,8 @@ def test_condo_program_totals_sellout_and_property_reset(page,app_url,property_r
     expect(page.locator('#proposedDwellingUnits')).to_have_text('Define unit mix')
 
 
-def test_condo_sale_range_is_an_explicit_assumption(page,app_url,property_record):
+@pytest.mark.parametrize("width", [320, 390])
+def test_condo_sale_references_do_not_set_manual_assumptions(page, app_url, property_record, width):
     record=dict(property_record,coordinates={'lat':42.36,'lon':-71.1},coverage={'municipality':'CAMBRIDGE'})
     refs={'status':'3 condominium sale references','method':'Reported living area.','limitations':'New-construction condition is not verified.','observed_price_per_sqft_low':700,'observed_price_per_sqft_high':900,
         'candidates':[{'address':'Test condo '+str(i),'sale_date':'2026-10-01','sale_price':p,'living_area_sqft':1000,'price_per_living_sqft':p/1000,'source_url':'https://www.mass.gov/'} for i,p in enumerate([700000,800000,900000])]}
@@ -172,6 +173,7 @@ def test_condo_sale_range_is_an_explicit_assumption(page,app_url,property_record
         calls.append(1)
         route.fulfill(status=503,json={'detail':'Condo source temporarily unavailable'}) if len(calls)==1 else route.fulfill(json=refs)
     page.route('**/api/condo-sales?*',pricing_response)
+    page.set_viewport_size({"width": width, "height": 844})
     page.goto(app_url)
     page.get_by_role('combobox').fill('95 Magazine St, Cambridge, MA')
     page.get_by_role('button',name='Explore property').click()
@@ -180,24 +182,28 @@ def test_condo_sale_range_is_an_explicit_assumption(page,app_url,property_record
     row=page.locator('.unit-mix-row').first
     row.locator('[data-field="units"]').fill('3')
     row.locator('[data-field="area_sqft"]').fill('1000')
-    page.get_by_text('Condominium sale references for pricing',exact=True).click()
-    expect(page.get_by_role('button',name='Use observed range as assumptions')).to_be_disabled()
+    low = row.locator('[data-field="low_price_per_sqft"]')
+    high = row.locator('[data-field="high_price_per_sqft"]')
+    low.fill('650')
+    high.fill('950')
+    page.get_by_text('Nearby condo sale records',exact=True).click()
     page.get_by_role('button',name='Find nearby condo sales').click()
     expect(page.locator('#condoCompStatus')).to_contain_text('temporarily unavailable')
     expect(row.locator('[data-field="units"]')).to_have_value('3')
     expect(row.locator('[data-field="area_sqft"]')).to_have_value('1000')
+    expect(low).to_have_value('650')
+    expect(high).to_have_value('950')
     page.get_by_role('button',name='Find nearby condo sales').click()
     expect(page.locator('#condoReferences')).to_contain_text('Test condo 0')
     expect(page.locator('#condoCompStatus')).to_contain_text('not verified')
-    page.get_by_role('button',name='Use observed range as assumptions').click()
-    row=page.locator('.unit-mix-row').first
-    expect(row.locator('[data-field="low_price_per_sqft"]')).to_have_value('700')
-    expect(row.locator('[data-field="high_price_per_sqft"]')).to_have_value('900')
-    row.locator('[data-field="units"]').fill('3')
-    row.locator('[data-field="area_sqft"]').fill('1000')
+    expect(page.get_by_role('button', name='Use observed range as assumptions')).to_have_count(0)
+    expect(low).to_have_value('650')
+    expect(high).to_have_value('950')
+    expect(page.locator('.unit-mix-row').nth(1).locator('[data-field="low_price_per_sqft"]')).to_have_value('')
     page.get_by_role('button',name='Calculate unit totals & sellout').click()
-    expect(page.locator('#condoSellout')).to_have_text('$2,100,000–$2,700,000')
+    expect(page.locator('#condoSellout')).to_have_text('$1,950,000–$2,850,000')
     expect(page.locator('#restrictedUnitPrice')).to_have_value('')
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
 
 
 @pytest.mark.parametrize("width", [320, 390])
