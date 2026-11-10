@@ -520,34 +520,35 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
         result["recommendations"].append({"title":"Check local expansion standards","reason":"The district is mapped, but a reviewed rule set for this district is not available in PlotDocket.","next_step":"Confirm setbacks, height, lot coverage, open space, nonconforming-lot rules, overlays, and permit requirements with the municipality.","confidence":"District mapped; dimensional rules incomplete"})
     else:
         result["recommendations"].append({"title":"Review the preliminary zoning scenario","reason":"A district-specific scenario is available, subject to its stated assumptions and limitations.","next_step":"Have the city review a current survey and proposed footprint before paying for design work.","confidence":result["zoning_potential"].get("confidence")})
+    pricing_on_hold = result.get("cambridge_approvals", {}).get("pricing_on_hold")
     market_range = (result.get("current_valuation") or {}).get("market_range")
     result["redevelopment"] = analyze_redevelopment(result.get("zoning_potential"), result.get("existing_building"))
-    pricing_on_hold = result.get("cambridge_approvals", {}).get("pricing_on_hold")
-    if result["redevelopment"].get("best") and not pricing_on_hold:
-        references = None
-        try:
-            async with asyncio.timeout(13), httpx.AsyncClient(timeout=12, follow_redirects=True) as client:
-                if city.upper() == "CAMBRIDGE":
-                    coords = result["coordinates"]
-                    references = await cambridge_new_build_sales(client, lon=coords["lon"], lat=coords["lat"])
-                else:
-                    coords = result["coordinates"]
-                    references = await condo_sales(client, coords["lon"], coords["lat"], city,
-                        min_year_built=datetime.now().year - 4, radius_miles=3, new_build_only=True)
-        except (TimeoutError, httpx.HTTPError, ValueError, TypeError):
-            pass
-        if references:
-            references = registry.sale_report(city, references)
-            pending.extend(references.get("pending_registry_review", []))
-        candidates = (references or {}).get("candidates", [])
-        subject_parcel = (result.get("parcel") or {}).get("parcel_number")
-        comparable = [candidate for candidate in candidates if candidate.get("project_key") != subject_parcel]
-        result["redevelopment"] = analyze_redevelopment(
-            result["zoning_potential"], result.get("existing_building"),
-            comparable if references and not references.get("truncated") else [],
-            current_market_range=market_range,
-        )
-        result["redevelopment"]["sale_references"] = references
+    if result["redevelopment"].get("best"):
+        if not pricing_on_hold:
+            references = None
+            try:
+                async with asyncio.timeout(13), httpx.AsyncClient(timeout=12, follow_redirects=True) as client:
+                    if city.upper() == "CAMBRIDGE":
+                        coords = result["coordinates"]
+                        references = await cambridge_new_build_sales(client, lon=coords["lon"], lat=coords["lat"])
+                    else:
+                        coords = result["coordinates"]
+                        references = await condo_sales(client, coords["lon"], coords["lat"], city,
+                            min_year_built=datetime.now().year - 4, radius_miles=3, new_build_only=True)
+            except (TimeoutError, httpx.HTTPError, ValueError, TypeError):
+                pass
+            if references:
+                references = registry.sale_report(city, references)
+                pending.extend(references.get("pending_registry_review", []))
+            candidates = (references or {}).get("candidates", [])
+            subject_parcel = (result.get("parcel") or {}).get("parcel_number")
+            comparable = [candidate for candidate in candidates if candidate.get("project_key") != subject_parcel]
+            result["redevelopment"] = analyze_redevelopment(
+                result["zoning_potential"], result.get("existing_building"),
+                comparable if references and not references.get("truncated") else [],
+                current_market_range=market_range,
+            )
+            result["redevelopment"]["sale_references"] = references
     if scenario := result["redevelopment"].get("best"):
         result["dwelling_unit_summary"].update(
             potential_total=scenario["market_units"] + scenario["restricted_units"],

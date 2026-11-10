@@ -24,11 +24,17 @@ def test_cambridge_neighbor_meeting_requires_both_thresholds_without_a_pricing_h
         assert "If neither applies" in review["checks"][0]["text"]
 
 
-@pytest.mark.parametrize(("house", "lot", "year", "area", "frontage", "living"), [
-    (95, "101-200", 1873, 7450, 70, 2702),
-    (106, "102-51", 1886, 1108, 19.07, 2083),
+@pytest.mark.parametrize(("house", "lot", "year", "area", "frontage", "living", "sales_state"), [
+    (95, "101-200", 1873, 7450, 70, 2702, "held"),
+    (106, "102-51", 1886, 1108, 19.07, 2083, "held"),
+    # Exercise the pricing path with a synthetic newer building. The actual parcel remains subject to review.
+    (95, "101-200", 2020, 7450, 70, 2702, "empty"),
+    (95, "101-200", 2020, 7450, 70, 2702, "unavailable"),
+    (106, "102-51", 2020, 1108, 19.07, 2083, "empty"),
 ])
-def test_magazine_property_report_keeps_replacement_pricing_on_hold(monkeypatch, house, lot, year, area, frontage, living):
+def test_magazine_property_report_checks_approvals_before_replacement_pricing(
+    monkeypatch, house, lot, year, area, frontage, living, sales_state,
+):
     street = f"{house} Magazine St"
     address = f"{street}, Cambridge, MA"
     geocode = {"matchedAddress": address, "coordinates": {"x": -71.11, "y": 42.36},
@@ -55,7 +61,9 @@ def test_magazine_property_report_keeps_replacement_pricing_on_hold(monkeypatch,
     monkeypatch.setattr(server.ma_sales, "search", AsyncMock(return_value={"candidates": []}))
     monkeypatch.setattr(server, "search_zoning_sources", AsyncMock(return_value={}))
     monkeypatch.setattr(server, "queue_registry_review", lambda *args: None)
-    pricing = AsyncMock()
+    pricing = AsyncMock(return_value={"candidates": []})
+    if sales_state == "unavailable":
+        pricing.side_effect = httpx.ConnectError("Condo sales temporarily unavailable")
     monkeypatch.setattr(server, "cambridge_new_build_sales", pricing)
 
     response = TestClient(server.app).get("/api/property", params={"address": address})
@@ -66,15 +74,24 @@ def test_magazine_property_report_keeps_replacement_pricing_on_hold(monkeypatch,
     assert report["zoning_potential"]["stories"] == 4
     assert [item["status"] for item in report["constraints"]] == ["no mapped intersection"] * 4
     review = report["cambridge_approvals"]
-    assert review["pricing_on_hold"]
-    assert [check["url"] for check in review["checks"]] == [CAMBRIDGE_DEMOLITION, CAMBRIDGE_NEIGHBOR_NOTICE]
-    pricing.assert_not_awaited()
+    held = sales_state == "held"
+    assert review["pricing_on_hold"] is held
+    expected_checks = [CAMBRIDGE_DEMOLITION, CAMBRIDGE_NEIGHBOR_NOTICE] if held else [CAMBRIDGE_NEIGHBOR_NOTICE]
+    assert [check["url"] for check in review["checks"]] == expected_checks
+    if held or house == 106:
+        pricing.assert_not_awaited()
+    else:
+        pricing.assert_awaited_once()
     if house == 95:
         best = report["redevelopment"]["best"]
         assert best["conditional"]
-        assert all(best[field] is None for field in ("cost_high", "sellout_high", "surplus_high"))
+        assert all(best[field] is None for field in ("sellout_low", "sellout_high", "surplus_low", "surplus_high"))
+        if held:
+            assert best["cost_low"] is best["cost_high"] is None
+            assert not best["cost_lines"]
     else:
         assert report["redevelopment"]["decision"] == "retain_and_review"
+        assert "best" not in report["redevelopment"]
         assert "inclusionary_scenario" not in report["zoning_potential"]
 
 
