@@ -430,6 +430,13 @@ function explainReport(question, report){
   const approvalHold=report.cambridge_approvals?.pricing_on_hold
     ? {answer:'City review comes first for this rebuild. Open the approval checks to see what can affect the plan, timing and cost.',target:'districtDetails'}
     : null;
+  const retain=screen?.decision==='retain_and_review'
+    ? {
+        answer:'Start with the existing building. The screened rebuild would lose space or homes. The report leaves the rebuild unpriced. An addition or alteration needs a separate review of the local rules and site.'
+          +(approvalHold?' City review remains open for the rebuild.':''),
+        target:approvalHold||!report.zoning_potential?'districtDetails':'envelopeDetails',
+      }
+    : null;
   if(restricted){
     if(historical||approvalHold) return historical||approvalHold;
     if(/\b(?:costs?|prices?|proceeds|sell|sale|worth|value)\b/.test(text)){
@@ -442,7 +449,7 @@ function explainReport(question, report){
     return {answer:'The report does not confirm a required number of affordable homes for this project. Review the district and program rules with the city.',target:'districtDetails'};
   }
   if(cost||upside){
-    if(historical||approvalHold) return historical||approvalHold;
+    if(historical||retain||approvalHold) return historical||retain||approvalHold;
     const answer=[];
     const hasBudget=best?.cost_low!=null&&best?.cost_high!=null;
     const hasSellout=best?.sellout_low!=null&&best?.sellout_high!=null;
@@ -475,9 +482,7 @@ function explainReport(question, report){
         :'The report does not show a project profit estimate.';
       if(upside) answer.unshift(limitation);
       else answer.push(limitation);
-    } else answer.push(screen?.decision==='retain_and_review'
-      ? 'The screened rebuild would lose existing space or homes, so the report leaves it unpriced.'
-      : 'A cost and profit estimate needs a supported building plan and comparable closed condo sales.');
+    } else answer.push('A cost and profit estimate needs a supported building plan and comparable closed condo sales.');
     return {answer:answer.join(' '),target:best?'estimateDetails':report.zoning_potential?'envelopeDetails':'districtDetails'};
   }
   if(/\b(?:own|owns|owned|owners?|ownership|title|entity|transfers?)\b|\b(?:last|latest|recorded)\s+(?:deed|sale)\b|\b(?:it|this|the property)\s+sell\b/.test(text)){
@@ -503,11 +508,7 @@ function explainReport(question, report){
       target:'recordDetails'};
   }
   if(zoning){
-    if(historical||approvalHold) return historical||approvalHold;
-    if(screen?.decision==='retain_and_review') return {
-      answer:'Start with the existing building. The screened rebuild would lose space or homes. An addition or alteration needs a separate review of the local rules and site.',
-      target:'envelopeDetails',
-    };
+    if(historical||retain||approvalHold) return historical||retain||approvalHold;
     if(best) return {
       answer:'The report models '+fmt(best.market_units+best.restricted_units)+' homes and '+fmt(best.gross_area_sqft)+' sq ft of total floor area. '+(best.conditional?'This option depends on meeting affordable-housing requirements. ':'')+'Setbacks, overlays and approvals can change what fits.',
       target:'estimateDetails',

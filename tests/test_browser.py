@@ -447,6 +447,53 @@ def test_ask_report_distinguishes_affordable_home_count_and_pricing(page, app_ur
 
 
 @pytest.mark.parametrize("width", [320, 390])
+@pytest.mark.parametrize(("house", "city_review"), [(95, True), (106, True), (106, False)])
+def test_ask_report_keeps_the_magazine_st_buildout_recommendation(page, app_url, property_record, width,
+                                                               house, city_review):
+    from redevelopment import analyze_redevelopment
+
+    retain = house == 106
+    street = f"{house} MAGAZINE ST"
+    address = f"{street}, CAMBRIDGE, MA"
+    envelope = {"gross_area_low_sqft": 0, "gross_area_high_sqft": 1700 if retain else 12000, "stories": 4}
+    building = {"residential_area_sqft": 2083 if retain else 2702, "units": 3}
+    parcel = dict(property_record["parcel"], assessor_site_address=street,
+                  parcel_number="102-51" if retain else "101-200")
+    record = dict(property_record, address=address, parcel=parcel, zoning={"district": "C-1"},
+                  zoning_potential=envelope, existing_building=building,
+                  redevelopment=analyze_redevelopment(envelope, building),
+                  cambridge_approvals={"pricing_on_hold": city_review})
+    page.set_viewport_size({"width": width, "height": 844})
+    page.route("**/api/property?*", lambda route: route.fulfill(json=record))
+    page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
+    page.goto(app_url)
+    page.get_by_role("combobox").fill(address)
+    page.get_by_role("button", name="Explore property").click()
+    expect(page.locator("#propertyAddress")).to_have_text(address)
+    if retain:
+        expect(page.locator("#potentialAnswer")).to_contain_text("Start with the existing building.")
+    page.get_by_text("Ask PlotDocket about this report", exact=True).click()
+    answer = page.locator("#reportAnswerText")
+    for prompt in ("What can I build?", "Could this project make money?"):
+        page.get_by_role("button", name=prompt).click()
+        if retain:
+            expect(answer).to_contain_text("Start with the existing building. The screened rebuild would lose space or homes.")
+            expect(answer).to_contain_text("The report leaves the rebuild unpriced.")
+        if city_review:
+            expect(answer).to_contain_text("City review")
+        else:
+            expect(answer).not_to_contain_text("City review")
+        if not retain:
+            expect(answer).to_contain_text("City review comes first for this rebuild.")
+        expect(answer).not_to_contain_text("$")
+    detail = page.locator("#districtDetails" if city_review else "#envelopeDetails")
+    assert not detail.evaluate("element => element.open")
+    page.get_by_role("button", name="See supporting details").click()
+    expect(detail.locator("summary").first).to_be_focused()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+@pytest.mark.parametrize("width", [320, 390])
 @pytest.mark.parametrize("restricted", [False, True])
 def test_ask_report_explains_what_partial_pricing_excludes(page, app_url, property_record, width, restricted):
     from redevelopment import analyze_redevelopment
