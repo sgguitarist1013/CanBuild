@@ -24,6 +24,7 @@ def test_search_displays_selected_property_and_withholds_estimates(page, app_url
     expect(page.locator("#potentialAnswer")).to_contain_text("Confirm its zoning district")
     expect(page.locator("#redevelopmentMetrics")).to_be_hidden()
     expect(page.locator("#go")).to_be_enabled()
+    expect(page.get_by_role("combobox")).to_have_attribute("aria-expanded", "false")
 
 
 def test_keyboard_search_works_without_a_suggestion(page, app_url, property_record):
@@ -43,12 +44,18 @@ def test_keyboard_search_works_without_a_suggestion(page, app_url, property_reco
     assert len(calls) == 1
 
 
-def test_error_then_retry(page, app_url, property_record):
+@pytest.mark.parametrize(("width", "detail"), [
+    (390, "Census geocoding is temporarily unavailable."),
+    (320, "MassGIS returned an incomplete parcel search. Try the same address again shortly."),
+    (390, "MassGIS returned an incomplete parcel search. Try the same address again shortly."),
+])
+def test_error_then_retry(page, app_url, property_record, width, detail):
+    page.set_viewport_size({"width": width, "height": 844})
     calls = []
     def respond(route):
         calls.append(1)
         if len(calls) == 1:
-            route.fulfill(status=503, json={"detail": "Census geocoding is temporarily unavailable."})
+            route.fulfill(status=503, json={"detail": detail})
         else:
             route.fulfill(json=property_record)
     page.route("**/api/property?*", respond)
@@ -56,10 +63,75 @@ def test_error_then_retry(page, app_url, property_record):
     page.goto(app_url)
     page.get_by_role("combobox").fill("95 Magazine St, Cambridge, MA")
     page.get_by_role("button", name="Explore property").click()
-    expect(page.locator("#status")).to_contain_text("temporarily unavailable")
+    expect(page.locator("#status")).to_have_text(detail)
+    expect(page.locator("#results")).to_be_hidden()
+    expect(page.get_by_role("combobox")).to_have_value("95 Magazine St, Cambridge, MA")
     expect(page.locator("#go")).to_be_enabled()
     page.get_by_role("combobox").press("Enter")
     expect(page.locator("#propertyAddress")).to_contain_text("95 MAGAZINE")
+
+
+@pytest.mark.parametrize("width", [320, 390])
+@pytest.mark.parametrize(("incorrect_address", "message"), [
+    ("106 Magazine Avenue, Cambridge, MA", "The address match uses a different street type."),
+    ("106 Magazne St, Cambridge, MA", "The address match uses a different street name."),
+    ("106 Magazine St Apt 2, Cambridge, MA", "PlotDocket cannot verify individual units yet."),
+])
+def test_address_conflict_keeps_the_typed_address_for_retry(page, app_url, property_record, width,
+                                                          incorrect_address, message):
+    page.set_viewport_size({"width": width, "height": 844})
+    corrected_address = "106 Magazine St, Cambridge, MA"
+    corrected = dict(property_record, address=corrected_address,
+                     parcel={"parcel_number": "102-51", "assessor_site_address": "106 MAGAZINE ST"})
+
+    def respond(route):
+        url = route.request.url
+        if "Avenue" in url or "Magazne" in url or "Apt" in url:
+            route.fulfill(status=409, json={"detail": message})
+        else:
+            route.fulfill(json=corrected if "106" in url else property_record)
+
+    page.route("**/api/property?*", respond)
+    page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
+    page.goto(app_url)
+    field = page.get_by_role("combobox")
+    field.fill("95 Magazine St, Cambridge, MA")
+    field.press("Enter")
+    expect(page.locator("#propertyAddress")).to_contain_text("95 MAGAZINE ST")
+
+    field.fill(incorrect_address)
+    field.press("Enter")
+    expect(page.locator("#status")).to_contain_text(message)
+    expect(field).to_have_value(incorrect_address)
+    expect(page.locator("#results")).to_be_hidden()
+    expect(page.get_by_role("button", name="Explore property")).to_be_enabled()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+    field.fill(corrected_address)
+    field.press("Enter")
+    expect(page.locator("#propertyAddress")).to_have_text(corrected_address)
+    expect(page.locator("#facts")).to_contain_text("102-51")
+
+
+def test_failed_address_search_hides_the_previous_property(page, app_url, property_record):
+    def respond(route):
+        if "Missing" in route.request.url:
+            route.fulfill(status=404, json={"detail": "Address not matched."})
+        else:
+            route.fulfill(json=property_record)
+
+    page.route("**/api/property?*", respond)
+    page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
+    page.goto(app_url)
+    field = page.get_by_role("combobox")
+    field.fill("95 Magazine St, Cambridge, MA")
+    field.press("Enter")
+    expect(page.locator("#results")).to_be_visible()
+    field.fill("999 Missing St, Cambridge, MA")
+    field.press("Enter")
+    expect(page.locator("#status")).to_have_text("Address not matched.")
+    expect(page.locator("#results")).to_be_hidden()
+    expect(page.get_by_role("button", name="Explore property")).to_be_enabled()
 
 
 @pytest.mark.parametrize("width", [320, 390])
@@ -97,12 +169,65 @@ def test_property_conflicts_and_local_zoning_review(page, app_url, property_reco
     assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
 
 
-def test_alias_selection_owner_and_sales(page, app_url, property_record):
-    page.set_viewport_size({"width": 390, "height": 844})
-    first=dict(property_record,parcel=None,existing_building=None,parcel_candidates=[{
+@pytest.mark.parametrize("width", [320, 390])
+def test_editing_address_hides_old_boston_parcel_candidates(page, app_url, property_record, width):
+    page.set_viewport_size({"width": width, "height": 844})
+    candidate = {"parcel_number": "0303029000", "address": "38-34 ATLANTIC AV, BOSTON, MA 02110"}
+    alias = "One Lewis Wharf, Boston, MA"
+    first = dict(property_record, address=alias, parcel=None, parcel_candidates=[candidate])
+    selected = dict(property_record, address=alias, assessor_address=candidate["address"],
+                    parcel={**candidate, "recorded_owners": ["ONE LEWIS WHARF LLC"]})
+    requests = []
+
+    def respond(route):
+        url = route.request.url
+        requests.append(url)
+        if "boston_pid=" in url:
+            route.fulfill(json=selected)
+        elif "Beacon" in url:
+            route.fulfill(status=503, json={"detail": "Assessor temporarily unavailable."})
+        else:
+            route.fulfill(json=first)
+
+    page.route("**/api/property?*", respond)
+    page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
+    page.goto(app_url)
+    field = page.get_by_role("combobox")
+    field.fill(alias)
+    field.press("Enter")
+    page.get_by_role("button", name="Confirm parcel").click()
+    candidate_button = page.get_by_role("button", name="Review this assessor record")
+    expect(candidate_button).to_be_visible()
+    field.fill("1 Beacon St, Boston, MA")
+    expect(page.locator("#results")).to_be_hidden()
+    expect(candidate_button).to_be_hidden()
+    page.locator("#parcelCandidates button").evaluate("button => button.click()")
+    field.press("Enter")
+    expect(page.locator("#status")).to_have_text("Assessor temporarily unavailable.")
+    expect(page.locator("#results")).to_be_hidden()
+    assert len(requests) == 2
+    assert "boston_pid=" not in requests[1]
+
+    field.fill(alias)
+    field.press("Enter")
+    page.get_by_role("button", name="Confirm parcel").click()
+    page.get_by_role("button", name="Review this assessor record").click()
+    expect(page.locator("#propertyAddress")).to_have_text(candidate["address"])
+    expect(page.locator("#ownerStatus")).to_contain_text("ONE LEWIS WHARF LLC")
+    assert "One%20Lewis%20Wharf" in requests[-1]
+    assert "boston_pid=0303029000" in requests[-1]
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+@pytest.mark.parametrize("width", [320, 390])
+def test_alias_selection_owner_and_sales(page, app_url, property_record, width):
+    page.set_viewport_size({"width": width, "height": 844})
+    alias = "One Lewis Wharf, Boston, MA"
+    outage = "Boston assessor records are temporarily unavailable. Try the same address again shortly."
+    first=dict(property_record,address=alias,parcel=None,existing_building=None,parcel_candidates_truncated=True,parcel_candidates=[{
         'parcel_number':'0303029000','address':'38-34 ATLANTIC AV, BOSTON, MA 02110',
         'recorded_owner':'ONE LEWIS WHARF LLC','use_description':'OFFICE 3-9 STORY'}])
-    selected=dict(property_record,assessor_address='38-34 ATLANTIC AV, BOSTON, MA 02110',
+    selected=dict(property_record,address=alias,assessor_address='38-34 ATLANTIC AV, BOSTON, MA 02110',
         parcel={'parcel_number':'0303029000','recorded_owners':['ONE LEWIS WHARF LLC']},
         parcel_candidates=[],sales_research={'status':'Recorded sale candidates found','candidates':[{
             'address':'Test office sale','sale_date':'2026-01-01','sale_price':12000000,
@@ -110,27 +235,73 @@ def test_alias_selection_owner_and_sales(page, app_url, property_record):
             'parcel_number':'0000000001','source_url':'https://properties.boston.gov/'}]})
     requests=[]
     def respond(route):
+        if "Lewis%20St" in route.request.url:
+            route.fulfill(status=409, json={"detail": "The address match uses a different street type. Check the street name and try again."})
+            return
         requests.append(route.request.url)
-        route.fulfill(json=selected if 'boston_pid=0303029000' in route.request.url else first)
+        if len(requests) in (1, 3):
+            route.fulfill(status=503, json={"detail": outage})
+        else:
+            route.fulfill(json=selected if 'boston_pid=0303029000' in route.request.url else first)
     page.route('**/api/property?*',respond)
     page.route('**/api/suggest?*',lambda route:route.fulfill(json={'suggestions':[]}))
     page.goto(app_url)
-    page.get_by_role('combobox').fill('One Lewis Wharf, Boston, MA')
+    field = page.get_by_role('combobox')
+    wrong_street = "1 Lewis St, Boston, MA"
+    field.fill(wrong_street)
+    field.press('Enter')
+    expect(page.locator('#status')).to_contain_text('different street type')
+    expect(field).to_have_value(wrong_street)
+    expect(page.locator('#results')).to_be_hidden()
+    field.fill(alias)
     page.get_by_role('button',name='Explore property').click()
+    expect(page.locator('#status')).to_have_text(outage)
+    expect(field).to_have_value(alias)
+    expect(page.locator('#results')).to_be_hidden()
+    field.press('Enter')
     expect(page.locator('#ownerStatus')).to_contain_text('No owner attributed')
-    expect(page.locator('#potentialAnswer')).to_contain_text('Choose the assessor record')
+    expect(page.locator('#potentialAnswer')).to_have_text('Boston returned only part of its assessor results.')
     expect(page.locator('#redevelopmentMetrics')).to_be_hidden()
     expect(page.get_by_role('button',name='Review this assessor record')).to_be_hidden()
     page.get_by_role('button',name='Confirm parcel').click()
     expect(page.locator('#recordDetails > summary')).to_be_focused()
     page.get_by_role('button',name='Review this assessor record').click()
+    expect(page.locator('#status')).to_have_text(outage)
+    expect(page.locator('#parcelCandidateError')).to_have_text(outage)
+    expect(page.locator('#parcelCandidateError')).to_be_in_viewport()
+    expect(page.locator('#ownerStatus')).to_contain_text('No owner attributed')
+    page.get_by_role('button',name='Review this assessor record').click()
     expect(page.locator('#propertyAddress')).to_have_text('38-34 ATLANTIC AV, BOSTON, MA 02110')
     expect(page.locator('#ownerStatus')).to_contain_text('ONE LEWIS WHARF LLC')
+    expect(page.locator('#parcelCandidateError')).to_be_hidden()
     expect(page.locator('#recordDetails')).not_to_have_attribute('open', '')
     page.get_by_text('Comparable sales', exact=True).click()
     expect(page.locator('#salesCandidates')).to_be_visible()
     expect(page.locator('#salesCandidates')).to_contain_text('$12,000,000')
-    assert any('boston_pid=0303029000' in url for url in requests)
+    assert requests[0] == requests[1]
+    assert requests[2] == requests[3]
+    assert 'boston_pid=0303029000' in requests[3]
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+@pytest.mark.parametrize("width", [320, 390])
+def test_empty_partial_boston_search_explains_how_to_refine_address(page, app_url, property_record, width):
+    address = "One Lewis Wharf, Boston, MA"
+    record = dict(property_record, address=address, parcel=None, existing_building=None,
+                  parcel_candidates=[], parcel_candidates_truncated=True)
+    page.set_viewport_size({"width": width, "height": 844})
+    page.route("**/api/property?*", lambda route: route.fulfill(json=record))
+    page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
+    page.goto(app_url)
+    field = page.get_by_role("combobox")
+    field.fill(address)
+    field.press("Enter")
+    expect(page.locator("#potentialAnswer")).to_have_text("Boston returned only part of its assessor results.")
+    expect(page.locator("#potentialLimit")).to_contain_text("narrowing the search")
+    expect(page.locator("#redevelopmentMetrics")).to_be_hidden()
+    page.get_by_role("button", name="Check address").click()
+    expect(field).to_be_focused()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
 
 
 def test_condo_program_totals_sellout_and_property_reset(page,app_url,property_record):
@@ -320,30 +491,38 @@ def test_nr_buildout_and_size_matched_sales_are_visible_on_mobile(page, app_url,
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
 
 
-def test_verified_deed_and_pending_lead_stay_visibly_distinct(page, app_url, property_record):
+@pytest.mark.parametrize(("width", "registration"), [(390, None), (320, "C-9999"), (390, "C-9999")])
+def test_verified_deed_and_pending_lead_stay_visibly_distinct(page, app_url, property_record, width, registration):
     from registry import check
 
-    deed = check("Somerville", "9 Gorham St", (80505, 62), 1650000)
+    deed = check("Somerville", "9 Gorham St", (80505, 62), 1650000, registration)
     pending = {"address": "1 Unchecked St", "deed_verification": check("Somerville", "1 Unchecked St", (123, 456))}
     parcel = dict(property_record["parcel"], deed_verification=deed)
     record = dict(property_record, address="9 GORHAM ST, SOMERVILLE, MA", parcel=parcel,
                   sales_research={"candidates": [], "pending_registry_review": [pending]})
-    page.set_viewport_size({"width": 390, "height": 844})
+    page.set_viewport_size({"width": width, "height": 844})
     page.route("**/api/property?*", lambda route: route.fulfill(json=record))
     page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
     page.goto(app_url)
     page.get_by_role("combobox").fill("9 Gorham St, Somerville, MA")
     page.get_by_role("button", name="Explore property").click()
-    expect(page.locator("#deedSummary")).to_contain_text("Transfer confirmed in MassLandRecords")
+    expect(page.locator("#deedSummary")).to_contain_text(
+        "Transfer awaiting MassLandRecords confirmation" if registration else "Transfer confirmed in MassLandRecords",
+    )
     expect(page.locator("#salePreview")).to_be_hidden()
     page.get_by_text("Property records", exact=True).click()
-    expect(page.locator("#lastTransfer")).to_contain_text("$1,650,000 consideration")
+    if registration:
+        expect(page.locator("#lastTransfer")).to_contain_text("Registered reference C-9999")
+        expect(page.locator("#lastTransfer")).not_to_contain_text("$1,650,000 consideration")
+    else:
+        expect(page.locator("#lastTransfer")).to_contain_text("$1,650,000 consideration")
     expect(page.locator("#lastTransfer")).to_contain_text("Book 80505, page 62")
     expect(page.locator("#lastTransfer").get_by_role("link")).to_have_attribute("href", deed["url"])
     page.get_by_text("Comparable sales", exact=True).click()
     page.get_by_text("Sale leads awaiting registry confirmation", exact=True).click()
     expect(page.locator("#pendingRegistryList")).to_contain_text("Book 123, page 456")
     expect(page.locator("#pendingRegistryList")).to_contain_text("Awaiting MassLandRecords confirmation")
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
 
 
 def test_permit_history_loads_only_when_opened_and_keeps_city_links(page, app_url, property_record):

@@ -40,6 +40,12 @@ def requested_house_number(address):
 def clean(s):
     return re.sub(r"[^A-Z0-9]+", " ", str(s or "").upper()).strip()
 
+
+def has_explicit_unit(address):
+    """Recognize common unit designators followed by a number, letter, or PH."""
+    pattern = r"(?:(?<!\w)(?:APT\.?|APARTMENT|UNIT|STE\.?|SUITE)\s+|#\s*)([A-Z]*\d[A-Z0-9-]*|[A-Z]|PH)(?=$|[\s,])"
+    return any(len(clean(address[:match.start()]).split()) >= 2 for match in re.finditer(pattern, address, re.I))
+
 STREET_TYPES = {
     "ST": "STREET", "RD": "ROAD", "AVE": "AVENUE", "AV": "AVENUE",
     "BLVD": "BOULEVARD", "DR": "DRIVE", "LN": "LANE", "CT": "COURT",
@@ -73,6 +79,65 @@ def same_street(actual, requested):
         return False
     types = STREET_TYPES.values()
     return a == b or (a[-1] in types and a[:-1] == b) or (b[-1] in types and b[:-1] == a)
+
+
+def census_street(components):
+    """Keep the street name, type, and directions from the Census match."""
+    if not components.get("streetName"):
+        return ""
+    fields = ("preQualifier", "preDirection", "preType", "streetName", "suffixType", "suffixDirection", "suffixQualifier")
+    return " ".join(str(components[key]).strip() for key in fields if components.get(key))
+
+
+def requested_street_tokens(address, components):
+    if not requested_house_number(address):
+        return []
+    segment, _, remainder = normalize_address(address).partition(",")
+    segment = re.split(r"\s*(?:#|\s(?:unit|apt\.?)\s+)", segment, maxsplit=1, flags=re.I)[0].strip()
+    segment = re.sub(r"\s+(?:MA|Massachusetts)(?:\s+\d{5}(?:-\d{4})?)?$|\s+\d{5}(?:-\d{4})?$",
+                     "", segment, flags=re.I)
+    tokens = clean(segment.replace("'", "").replace("’", "")).split()[1:]
+    if not remainder or re.match(r"\s*(?:MA|Massachusetts|\d{5})\b", remainder, flags=re.I):
+        localities = (clean(components.get(key)).split() for key in ("postal_city", "city"))
+        for locality in sorted(localities, key=len, reverse=True):
+            if locality and tokens[-len(locality):] == locality:
+                tokens = tokens[:-len(locality)]
+                break
+    return tokens
+
+
+def street_type_conflicts(address, components):
+    """Detect a known street type that Census replaced with another known type."""
+    matched_type = clean(components.get("suffixType"))
+    matched_type = STREET_TYPES.get(matched_type, matched_type)
+    if not matched_type:
+        named_street = street_tokens(components.get("streetName"))
+        if len(named_street) > 1:
+            matched_type = named_street[-1]
+    types = STREET_TYPES.values()
+    if matched_type not in types:
+        return False
+
+    tokens = requested_street_tokens(address, components)
+    suffix_direction = clean(components.get("suffixDirection"))
+    if tokens and suffix_direction and DIRECTIONS.get(tokens[-1], tokens[-1]) == DIRECTIONS.get(suffix_direction, suffix_direction):
+        tokens.pop()
+    if len(tokens) < 2:
+        return False
+    requested_type = STREET_TYPES.get(tokens[-1], tokens[-1])
+    return requested_type in types and requested_type != matched_type
+
+
+def street_name_conflicts(address, components):
+    """Detect name substitutions when both addresses end in the same recognized street type."""
+    requested = street_tokens(" ".join(requested_street_tokens(address, components)))
+    matched = street_tokens(census_street(components).replace("'", "").replace("’", ""))
+    for street in (requested, matched):
+        if len(street) > 2 and street[0] == "ST":
+            street[0] = "SAINT"
+    return (len(requested) > 1 and len(matched) > 1
+            and requested[-1] == matched[-1] and requested[-1] in STREET_TYPES.values()
+            and requested != matched)
 
 
 def exact_address_match(feature, house, street, city, postal_city=None):
@@ -111,15 +176,32 @@ def lot_area_sqft(feature):
         return round(value)
     return None
 
+class IncompleteParcelSearch(Exception):
+    """MassGIS returned only part of an assessor search."""
+
+
 async def query(client, params, timeout=12.0):
-    r = await client.get(SERVICE, params={"f":"json", "outFields":FIELDS,
-        "returnGeometry":"false", "resultRecordCount":100, **params},
-        timeout=httpx.Timeout(timeout, connect=4.0))
-    r.raise_for_status()
-    data = r.json()
-    if "error" in data:
-        raise ValueError(str(data["error"].get("message","ArcGIS parcel error")))
+    request = {"f": "json", "outFields": FIELDS, "returnGeometry": "false",
+               "resultRecordCount": 100, **params}
+    async def fetch():
+        response = await client.get(SERVICE, params=request, timeout=httpx.Timeout(timeout, connect=4.0))
+        response.raise_for_status()
+        data = response.json()
+        if "error" in data:
+            raise ValueError(str(data["error"].get("message", "ArcGIS parcel error")))
+        return data
+
+    data = await fetch()
+    if data.get("exceededTransferLimit"):
+        request["resultRecordCount"] = 1000
+        try:
+            data = await fetch()
+        except (httpx.HTTPError, ValueError) as exc:
+            raise IncompleteParcelSearch from exc
+        if data.get("exceededTransferLimit"):
+            raise IncompleteParcelSearch
     return data.get("features", [])
+
 
 def polygon_from_rings(rings):
     """Read an ArcGIS exterior ring, excluding any enclosed interior rings."""
@@ -175,9 +257,7 @@ async def selected_geometry(client, features, warnings, latitude):
 
 async def resolve_parcel(client, lon, lat, components, warnings, requested_address):
     house = requested_house_number(requested_address)
-    street = " ".join(str(components.get(key) or "").strip() for key in (
-        "preQualifier", "preDirection", "preType", "streetName", "suffixType", "suffixDirection", "suffixQualifier",
-    )).strip() if components.get("streetName") else ""
+    street = census_street(components)
     city = str(components.get("city") or "").strip()
     if not all((house,street,city)):
         warnings.append("Geocoder did not provide enough address components to verify the parcel.")
@@ -191,11 +271,15 @@ async def resolve_parcel(client, lon, lat, components, warnings, requested_addre
     async def attempt(p, label):
         try:
             return await query(client,p)
+        except IncompleteParcelSearch:
+            return None
         except (httpx.HTTPError, ValueError) as exc:
             warnings.append(label+": "+type(exc).__name__+".")
             return []
     responses=await asyncio.gather(attempt(params[0],"Point parcel search"),
                                    attempt(params[1],"Address parcel search"))
+    if any(response is None for response in responses):
+        raise IncompleteParcelSearch
     def matches(features):
         return [f for f in features if clean((f.get("attributes") or {}).get("POLY_TYPE")) not in ("ROW","RAIL ROW","WATER")
                 and exact_address_match(f.get("attributes") or {},house,street,city,components.get("postal_city"))]
@@ -208,7 +292,10 @@ async def resolve_parcel(client, lon, lat, components, warnings, requested_addre
         nearby={"geometry":f"{lon-dlon},{lat-dlat},{lon+dlon},{lat+dlat}",
                 "geometryType":"esriGeometryEnvelope","inSR":4326,
                 "spatialRel":"esriSpatialRelIntersects","resultRecordCount":200}
-        choices=matches(await attempt(nearby,"Nearby parcel search"))
+        nearby_features = await attempt(nearby, "Nearby parcel search")
+        if nearby_features is None:
+            raise IncompleteParcelSearch
+        choices = matches(nearby_features)
     if not choices:
         # Explain why nearby candidates were rejected without exposing owner information.
         sample=[]

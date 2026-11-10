@@ -1,9 +1,10 @@
 """Boston municipal assessor identity and recorded-sale research; never an appraisal."""
 from datetime import date, datetime, timezone
+import asyncio
 import math
 import re
 import httpx
-from parcel_engine import clean, same_street, requested_house_number
+from parcel_engine import census_street, clean, requested_house_number, street_tokens
 
 async def selected_polygon(client, pid, latitude):
     from municipal_zoning import esri_polygon, to_ground
@@ -17,6 +18,11 @@ async def selected_polygon(client, pid, latitude):
 BASE='https://gis.boston.gov/arcgis/rest/services/Assessing/properties_boston_gov/MapServer'
 SOURCE='https://properties.boston.gov/'
 FIELDS='OBJECTID,PID,CM_ID,MAP_PAR_ID,LOC_ID,FULL_ADDRESS,ST_NUM,ST_NUM2,ST_NAME,UNIT_NUM,OWNER,LU,LUC,LU_DESC,GROSS_AREA,LIVING_AREA,LAND_SF,RES_UNITS,COM_UNITS,NUM_BLDGS,TOTAL_VALUE,YR_BUILT'
+
+
+class ParcelSelectionError(ValueError):
+    """The selected assessor ID did not resolve to a unique record."""
+
 
 async def fetch(client, layer, params):
     r=await client.get(f'{BASE}/{layer}/query',params={'f':'json','outFields':FIELDS if layer==0 else '*','returnGeometry':'false',**({'orderByFields':'latest_sales_date DESC,parcel_id ASC'} if layer==11 else {}),**params},timeout=httpx.Timeout(25,connect=4))
@@ -32,7 +38,8 @@ def record_link(pid):
 
 def matches(a,house,street):
     # Exact street and endpoint match. A number merely inside an assessor range is ambiguous.
-    return str(a.get('ST_NUM') or '')==house and same_street(a.get('ST_NAME'),street) and not a.get('UNIT_NUM')
+    requested = street_tokens(street)
+    return bool(requested) and str(a.get('ST_NUM') or '') == house and street_tokens(a.get('ST_NAME')) == requested and not a.get('UNIT_NUM')
 
 
 def candidate(a):
@@ -55,25 +62,45 @@ async def lookup(client,lon,lat,parts,address,pid=None):
     if pid:
         # Explicit user-selected Boston record, kept distinct from an address-verified match.
         d=await fetch(client,0,{'where':f"PID = '{pid}'",'resultRecordCount':20})
+        if d.get('exceededTransferLimit'):
+            raise ValueError('Boston assessor response for selected parcel is incomplete')
         rows=[x['attributes'] for x in d.get('features',[])]
-        if len(rows)!=1:raise ValueError('Selected Boston parcel is not unique')
-        return rows[0],[], 'User-selected Boston assessor record; address alias not verified'
+        if len(rows)!=1:raise ParcelSelectionError('Selected Boston parcel is not unique')
+        return rows[0],[], 'User-selected Boston assessor record; address alias not verified', False
     safe=street.replace("'","''")
     # Street predicate prevents broad house-number searches truncating in large cities.
     d=await fetch(client,0,{'where':f"ST_NUM = {int(house)} AND UPPER(ST_NAME) LIKE '{safe.upper().split()[0]}%'" if house and house.isdigit() and safe else '1=0','resultRecordCount':500})
     rows=[x['attributes'] for x in d.get('features',[])]
-    exact={x['PID']:x for x in rows if matches(x,house,street)}
-    if len(exact)==1:return next(iter(exact.values())),[], 'Exact Boston municipal street and house-number match'
+    full_street = census_street(parts)
+    exact={x['PID']:x for x in rows if matches(x,house,full_street)}
+    address_truncated=bool(d.get('exceededTransferLimit'))
+    if len(exact)==1 and not address_truncated:
+        return next(iter(exact.values())),[], 'Exact Boston municipal street and house-number match', False
     # Nearby records are candidates only. No owner, area or value is attributed to the subject yet.
-    d=await fetch(client,0,{'geometry':f'{lon},{lat}','geometryType':'esriGeometryPoint','inSR':4326,
-                          'distance':150,'units':'esriSRUnit_Meter','spatialRel':'esriSpatialRelIntersects','resultRecordCount':1000})
+    spatial_query = {'geometry': f'{lon},{lat}', 'geometryType': 'esriGeometryPoint', 'inSR': 4326,
+                     'distance': 150, 'units': 'esriSRUnit_Meter', 'spatialRel': 'esriSpatialRelIntersects',
+                     'orderByFields': 'OBJECTID ASC', 'resultOffset': 0, 'resultRecordCount': 1000}
+    d = await fetch(client, 0, spatial_query)
     nearby={x['attributes']['PID']:x['attributes'] for x in d.get('features',[])}
+    spatial_truncated = bool(d.get('exceededTransferLimit'))
+    if spatial_truncated:
+        # Spatial filtering can return fewer rows than requested even when another page exists.
+        try:
+            async with asyncio.timeout(10):
+                page = await fetch(client, 0, {**spatial_query, 'resultOffset': spatial_query['resultRecordCount']})
+        except (TimeoutError, httpx.HTTPError, ValueError):
+            pass  # Keep the first page and its incomplete status if the follow-up fails.
+        else:
+            nearby.update((row['attributes']['PID'], row['attributes']) for row in page.get('features', []))
+            spatial_truncated = bool(page.get('exceededTransferLimit'))
+    nearby.update(exact)
     words=set(clean(address.split(',')[0]).split())-{'1','ONE'}
     def relevance(a):
         text=set(clean(str(a.get('OWNER',''))+' '+str(a.get('FULL_ADDRESS',''))).split())
-        return (len(words&text),not bool(a.get('UNIT_NUM')),bool(a.get('GROSS_AREA')))
+        return (a['PID'] in exact,len(words&text),not bool(a.get('UNIT_NUM')),bool(a.get('GROSS_AREA')))
     ordered=sorted(nearby.values(),key=relevance,reverse=True)
-    return None,[candidate(x) for x in ordered[:20]],'No exact municipal address match; review candidate records'
+    truncated=address_truncated or spatial_truncated
+    return None,[candidate(x) for x in ordered[:20]],'Review candidate assessor records',truncated
 
 
 def sale_date(value):

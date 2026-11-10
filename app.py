@@ -14,7 +14,10 @@ from pydantic import BaseModel, Field
 from typing import Literal
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from parcel_engine import resolve_parcel, conceptual_massing, normalize_address, same_street
+from parcel_engine import (
+    IncompleteParcelSearch, resolve_parcel, conceptual_massing, has_explicit_unit, normalize_address, same_street,
+    street_name_conflicts, street_type_conflicts,
+)
 import boston
 import ma_sales
 import municipal_zoning
@@ -226,6 +229,8 @@ def municipality_for_match(match):
 @app.get("/api/property")
 async def property_lookup(address:str=Query(min_length=5,max_length=240), boston_pid:str|None=Query(default=None,pattern=r"^\d{10}$")):
     address=normalize_address(re.sub(r",\s*(?:USA|United States(?: of America)?)\s*$", "", address, flags=re.I))
+    if has_explicit_unit(address):
+        raise HTTPException(409, "PlotDocket cannot verify individual units yet. To see the building's report, search again without the unit number.")
     if not re.search(r"\b(MA|Massachusetts)\b",address,re.I): address=address.rstrip(", ") + ", MA"
     result={"query":address,"checked_at":now(),"parcel_candidates":[],"sales_research":{"status":"Sales connector not configured for this municipality","candidates":[]},"address":None,"coordinates":None,"parcel":None,"zoning":None,"existing_building":None,"zoning_potential":None,"recommendations":[],"constraints":[],"zoning_review":None,"verification":{"address":"unverified","parcel":"unverified","assessor":"not matched","zoning":"unverified","amendments":"not checked"},"warnings":[],"sources":[SOURCES[0].copy()]}
     async with httpx.AsyncClient(timeout=13,follow_redirects=True) as client:
@@ -267,6 +272,10 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
                 jurisdiction_source = "Somerville address request"
         elif not geocoded:
             raise HTTPException(502, "Geocoder returned no coordinates.")
+        elif street_type_conflicts(address, parts):
+            raise HTTPException(409, "The address match uses a different street type. Check the street name and try again.")
+        elif street_name_conflicts(address, parts):
+            raise HTTPException(409, "The address match uses a different street name. Check the address and try again.")
         result["address"] = m.get("matchedAddress") if geocoded else address
         if jurisdiction_source == "Census municipal boundary":
             result["sources"].append({"name": "Census municipality boundary lookup", "url": CENSUS_GEOGRAPHIES})
@@ -289,6 +298,8 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
                 print("Parcel match:",parcel.get("parcel_number"),"polygon:",polygon is not None,flush=True)
             else:
                 print("Parcel match unavailable for",parts.get("city","MA"),flush=True)
+        except IncompleteParcelSearch as exc:
+            raise HTTPException(503, "MassGIS returned an incomplete parcel search. Try the same address again shortly.") from exc
         except Exception as exc:
             result["warnings"].append("Statewide parcel matcher unavailable: "+type(exc).__name__+".")
             print("Statewide parcel lookup failed:",type(exc).__name__,str(exc)[:200],flush=True)
@@ -329,8 +340,9 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
         if parts.get("city","").upper()=="BOSTON":
             result["sources"].insert(0, {"name": "Boston municipal assessor FY2026 and recorded sales", "url": boston.SOURCE})
             try:
-                record,candidates,method=await boston.lookup(client,lon,lat,parts,address,boston_pid)
+                record,candidates,method,truncated=await boston.lookup(client,lon,lat,parts,address,boston_pid)
                 result["parcel_candidates"]=candidates
+                result["parcel_candidates_truncated"]=truncated
                 if record:
                     result["parcel"],result["existing_building"]=boston.to_result(record,method)
                     result["verification"]["parcel"]=method
@@ -343,8 +355,10 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
                     sales_task = asyncio.create_task(boston.sales_research(client, record))
                 elif candidates:
                     result["warnings"].append("Municipal records use different address labels here. Select and verify a candidate parcel before attributing ownership or sales.")
-            except (httpx.HTTPError,ValueError,TypeError):
-                result["warnings"].append("Boston municipal records temporarily unavailable; retry the lookup.")
+            except boston.ParcelSelectionError as exc:
+                raise HTTPException(409, "The selected Boston assessor record could not be confirmed. Search again to refresh the parcel choices.") from exc
+            except (httpx.HTTPError, ValueError, TypeError) as exc:
+                raise HTTPException(503, "Boston assessor records are temporarily unavailable. Try the same address again shortly.") from exc
         elif result.get("parcel") and parts.get("city", "").upper() == "SOMERVILLE" and somerville.assessor_class(result["existing_building"]):
             sales_task = asyncio.create_task(somerville.sales(
                 client, lon, lat, result["parcel"], result["existing_building"],

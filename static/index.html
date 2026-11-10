@@ -74,7 +74,7 @@
 <p id="assessedValueContext" class="small muted" hidden></p>
 </section>
 <details class="card research-card" id="recordDetails"><summary>Property records</summary>
-<div id="parcelResearch"><h3>Ownership &amp; parcel identity</h3><p id="ownerStatus" class="small muted"></p><p id="lastTransfer" class="small muted"></p><div id="parcelCandidates" class="details"></div></div>
+<div id="parcelResearch"><h3>Ownership &amp; parcel identity</h3><p id="ownerStatus" class="small muted"></p><p id="lastTransfer" class="small muted"></p><p id="parcelCandidateError" class="small muted" hidden></p><div id="parcelCandidates" class="details"></div></div>
 <p id="sourceStatus" class="small muted"></p>
 <p id="verification" class="small muted"></p><div class="details" id="facts"></div>
 <details id="permitDetails" hidden>
@@ -168,6 +168,11 @@ function renderOpportunity(d) {
     answer=candidates?'Choose the assessor record for this address to see its property details.':'PlotDocket could not match this address to a parcel.';
     limit='A parcel match is needed to assess development potential.';
     [action,target]=candidates?['Confirm parcel','recordDetails']:['Check address','address'];
+    if(d.parcel_candidates_truncated) {
+      answer='Boston returned only part of its assessor results.';
+      limit=candidates?'Review the choices and select a record only if it matches your property.'
+        :'Try narrowing the search with the street address shown on your assessor record.';
+    }
   } else if(d.redevelopment?.decision==='retain_and_review') {
     answer='Start with the existing building. The screened rebuild would lose space or units.';
     limit='Check whether an addition or alteration is feasible under the local rules.';
@@ -417,6 +422,7 @@ function render(d) {
     $('links').append(a);
   }
   $('status').textContent=d.parcel?'Property records loaded.':d.parcel_candidates?.length?'Address found. Confirm the parcel below.':'Parcel match unavailable.';
+  if(!d.parcel&&d.parcel_candidates_truncated) $('status').textContent='Boston returned only part of its assessor results.';
   $('propertyAddress').focus({preventScroll:true});
   $('results').scrollIntoView({block:'start'});
 }
@@ -491,7 +497,11 @@ $('retryPermits').onclick=loadPermits;
 function appendDeed(container,deed){
   if(!deed) return;
   const line=document.createElement('span');
-  const reference=deed.book&&deed.page?'Book '+deed.book+', page '+deed.page:deed.registered_reference?'Registered reference '+deed.registered_reference:'Search by property address';
+  const references=[
+    deed.book&&deed.page?'Book '+deed.book+', page '+deed.page:null,
+    deed.registered_reference?'Registered reference '+deed.registered_reference:null
+  ].filter(Boolean);
+  const reference=references.join(' · ')||'Search by property address';
   const status=deed.status==='verified'
     ? 'Registry deed matched · recorded '+deed.recorded_date+' · $'+fmt(deed.consideration)+' consideration · checked '+deed.checked_on
     : deed.status==='conflict'?'Registry and assessor figures differ · sale excluded'
@@ -526,7 +536,9 @@ if(owners.length&&p.ownership_source){
 $('lastTransfer').replaceChildren();
 if(p?.deed_verification) appendDeed($('lastTransfer'),p.deed_verification);
 $('parcelCandidates').replaceChildren();
-(d.parcel_candidates||[]).forEach(c=>{const el=document.createElement('div');el.className='item';const title=document.createElement('strong');title.textContent=c.address;const note=document.createElement('p');note.className='small muted';note.textContent='Parcel '+c.parcel_number+' · '+(c.use_description||'Use unavailable')+' · Recorded owner: '+(c.recorded_owner||'Unavailable');const b=document.createElement('button');b.className='secondary';b.textContent='Review this assessor record';b.onclick=()=>lookup(c.parcel_number);el.append(title,note,b);$('parcelCandidates').append(el)});
+$('parcelCandidateError').hidden=true;
+const searchedAddress=$('address').value.trim();
+(d.parcel_candidates||[]).forEach(c=>{const el=document.createElement('div');el.className='item';const title=document.createElement('strong');title.textContent=c.address;const note=document.createElement('p');note.className='small muted';note.textContent='Parcel '+c.parcel_number+' · '+(c.use_description||'Use unavailable')+' · Recorded owner: '+(c.recorded_owner||'Unavailable');const b=document.createElement('button');b.className='secondary';b.textContent='Review this assessor record';b.onclick=()=>lookup(c.parcel_number,searchedAddress);el.append(title,note,b);$('parcelCandidates').append(el)});
 const sales=d.sales_research||{};
 $('salesStatus').textContent=(sales.status||'Sales research unavailable')+(sales.median_sale_price?' · Median reported sale $'+fmt(sales.median_sale_price):'')+'. '+(sales.method||'');
 $('salesLimits').textContent=(sales.limitations||'Candidate sales are not a valuation or a verified appraisal.')+(sales.truncated?' Source result limit reached; coverage is incomplete.':'');
@@ -675,10 +687,11 @@ if(screen){
 }
 }
 async function jsonResponse(url,options={}){const r=await fetch(url,{...options,headers:{Accept:'application/json',...(options.headers||{})}});if(!(r.headers.get('content-type')||'').includes('json'))throw Error('The server returned an error page instead of property data. Please try again shortly.');const d=await r.json();if(!r.ok)throw Error(typeof d.detail==='string'?d.detail:Array.isArray(d.detail)?d.detail.map(x=>x.msg).join('; '):'The property service is unavailable.');return d}
-async function lookup(selectedPid=null) {
+async function lookup(selectedPid=null,searchedAddress=null) {
   const button=$('go'), input=$('address'), status=$('status');
   if(button.disabled) return;
   const query=input.value.trim();
+  if(selectedPid&&(query!==searchedAddress||$('results').classList.contains('hide'))) return;
   clearTimeout(delay);
   seq++;
   $('suggestions').classList.add('hide');
@@ -688,6 +701,7 @@ async function lookup(selectedPid=null) {
     return;
   }
   const controller=new AbortController();
+  $('parcelCandidateError').hidden=true;
   button.disabled=true;
   button.textContent='Searching…';
   input.readOnly=true;
@@ -702,6 +716,12 @@ async function lookup(selectedPid=null) {
     render(await jsonResponse(url,{signal:controller.signal}));
   } catch(error) {
     status.textContent=controller.signal.aborted?'The lookup took too long. Try the address again.':error.message;
+    if(selectedPid){
+      const candidateError=$('parcelCandidateError');
+      candidateError.textContent=status.textContent;
+      candidateError.hidden=false;
+      candidateError.scrollIntoView({block:'nearest'});
+    }
   } finally {
     clearTimeout(slow);
     clearTimeout(deadline);
@@ -715,7 +735,13 @@ $('propertySearch').addEventListener('submit',event=>{
   lookup();
 });
 $('print').onclick=()=>window.print();
-$('address').addEventListener('input',()=>{clearTimeout(delay);const n=++seq,q=$('address').value.trim();$('suggestions').classList.add('hide');if(q.length<2)return;delay=setTimeout(async()=>{try{const d=await jsonResponse('/api/suggest?q='+encodeURIComponent(q));if(n!==seq||q!==$('address').value.trim())return;const el=$('suggestions');el.replaceChildren();(d.suggestions||[]).forEach(x=>{const b=document.createElement('button');b.type='button';b.textContent=x;b.onmousedown=e=>e.preventDefault();b.onclick=()=>{$('address').value=x;el.classList.add('hide');lookup()};el.append(b)});el.classList.toggle('hide',!el.children.length);$('address').setAttribute('aria-expanded',String(!!el.children.length));if(!el.children.length)$('status').textContent='Keep typing, or enter the street and city and select Explore property.';else $('status').textContent='Choose a suggested address, or keep typing.'}catch(e){if(n===seq)$('status').textContent='Address suggestions temporarily unavailable. You can still enter the complete address and click Explore property.'}},200)});
+$('address').addEventListener('input',()=>{
+  if(!$('results').classList.contains('hide')){
+    $('results').classList.add('hide');
+    $('status').textContent='Search the updated address to see its property records.';
+  }
+  $('address').setAttribute('aria-expanded','false');
+  clearTimeout(delay);const n=++seq,q=$('address').value.trim();$('suggestions').classList.add('hide');if(q.length<2)return;delay=setTimeout(async()=>{try{const d=await jsonResponse('/api/suggest?q='+encodeURIComponent(q));if(n!==seq||q!==$('address').value.trim())return;const el=$('suggestions');el.replaceChildren();(d.suggestions||[]).forEach(x=>{const b=document.createElement('button');b.type='button';b.textContent=x;b.onmousedown=e=>e.preventDefault();b.onclick=()=>{$('address').value=x;el.classList.add('hide');lookup()};el.append(b)});el.classList.toggle('hide',!el.children.length);$('address').setAttribute('aria-expanded',String(!!el.children.length));if(!el.children.length)$('status').textContent='Keep typing, or enter the street and city and select Explore property.';else $('status').textContent='Choose a suggested address, or keep typing.'}catch(e){if(n===seq)$('status').textContent='Address suggestions temporarily unavailable. You can still enter the complete address and click Explore property.'}},200)});
 document.addEventListener('click',e=>{if(!e.target.closest('.search'))$('suggestions').classList.add('hide')});
 let printPanels=[];
 window.addEventListener('beforeprint',()=>{

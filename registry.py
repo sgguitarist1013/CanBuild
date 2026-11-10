@@ -13,15 +13,22 @@ HOME = "https://www.masslandrecords.com/"
 DISTRICTS = json.loads((DOCS / "massachusetts_registry_districts.json").read_text())
 # Use the statewide selector until a district-specific portal URL is reviewed.
 PORTALS = {"Middlesex South": HOME + "MiddlesexSouth/D/", "Suffolk": HOME + "Suffolk/"}
+LAND_COURT = "Registered Land (Land Court)"
 BOOK_PAGE = re.compile(r"(?:BOOK\s*)?([0-9]+)\s*(?:/|,?\s*PAGE\s*)\s*([0-9]+)", re.I)
+UNIT_DESIGNATOR = r"(?:(?:UNIT|APT\.?|APARTMENT|STE\.?|SUITE)(?:\s+|(?=\d))|#\s*)([\w-]+)"
 
 
 def address_key(address):
     # Keep unit designators and house ranges; a building match cannot verify a condo unit.
-    line = str(address or "").split(",", 1)[0].strip()
-    unit = re.search(r"\s+(?:UNIT|APT\.?|#)\s*([\w-]+)$", line, re.I)
-    street = line[:unit.start()] if unit else line
-    return " ".join(street_tokens(street)), unit[1].upper() if unit else ""
+    line, *segments = (segment.strip() for segment in str(address or "").split(","))
+    units = {match[1].upper() for segment in segments if (match := re.fullmatch(UNIT_DESIGNATOR, segment, re.I))}
+    inline = re.search(r"(?:\s+|(?=#))" + UNIT_DESIGNATOR + r"$", line, re.I)
+    if inline:
+        units.add(inline[1].upper())
+        line = line[:inline.start()]
+    if len(units) > 1:
+        return None
+    return " ".join(street_tokens(line)), next(iter(units), "")
 
 
 def reference_pair(reference):
@@ -39,7 +46,7 @@ def verified_index():
     for row in json.loads((DOCS / "verified_registry_sales.json").read_text()):
         city = row["municipality"].upper()
         key = (city, address_key(row["address"]), (row["book"], row["page"]))
-        if (key in index or city not in DISTRICTS or row["office"] not in ("Recorded Land", "Registered Land (Land Court)")
+        if (key[1] is None or key in index or city not in DISTRICTS or row["office"] not in ("Recorded Land", LAND_COURT)
                 or not isinstance(row["consideration"], int) or row["consideration"] <= 0
                 or not 0 < row["book"] or not 0 < row["page"]
                 or date.fromisoformat(row["checked_on"]) < date.fromisoformat(row["recorded_date"])):
@@ -64,13 +71,17 @@ def district_for(municipality):
 def check(municipality, address, reference, reported_price=None, registered_reference=None):
     city = city_key(municipality)
     route = district_for(city)
+    registered_reference = str(registered_reference or "").strip()
     result = {**route, "status": "pending" if reference or registered_reference else "reference_needed"}
     if reference:
         result.update(book=reference[0], page=reference[1])
     if registered_reference:
-        result["registered_reference"] = str(registered_reference)
+        result["registered_reference"] = registered_reference
     reviewed = VERIFIED.get((city, address_key(address), reference))
     if not reviewed:
+        return result
+    if registered_reference and (reviewed["office"] != LAND_COURT
+                                 or reviewed.get("registered_reference") != registered_reference):
         return result
     if reported_price is not None and reported_price != reviewed["consideration"]:
         result["status"] = "conflict"
@@ -124,7 +135,9 @@ def pending_review(row):
     evidence = json.loads(row["evidence"])
     pair = transfer_pair(evidence)
     # Preserve price conflicts as outstanding even when a deed exists.
-    if evidence["status"] == "conflict" or check(row["city"], row["address"], pair)["status"] != "verified":
+    if evidence["status"] == "conflict" or check(
+        row["city"], row["address"], pair, registered_reference=evidence.get("registered_reference"),
+    )["status"] != "verified":
         return {"id": row["id"], "municipality": row["city"], "address": row["address"],
                 "deed_verification": evidence}
     return None
