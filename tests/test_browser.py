@@ -302,7 +302,7 @@ def test_nr_buildout_and_size_matched_sales_are_visible_on_mobile(page, app_url,
     record = dict(property_record, address="9 GORHAM ST, SOMERVILLE, MA", zoning={"district": "NR"},
                   existing_building=building, buildout_review=buildout(property_record["parcel"], building),
                   current_valuation={"market_range": {
-                      "low": 1320000, "high": 2400000, "comp_count": 3, "radius_miles": .5,
+                      "median": 1340000, "low": 1320000, "high": 2400000, "comp_count": 3, "radius_miles": .5,
                       "comp_addresses": ["9 JAY ST", "62 CHANDLER ST", "47 NEWBURY ST"],
                   }},
                   sales_research={"candidates": [{"address": "9 JAY ST", "sale_price": 1430000,
@@ -315,12 +315,17 @@ def test_nr_buildout_and_size_matched_sales_are_visible_on_mobile(page, app_url,
     page.get_by_role("button", name="Explore property").click()
     expect(page.locator("#potentialAnswer")).to_contain_text("one to three")
     expect(page.locator("#propertyFactsSummary")).to_contain_text("2,722 sq ft living area · 5 beds · 2 baths")
-    expect(page.locator("#currentMarketValue")).to_have_text("$1,320,000 to $2,400,000")
+    expect(page.locator("#currentMarketValue")).to_have_text("About $1,340,000")
+    expect(page.locator("#marketCompSpread")).to_be_hidden()
+    page.get_by_text("Ask PlotDocket about this report", exact=True).click()
+    page.get_by_role("button", name="How much is it worth?").click()
+    expect(page.locator("#reportAnswerText")).to_contain_text("The as-is market estimate is about $1,340,000")
     expect(page.locator("#salePreview")).to_contain_text("9 JAY ST sold for $1,430,000")
     page.get_by_role("button", name="View buildout summary").click()
     expect(page.locator("#buildoutChecks")).to_contain_text("nonconforming rights")
     page.get_by_text("Comparable sales", exact=True).click()
     expect(page.locator("#salesCandidates")).to_contain_text("+8% vs subject · 6 beds / 3 baths")
+    expect(page.locator("#marketCompSpread")).to_contain_text("$1,320,000 to $2,400,000")
     expect(page.locator("#salesCandidates")).to_contain_text("3,905 sq ft lot")
     expect(page.locator("#salesCandidates")).to_contain_text("Used for current market estimate")
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")

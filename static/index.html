@@ -111,7 +111,7 @@
 </details>
 <button class="secondary no-print" id="print">Print report</button></details>
 <details class="card research-card" id="salesDetails"><summary>Comparable sales</summary>
-<div id="salesResearch"><p id="salesStatus" class="small"></p><div id="salesCandidates"></div></div>
+<div id="salesResearch"><p id="salesStatus" class="small"></p><p id="marketCompSpread" class="small muted" hidden></p><div id="salesCandidates"></div></div>
 <details id="pendingRegistrySales" hidden><summary>Sales still being checked</summary><div id="pendingRegistryList"></div></details>
 <details id="salesMethodDetails" hidden><summary>How sales were chosen</summary><p id="salesMethod" class="small muted"></p><p id="salesLimits" class="small muted"></p></details>
 </details>
@@ -148,6 +148,7 @@ const $=id=>document.getElementById(id);const fmt=n=>Number.isFinite(Number(n))&
 function addFact(label,value){if(value===null||value===undefined||value==='')return;const d=document.createElement('div');d.className='item';const a=document.createElement('span');a.textContent=label;const b=document.createElement('strong');b.textContent=String(value);d.append(a,b);$('facts').append(d)}
 const money=n=>n==null?'Unavailable':(n<0?'−':'')+'$'+fmt(Math.abs(n));
 const range=(low,high)=>money(low)+' to '+money(high);
+const marketHeadline=(market, prefix='About ')=>(market.median!=null?prefix+money(market.median):range(market.low,market.high));
 function missingMarketEstimate(valuation,sales){
   if(sales?.truncated) return 'The sales search returned incomplete results. We need a complete search to estimate market value.';
   if(/\b(?:temporarily unavailable|unavailable|not configured)\b/i.test(sales?.status||'')) return 'Comparable sale records are unavailable for this report.';
@@ -167,9 +168,9 @@ function renderValues(d){
   const market=valuation?.market_range;
   const assessment=valuation?.assessment;
   const best=d.redevelopment?.best;
-  $('currentMarketValue').textContent=market?range(market.low,market.high):'Estimate unavailable';
+  $('currentMarketValue').textContent=market?marketHeadline(market):'Estimate unavailable';
   $('currentMarketBasis').textContent=market
-    ? market.comp_count+' Registry-confirmed sales within '+market.radius_miles+' mi, scaled to subject living area.'
+    ? market.comp_count+' Registry-confirmed sales within '+market.radius_miles+' mi. '+(market.median!=null?'Median after adjusting for home size. See Comparable sales for the spread.':'Scaled to subject living area.')
     : missingMarketEstimate(valuation,d.sales_research);
   $('assessedValueContext').hidden=!assessment;
   $('assessedValueContext').textContent=assessment
@@ -369,7 +370,7 @@ function renderRedevelopment(d){
   if(best.sellout_high!=null){
     paragraph('Gross market-rate sellout '+range(best.sellout_low,best.sellout_high)+'.');
     paragraph(screen.acquisition_proxy
-      ? 'Modeled acquisition uses the midpoint of the as-is market range, '+money(screen.acquisition_proxy)+', plus closing costs.'
+      ? 'Modeled acquisition uses the midpoint between the lowest and highest size-adjusted comp prices, '+money(screen.acquisition_proxy)+', plus closing costs.'
       : 'The budget excludes acquisition and its financing. An as-is market estimate is required to model surplus.');
     if(best.surplus_high!=null) paragraph('Modeled surplus / loss '+range(best.surplus_low,best.surplus_high)+'.');
   }
@@ -505,7 +506,7 @@ function explainReport(question, report){
   }
   if(/\b(?:comps?|comparables?|sales?|prices?|worth|value|assess(?:ed|ment|or)?|market)\b/.test(text)){
     const answer=[];
-    if(market) answer.push('The as-is market estimate is '+range(market.low,market.high)+', based on '+market.comp_count+' similar deed-confirmed sales.');
+    if(market) answer.push('The as-is market estimate is '+marketHeadline(market,'about ')+', based on '+market.comp_count+' similar deed-confirmed sales.');
     else answer.push(missingMarketEstimate(report.current_valuation,sales));
     if(assessment) answer.push('The assessor lists '+money(assessment.amount)+(assessment.fiscal_year?' for FY '+assessment.fiscal_year:'')+' for tax purposes.');
     if(sales?.pending_registry_review?.length) answer.push('Check Comparable sales for possible matches still being reviewed.');
@@ -719,6 +720,11 @@ const summary=[
   pending.length?countLabel(pending.length,'possible match')+' still being checked':null,
 ].filter(Boolean).join(' · ');
 $('salesStatus').textContent=summary?summary+'.':sales.status||'Sales research unavailable';
+const market=d.current_valuation?.market_range;
+$('marketCompSpread').hidden=market?.median==null;
+$('marketCompSpread').textContent=market?.median!=null
+  ? 'Size-adjusted comp range '+range(market.low,market.high)+'. The estimate uses the median of the individual size-adjusted sale prices.'
+  : '';
 $('salesMethodDetails').hidden=!sales.method&&!sales.limitations&&!sales.truncated;
 $('salesMethod').textContent=sales.method||'';
 $('salesLimits').textContent=(sales.limitations||'Candidate sales are not a valuation or a verified appraisal.')+(sales.truncated?' Source result limit reached; coverage is incomplete.':'');

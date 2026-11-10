@@ -1,5 +1,6 @@
 """Separate current market evidence from the tax assessment."""
 from math import ceil, floor, isfinite
+from statistics import median
 
 
 def positive_number(value):
@@ -62,6 +63,7 @@ def current_valuation(parcel, building, sales):
     if len(selected) >= 3:
         prices = [sale["deed_verification"]["consideration"] / sale["comparison_area_sqft"] * area for sale in selected]
         result["market_range"] = {
+            "median": floor((median(prices) + 5000) / 10000) * 10000,
             "low": floor(min(prices) / 10000) * 10000,
             "high": ceil(max(prices) / 10000) * 10000,
             "comp_count": len(selected),
