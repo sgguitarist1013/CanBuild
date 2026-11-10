@@ -8,6 +8,7 @@ def verified_condos(rate):
     return [
         {"project_key": str(project), "living_area_sqft": area, "distance_miles": .2,
          "bedrooms_reported": beds, "bathrooms_reported": baths, "sale_price": area * rate,
+         "arm_length_verified": True, "new_construction_verified": True,
          "price_per_living_sqft": rate, "deed_verification": {"status": "verified", "consideration": area * rate}}
         for project in range(3) for beds, baths, area in ((1, 1, 700), (2, 2, 1050), (3, 2, 1400))
     ]
@@ -69,6 +70,32 @@ def test_missing_comps_leave_sellout_and_selling_costs_unpriced(market_range):
     assert result["acquisition_proxy"] == (1100000 if market_range else None)
     assert land["upside"] == land["downside"] == (1122000 if market_range else None)
     assert sum(line["upside"] for line in lines.values() if line["upside"] is not None) == best["cost_low"]
+
+
+@pytest.mark.parametrize("field", ["arm_length_verified", "new_construction_verified"])
+@pytest.mark.parametrize("unverified", [False, None])
+def test_deed_confirmation_without_qualified_new_build_evidence_does_not_price_sellout(field, unverified):
+    comps = verified_condos(1700)
+    for comp in comps:
+        if comp["project_key"] == "2":
+            if unverified is None:
+                comp.pop(field)
+            else:
+                comp[field] = unverified
+
+    result = analyze_redevelopment(
+        {"gross_area_high_sqft": 8000, "stories": 4}, {}, comps,
+        current_market_range={"low": 1000000, "high": 1200000},
+    )
+
+    best = result["best"]
+    assert result["decision"] == "screened"
+    assert best["sellout_low"] is best["sellout_high"] is None
+    assert best["surplus_low"] is best["surplus_high"] is None
+    assert 0 < best["cost_low"] < best["cost_high"]
+    assert all(row["comparable_projects"] == 2 for row in best["unit_mix"])
+    selling = next(line for line in best["cost_lines"] if line["name"].startswith("Brokerage"))
+    assert selling["upside"] is selling["downside"] is None
 
 
 def test_approval_hold_can_keep_geometry_without_costs_or_sellout():

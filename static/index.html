@@ -362,11 +362,12 @@ function renderRedevelopment(d){
   if(best.restricted_units) paragraph('Affordable-unit sale prices are pending. Modeled costs include building these units and exclude their selling costs. Overall profit or loss requires project-specific affordable-unit pricing.');
   for(const alt of screen.alternatives) paragraph(alt.name+' · '+fmt(alt.gross_area_sqft)+' gross sq ft'+
     (alt.surplus_high!=null?' · '+range(alt.surplus_low,alt.surplus_high)+' modeled surplus.':'.'));
-  paragraph('Finished-condo references match the modeled bedroom and bathroom counts and are within 15% of modeled living area. Start at 0.5 mile and widen within Cambridge only when fewer than three independent projects match. Recorded build and sale dates are screening proxies.');
+  paragraph('To count toward pricing, a sale needs a confirmed deed price and evidence that the condo was newly built and the buyer and seller acted independently. Assessor build and sale dates only help find leads.');
+  paragraph('Qualifying condos match the modeled bedroom and bathroom counts and are within 15% of modeled living area. Start at 0.5 mile and widen within Cambridge only when fewer than three independent projects match.');
   for(const row of best.unit_mix){
     const matches=row.sale_matches||[];
     paragraph(row.bedrooms+' bed / '+row.bathrooms_assumed+' bath · '+matches.length+' matched project reference(s). '+
-      (matches.length<3?'More confirmed sales are needed for pricing.':'Pricing uses these matched sales.'));
+      (matches.length<3?'More qualifying sales are needed for pricing.':'Pricing uses these matched sales.'));
     for(const comp of matches){
       const p=paragraph(comp.address+' · '+comp.sale_date+' · '+money(comp.sale_price)+' · '+fmt(comp.living_area_sqft)+' sq ft · '+
         Number(comp.distance_miles).toFixed(2)+' mi · built '+comp.year_built_reported+' · '+comp.record_reference+' ');

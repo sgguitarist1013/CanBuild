@@ -200,10 +200,11 @@ def test_condo_sale_range_is_an_explicit_assumption(page,app_url,property_record
     expect(page.locator('#restrictedUnitPrice')).to_have_value('')
 
 
-def test_automatic_redevelopment_shows_default_estimate_without_input(page, app_url, property_record):
+@pytest.mark.parametrize("width", [320, 390])
+def test_automatic_redevelopment_shows_default_estimate_without_input(page, app_url, property_record, width):
     from redevelopment import analyze_redevelopment
 
-    page.set_viewport_size({"width": 390, "height": 844})
+    page.set_viewport_size({"width": width, "height": 844})
     redevelopment = analyze_redevelopment({"gross_area_high_sqft": 12000, "stories": 4},
                                           {"assessed_value": 900000, "building_area_sqft": 3000})
     redevelopment["best"]["conditional"] = True
@@ -237,7 +238,8 @@ def test_automatic_redevelopment_shows_default_estimate_without_input(page, app_
     expect(page.locator("#estimateDetails > summary")).to_be_focused()
     expect(page.locator("#redevelopmentAreas")).to_be_visible()
     expect(page.locator("#redevelopmentAreas")).to_contain_text("restricted")
-    expect(page.locator("#redevelopmentMix")).to_contain_text("Insufficient matching deed-confirmed sales")
+    expect(page.locator("#redevelopmentMix")).to_contain_text("Insufficient qualifying new-condo sales")
+    expect(page.locator("#redevelopmentEvidence")).to_contain_text("the buyer and seller acted independently")
     expect(page.locator("#redevelopmentEvidence")).to_contain_text("excludes selling costs")
     expect(page.locator("#redevelopmentEvidence")).to_contain_text("closing, excise and concessions: Unavailable")
     assert not page.get_by_text("Optional manual condo scenario", exact=True).evaluate("(el) => el.parentElement.open")

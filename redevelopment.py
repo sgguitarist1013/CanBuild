@@ -58,19 +58,21 @@ def matching_condos(references, beds, baths, area):
 
 def pricing(references):
     rates = []
-    verified = [
+    qualified = [
         row for row in references
         if (deed := row.get("deed_verification") or {}).get("status") == "verified"
         and positive_number(row.get("sale_price")) and deed.get("consideration") == row["sale_price"]
         and positive_number(row.get("price_per_living_sqft"))
+        and row.get("arm_length_verified") is True
+        and row.get("new_construction_verified") is True
     ]
     for beds, (area, baths) in enumerate(zip(UNIT_SIZES, UNIT_BATHS), 1):
-        rows = matching_condos(verified, beds, baths, area)
+        rows = matching_condos(qualified, beds, baths, area)
         if len(rows) >= 3:
             low, _, high = quantiles([r["price_per_living_sqft"] for r in rows], n=4, method="inclusive")
             rates.append((round(low), round(high), "MassLandRecords-confirmed Cambridge sales", rows))
         else:
-            rates.append((None, None, "Insufficient matching deed-confirmed sales", rows))
+            rates.append((None, None, "Insufficient qualifying new-condo sales", rows))
     return rates
 
 
