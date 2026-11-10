@@ -126,6 +126,7 @@ def test_cambridge_street_type_must_agree_before_parcel_lookup(monkeypatch, mock
     }}])
     monkeypatch.setattr(parcel_engine, "query", parcel_query)
     monkeypatch.setattr(parcel_engine, "selected_geometry", AsyncMock(return_value=None))
+    monkeypatch.setattr(server.municipal_zoning, "cambridge_parcel_geometry", AsyncMock(return_value=None), raising=False)
     monkeypatch.setattr(server.municipal_zoning, "cambridge_lookup", AsyncMock(return_value=None))
     monkeypatch.setattr(server.municipal_zoning, "multifamily_screen", AsyncMock(return_value={}))
     monkeypatch.setattr(server.ma_sales, "search", AsyncMock(return_value={"candidates": []}))
