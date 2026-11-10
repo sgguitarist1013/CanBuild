@@ -345,8 +345,10 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
                     sales_task = asyncio.create_task(boston.sales_research(client, record))
                 elif candidates:
                     result["warnings"].append("Municipal records use different address labels here. Select and verify a candidate parcel before attributing ownership or sales.")
-            except (httpx.HTTPError,ValueError,TypeError):
-                result["warnings"].append("Boston municipal records temporarily unavailable; retry the lookup.")
+            except boston.ParcelSelectionError as exc:
+                raise HTTPException(409, "The selected Boston assessor record could not be confirmed. Search again to refresh the parcel choices.") from exc
+            except (httpx.HTTPError, ValueError, TypeError) as exc:
+                raise HTTPException(503, "Boston assessor records are temporarily unavailable. Try the same address again shortly.") from exc
         elif result.get("parcel") and parts.get("city", "").upper() == "SOMERVILLE" and somerville.assessor_class(result["existing_building"]):
             sales_task = asyncio.create_task(somerville.sales(
                 client, lon, lat, result["parcel"], result["existing_building"],

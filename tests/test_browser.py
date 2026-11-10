@@ -206,12 +206,15 @@ def test_editing_address_hides_old_boston_parcel_candidates(page, app_url, prope
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
 
 
-def test_alias_selection_owner_and_sales(page, app_url, property_record):
-    page.set_viewport_size({"width": 390, "height": 844})
-    first=dict(property_record,parcel=None,existing_building=None,parcel_candidates=[{
+@pytest.mark.parametrize("width", [320, 390])
+def test_alias_selection_owner_and_sales(page, app_url, property_record, width):
+    page.set_viewport_size({"width": width, "height": 844})
+    alias = "One Lewis Wharf, Boston, MA"
+    outage = "Boston assessor records are temporarily unavailable. Try the same address again shortly."
+    first=dict(property_record,address=alias,parcel=None,existing_building=None,parcel_candidates=[{
         'parcel_number':'0303029000','address':'38-34 ATLANTIC AV, BOSTON, MA 02110',
         'recorded_owner':'ONE LEWIS WHARF LLC','use_description':'OFFICE 3-9 STORY'}])
-    selected=dict(property_record,assessor_address='38-34 ATLANTIC AV, BOSTON, MA 02110',
+    selected=dict(property_record,address=alias,assessor_address='38-34 ATLANTIC AV, BOSTON, MA 02110',
         parcel={'parcel_number':'0303029000','recorded_owners':['ONE LEWIS WHARF LLC']},
         parcel_candidates=[],sales_research={'status':'Recorded sale candidates found','candidates':[{
             'address':'Test office sale','sale_date':'2026-01-01','sale_price':12000000,
@@ -220,12 +223,20 @@ def test_alias_selection_owner_and_sales(page, app_url, property_record):
     requests=[]
     def respond(route):
         requests.append(route.request.url)
-        route.fulfill(json=selected if 'boston_pid=0303029000' in route.request.url else first)
+        if len(requests) in (1, 3):
+            route.fulfill(status=503, json={"detail": outage})
+        else:
+            route.fulfill(json=selected if 'boston_pid=0303029000' in route.request.url else first)
     page.route('**/api/property?*',respond)
     page.route('**/api/suggest?*',lambda route:route.fulfill(json={'suggestions':[]}))
     page.goto(app_url)
-    page.get_by_role('combobox').fill('One Lewis Wharf, Boston, MA')
+    field = page.get_by_role('combobox')
+    field.fill(alias)
     page.get_by_role('button',name='Explore property').click()
+    expect(page.locator('#status')).to_have_text(outage)
+    expect(field).to_have_value(alias)
+    expect(page.locator('#results')).to_be_hidden()
+    field.press('Enter')
     expect(page.locator('#ownerStatus')).to_contain_text('No owner attributed')
     expect(page.locator('#potentialAnswer')).to_contain_text('Choose the assessor record')
     expect(page.locator('#redevelopmentMetrics')).to_be_hidden()
@@ -233,13 +244,22 @@ def test_alias_selection_owner_and_sales(page, app_url, property_record):
     page.get_by_role('button',name='Confirm parcel').click()
     expect(page.locator('#recordDetails > summary')).to_be_focused()
     page.get_by_role('button',name='Review this assessor record').click()
+    expect(page.locator('#status')).to_have_text(outage)
+    expect(page.locator('#parcelCandidateError')).to_have_text(outage)
+    expect(page.locator('#parcelCandidateError')).to_be_in_viewport()
+    expect(page.locator('#ownerStatus')).to_contain_text('No owner attributed')
+    page.get_by_role('button',name='Review this assessor record').click()
     expect(page.locator('#propertyAddress')).to_have_text('38-34 ATLANTIC AV, BOSTON, MA 02110')
     expect(page.locator('#ownerStatus')).to_contain_text('ONE LEWIS WHARF LLC')
+    expect(page.locator('#parcelCandidateError')).to_be_hidden()
     expect(page.locator('#recordDetails')).not_to_have_attribute('open', '')
     page.get_by_text('Comparable sales', exact=True).click()
     expect(page.locator('#salesCandidates')).to_be_visible()
     expect(page.locator('#salesCandidates')).to_contain_text('$12,000,000')
-    assert any('boston_pid=0303029000' in url for url in requests)
+    assert requests[0] == requests[1]
+    assert requests[2] == requests[3]
+    assert 'boston_pid=0303029000' in requests[3]
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
 
 
 def test_condo_program_totals_sellout_and_property_reset(page,app_url,property_record):

@@ -74,7 +74,7 @@
 <p id="assessedValueContext" class="small muted" hidden></p>
 </section>
 <details class="card research-card" id="recordDetails"><summary>Property records</summary>
-<div id="parcelResearch"><h3>Ownership &amp; parcel identity</h3><p id="ownerStatus" class="small muted"></p><p id="lastTransfer" class="small muted"></p><div id="parcelCandidates" class="details"></div></div>
+<div id="parcelResearch"><h3>Ownership &amp; parcel identity</h3><p id="ownerStatus" class="small muted"></p><p id="lastTransfer" class="small muted"></p><p id="parcelCandidateError" class="small muted" hidden></p><div id="parcelCandidates" class="details"></div></div>
 <p id="sourceStatus" class="small muted"></p>
 <p id="verification" class="small muted"></p><div class="details" id="facts"></div>
 <details id="permitDetails" hidden>
@@ -526,6 +526,7 @@ if(owners.length&&p.ownership_source){
 $('lastTransfer').replaceChildren();
 if(p?.deed_verification) appendDeed($('lastTransfer'),p.deed_verification);
 $('parcelCandidates').replaceChildren();
+$('parcelCandidateError').hidden=true;
 const searchedAddress=$('address').value.trim();
 (d.parcel_candidates||[]).forEach(c=>{const el=document.createElement('div');el.className='item';const title=document.createElement('strong');title.textContent=c.address;const note=document.createElement('p');note.className='small muted';note.textContent='Parcel '+c.parcel_number+' · '+(c.use_description||'Use unavailable')+' · Recorded owner: '+(c.recorded_owner||'Unavailable');const b=document.createElement('button');b.className='secondary';b.textContent='Review this assessor record';b.onclick=()=>lookup(c.parcel_number,searchedAddress);el.append(title,note,b);$('parcelCandidates').append(el)});
 const sales=d.sales_research||{};
@@ -690,6 +691,7 @@ async function lookup(selectedPid=null,searchedAddress=null) {
     return;
   }
   const controller=new AbortController();
+  $('parcelCandidateError').hidden=true;
   button.disabled=true;
   button.textContent='Searching…';
   input.readOnly=true;
@@ -704,6 +706,12 @@ async function lookup(selectedPid=null,searchedAddress=null) {
     render(await jsonResponse(url,{signal:controller.signal}));
   } catch(error) {
     status.textContent=controller.signal.aborted?'The lookup took too long. Try the address again.':error.message;
+    if(selectedPid){
+      const candidateError=$('parcelCandidateError');
+      candidateError.textContent=status.textContent;
+      candidateError.hidden=false;
+      candidateError.scrollIntoView({block:'nearest'});
+    }
   } finally {
     clearTimeout(slow);
     clearTimeout(deadline);

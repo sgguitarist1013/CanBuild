@@ -18,6 +18,11 @@ BASE='https://gis.boston.gov/arcgis/rest/services/Assessing/properties_boston_go
 SOURCE='https://properties.boston.gov/'
 FIELDS='OBJECTID,PID,CM_ID,MAP_PAR_ID,LOC_ID,FULL_ADDRESS,ST_NUM,ST_NUM2,ST_NAME,UNIT_NUM,OWNER,LU,LUC,LU_DESC,GROSS_AREA,LIVING_AREA,LAND_SF,RES_UNITS,COM_UNITS,NUM_BLDGS,TOTAL_VALUE,YR_BUILT'
 
+
+class ParcelSelectionError(ValueError):
+    """The selected assessor ID did not resolve to a unique record."""
+
+
 async def fetch(client, layer, params):
     r=await client.get(f'{BASE}/{layer}/query',params={'f':'json','outFields':FIELDS if layer==0 else '*','returnGeometry':'false',**({'orderByFields':'latest_sales_date DESC,parcel_id ASC'} if layer==11 else {}),**params},timeout=httpx.Timeout(25,connect=4))
     r.raise_for_status(); d=r.json()
@@ -56,7 +61,7 @@ async def lookup(client,lon,lat,parts,address,pid=None):
         # Explicit user-selected Boston record, kept distinct from an address-verified match.
         d=await fetch(client,0,{'where':f"PID = '{pid}'",'resultRecordCount':20})
         rows=[x['attributes'] for x in d.get('features',[])]
-        if len(rows)!=1:raise ValueError('Selected Boston parcel is not unique')
+        if len(rows)!=1:raise ParcelSelectionError('Selected Boston parcel is not unique')
         return rows[0],[], 'User-selected Boston assessor record; address alias not verified'
     safe=street.replace("'","''")
     # Street predicate prevents broad house-number searches truncating in large cities.

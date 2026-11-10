@@ -104,6 +104,32 @@ def test_conflicting_municipalities_require_a_more_specific_address(mock_census)
     assert "multiple municipalities" in response.json()["detail"]
 
 
+@pytest.mark.parametrize(("pid", "failure", "status", "detail"), [
+    (None, httpx.ReadTimeout("Assessor timeout"), 503,
+     "Boston assessor records are temporarily unavailable. Try the same address again shortly."),
+    ("0303029000", server.boston.ParcelSelectionError("No unique assessor record"), 409,
+     "The selected Boston assessor record could not be confirmed. Search again to refresh the parcel choices."),
+])
+def test_boston_assessor_failure_returns_actionable_error(monkeypatch, mock_census, pid, failure, status, detail):
+    matched = census_match("BOSTON", "Boston city", "Boston")
+    matched["matchedAddress"] = "1 LEWIS WHARF, BOSTON, MA"
+    matched["addressComponents"].update(streetName="LEWIS", suffixType="WHARF")
+    mock_census([matched])
+    monkeypatch.setattr(server.boston, "lookup", AsyncMock(side_effect=failure))
+    atlas = AsyncMock(return_value={})
+    monkeypatch.setattr(server.municipal_zoning, "multifamily_screen", atlas)
+    monkeypatch.setattr(server, "search_zoning_sources", AsyncMock(return_value={}))
+
+    params = {"address": "One Lewis Wharf, Boston, MA"}
+    if pid:
+        params["boston_pid"] = pid
+    response = TestClient(server.app).get("/api/property", params=params)
+
+    assert response.status_code == status
+    assert response.json() == {"detail": detail}
+    atlas.assert_not_awaited()
+
+
 @pytest.mark.parametrize(("address", "house", "conflict"), [
     ("106 Magazine Avenue, Cambridge, MA", 106, True),
     ("106 Magazine Ave Cambridge MA 02139", 106, True),
