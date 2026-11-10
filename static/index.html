@@ -152,14 +152,11 @@ function missingMarketEstimate(valuation,sales){
   if(sales?.truncated) return 'The sales search returned incomplete results. We need a complete search to estimate market value.';
   if(/\b(?:temporarily unavailable|unavailable|not configured)\b/i.test(sales?.status||'')) return 'Comparable sale records are unavailable for this report.';
   const evidence=valuation?.market_evidence;
-  if(evidence?.qualifying_count===null) return 'We need the property’s living area, bedroom count and bathroom count to compare sales.';
+  if(evidence?.qualifying_count===null) return 'We need the property’s living area, bedroom count, bathroom count and lot size to compare sales.';
   if(evidence?.confirmed_count>0){
     const total=evidence.confirmed_count;
     const count=evidence.qualifying_count;
-    const allDifferent=count===0&&evidence.different_property_class_count===total;
-    const detail=allDifferent
-      ? (total===1?'The sale was for':'All '+total+' sales were for')+' a different property type in the assessor’s records.'
-      : 'Only '+count+' '+(count===1?'qualifies':'qualify')+' for this estimate.';
+    const detail='Only '+count+' '+(count===1?'matches':'match')+' on home size, location, beds, baths and lot size.';
     return total+' deed-confirmed '+(total===1?'sale found. ':'sales found. ')+detail+' We need three qualifying sales.';
   }
   return 'We need at least three similar local sales with confirmed deed prices.';
@@ -280,7 +277,6 @@ function renderOpportunity(d) {
     sale.address+' sold for $'+fmt(sale.sale_price),
     sale.older_reference?'Historical reference':null,
     sale.comparison_area_sqft?fmt(sale.comparison_area_sqft)+' sq ft':null,
-    sale.comparison_label||null,
   ].filter(Boolean).join(' · '):'';
   $('buildoutDetails').hidden=!buildout;
   $('buildoutScope').textContent=buildout?[buildout.district_unit_range+'.',buildout.accessory_option].join(' '):'';
@@ -740,10 +736,11 @@ for(const c of sales.candidates||[]){
   note.textContent=[
     c.sale_date||'Sale date unavailable',c.older_reference?'Historical reference':null,'$'+fmt(c.sale_price),
     c.distance_miles!=null?Number(c.distance_miles).toFixed(2)+' mi':null,
+    c.lot_area_sqft>0?fmt(c.lot_area_sqft)+' sq ft lot':null,
     size!=null?fmt(size)+' sq ft ('+basis+')':null,
     c.size_difference_pct!=null?(c.size_difference_pct>0?'+':'')+c.size_difference_pct+'% vs subject':null,
     c.bedrooms_reported!=null?c.bedrooms_reported+' beds / '+c.bathrooms_reported+' baths':null,
-    rate?'$'+fmt(rate)+'/sq ft':null,c.use_description,c.comparison_label,
+    rate?'$'+fmt(rate)+'/sq ft':null,c.use_description,
     c.parcel_number?'Parcel '+c.parcel_number:null,c.record_reference,c.arm_length_status,
     d.current_valuation?.market_range?.comp_addresses?.includes(c.address)?'Used for current market estimate':null,
   ].filter(Boolean).join(' · ');

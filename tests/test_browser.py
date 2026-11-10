@@ -292,16 +292,21 @@ def test_somerville_zoning_details_open_from_mobile_summary(page, app_url, prope
     assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
 
 
-def test_nr_buildout_and_size_matched_sales_are_visible_on_mobile(page, app_url, property_record):
+@pytest.mark.parametrize("width", [320, 390])
+def test_nr_buildout_and_size_matched_sales_are_visible_on_mobile(page, app_url, property_record, width):
     from somerville import buildout
 
-    page.set_viewport_size({"width": 390, "height": 844})
+    page.set_viewport_size({"width": width, "height": 844})
     building = {"use_description": "Multiple Houses on one parcel", "residential_area_sqft": 2722,
                 "bedrooms_reported": 5, "bathrooms_reported": 2, "year_built": 1910}
     record = dict(property_record, address="9 GORHAM ST, SOMERVILLE, MA", zoning={"district": "NR"},
                   existing_building=building, buildout_review=buildout(property_record["parcel"], building),
+                  current_valuation={"market_range": {
+                      "low": 1320000, "high": 2400000, "comp_count": 3, "radius_miles": .5,
+                      "comp_addresses": ["9 JAY ST", "62 CHANDLER ST", "47 NEWBURY ST"],
+                  }},
                   sales_research={"candidates": [{"address": "9 JAY ST", "sale_price": 1430000,
-                      "comparison_area_sqft": 2945, "size_difference_pct": 8, "bedrooms_reported": 6,
+                      "lot_area_sqft": 3905, "comparison_area_sqft": 2945, "size_difference_pct": 8, "bedrooms_reported": 6,
                       "bathrooms_reported": 3, "comparison_label": "Similar residential sale · different assessor class"}]})
     page.route("**/api/property?*", lambda route: route.fulfill(json=record))
     page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
@@ -310,11 +315,14 @@ def test_nr_buildout_and_size_matched_sales_are_visible_on_mobile(page, app_url,
     page.get_by_role("button", name="Explore property").click()
     expect(page.locator("#potentialAnswer")).to_contain_text("one to three")
     expect(page.locator("#propertyFactsSummary")).to_contain_text("2,722 sq ft living area · 5 beds · 2 baths")
+    expect(page.locator("#currentMarketValue")).to_have_text("$1,320,000 to $2,400,000")
     expect(page.locator("#salePreview")).to_contain_text("9 JAY ST sold for $1,430,000")
     page.get_by_role("button", name="View buildout summary").click()
     expect(page.locator("#buildoutChecks")).to_contain_text("nonconforming rights")
     page.get_by_text("Comparable sales", exact=True).click()
     expect(page.locator("#salesCandidates")).to_contain_text("+8% vs subject · 6 beds / 3 baths")
+    expect(page.locator("#salesCandidates")).to_contain_text("3,905 sq ft lot")
+    expect(page.locator("#salesCandidates")).to_contain_text("Used for current market estimate")
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
 
 
@@ -581,7 +589,7 @@ def test_market_summary_and_ask_explain_nonqualifying_sales(page, app_url, prope
                       "market_range": None,
                       "assessment": {"amount": 1645700, "fiscal_year": 2025},
                       "market_evidence": {
-                          "confirmed_count": 4, "different_property_class_count": 4, "qualifying_count": 0,
+                          "confirmed_count": 4, "qualifying_count": 2,
                       },
                   })
     page.set_viewport_size({"width": width, "height": 844})
@@ -590,7 +598,7 @@ def test_market_summary_and_ask_explain_nonqualifying_sales(page, app_url, prope
     page.goto(app_url)
     page.get_by_role("combobox").fill("9 Gorham St, Somerville, MA")
     page.get_by_role("button", name="Explore property").click()
-    reason = "4 deed-confirmed sales found. All 4 sales were for a different property type in the assessor’s records."
+    reason = "4 deed-confirmed sales found. Only 2 match on home size, location, beds, baths and lot size."
     expect(page.locator("#currentMarketValue")).to_have_text("Estimate unavailable")
     expect(page.locator("#currentMarketBasis")).to_contain_text(reason)
     expect(page.locator("#assessedValueContext")).to_contain_text("FY 2025 tax assessment · $1,645,700")

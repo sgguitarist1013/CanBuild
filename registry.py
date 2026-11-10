@@ -92,7 +92,6 @@ def shortlist(city, candidates, limit=12):
     """Keep confirmed sales from being crowded out by closer unconfirmed leads."""
     ranked = sorted(candidates, key=lambda row: (
         bool(row.get("older_reference")),
-        row.get("comparison_label", "Same assessor class") != "Same assessor class",
         row["distance_miles"],
         -int(row["sale_date"].replace("-", "")),
     ))
@@ -100,8 +99,7 @@ def shortlist(city, candidates, limit=12):
     for sale in ranked:
         group = verified if sale_deed(city, sale)["status"] == "verified" else pending
         group.append(sale)
-    recent = [sale for sale in verified if not sale.get("older_reference")
-              and sale.get("comparison_label", "Same assessor class") == "Same assessor class"]
+    recent = [sale for sale in verified if not sale.get("older_reference")]
     close = [sale for sale in recent if sale["distance_miles"] <= .5]
     if len(close) >= 3:
         return close[:min(4, limit)]

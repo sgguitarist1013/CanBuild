@@ -6,6 +6,14 @@ def positive_number(value):
     return type(value) in (int, float) and isfinite(value) and value > 0
 
 
+LOT_SIZE_TOLERANCE = .25
+
+
+def similar_lot(subject_sqft, comp_sqft):
+    return (positive_number(subject_sqft) and positive_number(comp_sqft)
+            and abs(comp_sqft - subject_sqft) <= LOT_SIZE_TOLERANCE * subject_sqft)
+
+
 def current_valuation(parcel, building, sales):
     building = building or {}
     assessment = building.get("assessed_value")
@@ -15,20 +23,17 @@ def current_valuation(parcel, building, sales):
         if positive_number(assessment) else None,
     }
     area = building.get("residential_area_sqft")
+    lot = parcel.get("gis_area_sqft_approx")
     beds = building.get("bedrooms_reported")
     baths = building.get("bathrooms_reported")
     confirmed = [sale for sale in sales.get("candidates", ())
                  if (sale.get("deed_verification") or {}).get("status") == "verified"]
     evidence = {
         "confirmed_count": len(confirmed),
-        "different_property_class_count": sum(
-            sale.get("comparison_label") == "Similar residential sale · different assessor class"
-            for sale in confirmed
-        ),
         "qualifying_count": None,
     }
     result["market_evidence"] = evidence
-    if sales.get("truncated") or not all(positive_number(n) for n in (area, beds, baths)):
+    if sales.get("truncated") or not all(positive_number(n) for n in (area, lot, beds, baths)):
         return result
 
     eligible = []
@@ -39,12 +44,12 @@ def current_valuation(parcel, building, sales):
         distance = sale.get("distance_miles")
         price = deed.get("consideration")
         if (not sale.get("older_reference") and price == sale.get("sale_price")
-                and sale.get("comparison_label") == "Same assessor class"
                 and sale.get("arm_length_status") == "City sale flag Q"
                 and sale.get("comparison_area_basis") == "assessor living area"
                 and sale.get("parcel_number") and sale["parcel_number"] != parcel.get("parcel_number")
                 and all(positive_number(n) for n in (size, sale_beds, sale_baths, price))
                 and type(distance) in (int, float) and isfinite(distance) and distance >= 0
+                and similar_lot(lot, sale.get("lot_area_sqft"))
                 and abs(size - area) <= .15 * area
                 and abs(sale_beds - beds) <= 1 and abs(sale_baths - baths) <= 1):
             eligible.append(sale)

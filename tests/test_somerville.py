@@ -15,7 +15,7 @@ PARCEL = {"parcel_number": "17-A-6", "gis_area_sqft_approx": 4996}
 
 def feature(pid, dx, **fields):
     record = {"MBL": pid, "TaxParMBL": pid, "PCC": "1040", "SALE_VALID": "Q", "SALE_PRICE": 1300000,
-              "SALE_DATE": "2026-09-08", "LIVING_AREA": 2600, "BEDROOM": 5, "BATH": 2,
+              "SALE_DATE": "2026-09-08", "LIVING_AREA": 2600, "BEDROOM": 5, "BATH": 2, "Shape_Area": 4000,
               "AddNum": "14", "Street": "TEST ST"}
     return {"attributes": {**record, **fields}, "centroid": {"x": -71.125 + dx, "y": 42.4}}
 
@@ -34,6 +34,7 @@ def test_comp_match_preserves_size_rooms_and_distinguishes_assessor_class():
         feature("17-A-6", .001), feature("size", .001, LIVING_AREA=3200),
         feature("beds", .001, BEDROOM=3), feature("baths", .001, BATH=4),
         feature("missing", .001, BATH=None), feature("invalid", .001, SALE_VALID="U"),
+        feature("lot", .001, Shape_Area=3200), feature("missing-lot", .001, Shape_Area=None),
         feature("exact", .002, PCC="1090"), feature("similar", .003),
     ], -71.125, 42.4, PARCEL, SUBJECT, date(2026, 11, 7))
     assert [r["parcel_number"] for r in records] == ["exact", "similar"]
@@ -44,7 +45,7 @@ def test_comp_match_preserves_size_rooms_and_distinguishes_assessor_class():
 @pytest.mark.anyio
 @pytest.mark.parametrize("initial_confirmed,expected_queries", [(3, 1), (2, 2)])
 async def test_sales_expand_only_until_three_confirmed_matches(initial_confirmed, expected_queries, monkeypatch):
-    close = [feature(str(i), .001 * i, PCC="1090") for i in range(1, 4)]
+    close = [feature(str(i), .001 * i, PCC="1040") for i in range(1, 4)]
     farther = [feature(str(i), .015 + .004*i, PCC="1090") for i in range(10, 13)]
     confirmed = {str(i) for i in range(1, initial_confirmed + 1)} | {"10", "11", "12"}
     monkeypatch.setattr(registry, "sale_deed", lambda city, row: {
