@@ -75,10 +75,22 @@ def same_street(actual, requested):
     return a == b or (a[-1] in types and a[:-1] == b) or (b[-1] in types and b[:-1] == a)
 
 
+def census_street(components):
+    """Keep the street name, type, and directions from the Census match."""
+    if not components.get("streetName"):
+        return ""
+    fields = ("preQualifier", "preDirection", "preType", "streetName", "suffixType", "suffixDirection", "suffixQualifier")
+    return " ".join(str(components[key]).strip() for key in fields if components.get(key))
+
+
 def street_type_conflicts(address, components):
     """Detect a known street type that Census replaced with another known type."""
     matched_type = clean(components.get("suffixType"))
     matched_type = STREET_TYPES.get(matched_type, matched_type)
+    if not matched_type:
+        named_street = street_tokens(components.get("streetName"))
+        if len(named_street) > 1:
+            matched_type = named_street[-1]
     types = STREET_TYPES.values()
     if matched_type not in types or not requested_house_number(address):
         return False
@@ -203,9 +215,7 @@ async def selected_geometry(client, features, warnings, latitude):
 
 async def resolve_parcel(client, lon, lat, components, warnings, requested_address):
     house = requested_house_number(requested_address)
-    street = " ".join(str(components.get(key) or "").strip() for key in (
-        "preQualifier", "preDirection", "preType", "streetName", "suffixType", "suffixDirection", "suffixQualifier",
-    )).strip() if components.get("streetName") else ""
+    street = census_street(components)
     city = str(components.get("city") or "").strip()
     if not all((house,street,city)):
         warnings.append("Geocoder did not provide enough address components to verify the parcel.")

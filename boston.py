@@ -4,7 +4,7 @@ import asyncio
 import math
 import re
 import httpx
-from parcel_engine import clean, same_street, requested_house_number
+from parcel_engine import census_street, clean, requested_house_number, street_tokens
 
 async def selected_polygon(client, pid, latitude):
     from municipal_zoning import esri_polygon, to_ground
@@ -38,7 +38,8 @@ def record_link(pid):
 
 def matches(a,house,street):
     # Exact street and endpoint match. A number merely inside an assessor range is ambiguous.
-    return str(a.get('ST_NUM') or '')==house and same_street(a.get('ST_NAME'),street) and not a.get('UNIT_NUM')
+    requested = street_tokens(street)
+    return bool(requested) and str(a.get('ST_NUM') or '') == house and street_tokens(a.get('ST_NAME')) == requested and not a.get('UNIT_NUM')
 
 
 def candidate(a):
@@ -70,7 +71,8 @@ async def lookup(client,lon,lat,parts,address,pid=None):
     # Street predicate prevents broad house-number searches truncating in large cities.
     d=await fetch(client,0,{'where':f"ST_NUM = {int(house)} AND UPPER(ST_NAME) LIKE '{safe.upper().split()[0]}%'" if house and house.isdigit() and safe else '1=0','resultRecordCount':500})
     rows=[x['attributes'] for x in d.get('features',[])]
-    exact={x['PID']:x for x in rows if matches(x,house,street)}
+    full_street = census_street(parts)
+    exact={x['PID']:x for x in rows if matches(x,house,full_street)}
     address_truncated=bool(d.get('exceededTransferLimit'))
     if len(exact)==1 and not address_truncated:
         return next(iter(exact.values())),[], 'Exact Boston municipal street and house-number match', False

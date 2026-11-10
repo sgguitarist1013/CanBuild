@@ -222,6 +222,9 @@ def test_alias_selection_owner_and_sales(page, app_url, property_record, width):
             'parcel_number':'0000000001','source_url':'https://properties.boston.gov/'}]})
     requests=[]
     def respond(route):
+        if "Lewis%20St" in route.request.url:
+            route.fulfill(status=409, json={"detail": "The address match uses a different street type. Check the street name and try again."})
+            return
         requests.append(route.request.url)
         if len(requests) in (1, 3):
             route.fulfill(status=503, json={"detail": outage})
@@ -231,6 +234,12 @@ def test_alias_selection_owner_and_sales(page, app_url, property_record, width):
     page.route('**/api/suggest?*',lambda route:route.fulfill(json={'suggestions':[]}))
     page.goto(app_url)
     field = page.get_by_role('combobox')
+    wrong_street = "1 Lewis St, Boston, MA"
+    field.fill(wrong_street)
+    field.press('Enter')
+    expect(page.locator('#status')).to_contain_text('different street type')
+    expect(field).to_have_value(wrong_street)
+    expect(page.locator('#results')).to_be_hidden()
     field.fill(alias)
     page.get_by_role('button',name='Explore property').click()
     expect(page.locator('#status')).to_have_text(outage)

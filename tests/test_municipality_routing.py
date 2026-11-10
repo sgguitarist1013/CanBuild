@@ -153,6 +153,24 @@ def test_boston_empty_candidate_search_reports_source_completeness(monkeypatch, 
     assert report["parcel_candidates_truncated"] is truncated
 
 
+@pytest.mark.parametrize("street,suffix", [("LEWIS", "WHARF"), ("LEWIS WHARF", "")])
+def test_boston_rejects_changed_street_type_before_assessor_lookup(monkeypatch, mock_census, street, suffix):
+    matched = census_match("BOSTON", "Boston city", "Boston")
+    matched["matchedAddress"] = "1 LEWIS WHARF, BOSTON, MA"
+    matched["addressComponents"].update(streetName=street, suffixType=suffix)
+    mock_census([matched])
+    lookup = AsyncMock(return_value=(None, [], "", False))
+    monkeypatch.setattr(server.boston, "lookup", lookup)
+    monkeypatch.setattr(server.municipal_zoning, "multifamily_screen", AsyncMock(return_value={}))
+    monkeypatch.setattr(server, "search_zoning_sources", AsyncMock(return_value={}))
+
+    response = TestClient(server.app).get("/api/property", params={"address": "1 Lewis St, Boston, MA"})
+
+    assert response.status_code == 409
+    assert "different street type" in response.json()["detail"]
+    lookup.assert_not_awaited()
+
+
 @pytest.mark.parametrize(("address", "house", "conflict"), [
     ("106 Magazine Avenue, Cambridge, MA", 106, True),
     ("106 Magazine Ave Cambridge MA 02139", 106, True),

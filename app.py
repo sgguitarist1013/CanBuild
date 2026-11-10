@@ -267,7 +267,7 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
                 jurisdiction_source = "Somerville address request"
         elif not geocoded:
             raise HTTPException(502, "Geocoder returned no coordinates.")
-        elif city != "BOSTON" and street_type_conflicts(address, parts):
+        elif street_type_conflicts(address, parts):
             raise HTTPException(409, "The address match uses a different street type. Check the street name and try again.")
         result["address"] = m.get("matchedAddress") if geocoded else address
         if jurisdiction_source == "Census municipal boundary":

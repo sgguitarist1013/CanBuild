@@ -21,6 +21,22 @@ def test_boston_exact_match_does_not_infer_owner_alias():
     assert not boston.matches({'ST_NUM':1,'ST_NAME':'LEWIS WH','UNIT_NUM':'2'},'1','LEWIS WHARF')
 
 
+@pytest.mark.parametrize("parts,assessor_street,confirmed", [
+    ({"streetName": "LEWIS", "suffixType": "ST"}, "LEWIS PL", False),
+    ({"streetName": "LEWIS", "suffixType": "PL"}, "LEWIS PL", True),
+    ({"streetName": "LEWIS", "suffixType": "WHARF"}, "LEWIS WH", True),
+    ({"streetName": "LEWIS"}, "LEWIS ST", False),
+    ({"preDirection": "N", "streetName": "BEACON", "suffixType": "ST"}, "BEACON ST", False),
+])
+def test_boston_exact_match_uses_full_census_street(parts, assessor_street, confirmed):
+    row = {"PID": "fixture", "ST_NUM": 1, "ST_NAME": assessor_street}
+    page = {"features": [{"attributes": row}]}
+    with patch("boston.fetch", new=AsyncMock(return_value=page)):
+        record, candidates, _, _ = asyncio.run(boston.lookup(None, -71.05, 42.36, parts, "1 Example, Boston, MA"))
+    assert record == (row if confirmed else None)
+    assert [candidate["parcel_number"] for candidate in candidates] == ([] if confirmed else ["fixture"])
+
+
 def test_owner_and_selected_record_labels():
     p,_=boston.to_result({'PID':'0303029000','OWNER':'ONE LEWIS WHARF LLC','FULL_ADDRESS':'38-34 ATLANTIC AV'},'User-selected')
     assert p['recorded_owners']==['ONE LEWIS WHARF LLC']
