@@ -526,7 +526,8 @@ if(owners.length&&p.ownership_source){
 $('lastTransfer').replaceChildren();
 if(p?.deed_verification) appendDeed($('lastTransfer'),p.deed_verification);
 $('parcelCandidates').replaceChildren();
-(d.parcel_candidates||[]).forEach(c=>{const el=document.createElement('div');el.className='item';const title=document.createElement('strong');title.textContent=c.address;const note=document.createElement('p');note.className='small muted';note.textContent='Parcel '+c.parcel_number+' · '+(c.use_description||'Use unavailable')+' · Recorded owner: '+(c.recorded_owner||'Unavailable');const b=document.createElement('button');b.className='secondary';b.textContent='Review this assessor record';b.onclick=()=>lookup(c.parcel_number);el.append(title,note,b);$('parcelCandidates').append(el)});
+const searchedAddress=$('address').value.trim();
+(d.parcel_candidates||[]).forEach(c=>{const el=document.createElement('div');el.className='item';const title=document.createElement('strong');title.textContent=c.address;const note=document.createElement('p');note.className='small muted';note.textContent='Parcel '+c.parcel_number+' · '+(c.use_description||'Use unavailable')+' · Recorded owner: '+(c.recorded_owner||'Unavailable');const b=document.createElement('button');b.className='secondary';b.textContent='Review this assessor record';b.onclick=()=>lookup(c.parcel_number,searchedAddress);el.append(title,note,b);$('parcelCandidates').append(el)});
 const sales=d.sales_research||{};
 $('salesStatus').textContent=(sales.status||'Sales research unavailable')+(sales.median_sale_price?' · Median reported sale $'+fmt(sales.median_sale_price):'')+'. '+(sales.method||'');
 $('salesLimits').textContent=(sales.limitations||'Candidate sales are not a valuation or a verified appraisal.')+(sales.truncated?' Source result limit reached; coverage is incomplete.':'');
@@ -675,10 +676,11 @@ if(screen){
 }
 }
 async function jsonResponse(url,options={}){const r=await fetch(url,{...options,headers:{Accept:'application/json',...(options.headers||{})}});if(!(r.headers.get('content-type')||'').includes('json'))throw Error('The server returned an error page instead of property data. Please try again shortly.');const d=await r.json();if(!r.ok)throw Error(typeof d.detail==='string'?d.detail:Array.isArray(d.detail)?d.detail.map(x=>x.msg).join('; '):'The property service is unavailable.');return d}
-async function lookup(selectedPid=null) {
+async function lookup(selectedPid=null,searchedAddress=null) {
   const button=$('go'), input=$('address'), status=$('status');
   if(button.disabled) return;
   const query=input.value.trim();
+  if(selectedPid&&(query!==searchedAddress||$('results').classList.contains('hide'))) return;
   clearTimeout(delay);
   seq++;
   $('suggestions').classList.add('hide');
@@ -715,7 +717,13 @@ $('propertySearch').addEventListener('submit',event=>{
   lookup();
 });
 $('print').onclick=()=>window.print();
-$('address').addEventListener('input',()=>{clearTimeout(delay);const n=++seq,q=$('address').value.trim();$('suggestions').classList.add('hide');if(q.length<2)return;delay=setTimeout(async()=>{try{const d=await jsonResponse('/api/suggest?q='+encodeURIComponent(q));if(n!==seq||q!==$('address').value.trim())return;const el=$('suggestions');el.replaceChildren();(d.suggestions||[]).forEach(x=>{const b=document.createElement('button');b.type='button';b.textContent=x;b.onmousedown=e=>e.preventDefault();b.onclick=()=>{$('address').value=x;el.classList.add('hide');lookup()};el.append(b)});el.classList.toggle('hide',!el.children.length);$('address').setAttribute('aria-expanded',String(!!el.children.length));if(!el.children.length)$('status').textContent='Keep typing, or enter the street and city and select Explore property.';else $('status').textContent='Choose a suggested address, or keep typing.'}catch(e){if(n===seq)$('status').textContent='Address suggestions temporarily unavailable. You can still enter the complete address and click Explore property.'}},200)});
+$('address').addEventListener('input',()=>{
+  if(!$('results').classList.contains('hide')){
+    $('results').classList.add('hide');
+    $('status').textContent='Search the updated address to see its property records.';
+  }
+  $('address').setAttribute('aria-expanded','false');
+  clearTimeout(delay);const n=++seq,q=$('address').value.trim();$('suggestions').classList.add('hide');if(q.length<2)return;delay=setTimeout(async()=>{try{const d=await jsonResponse('/api/suggest?q='+encodeURIComponent(q));if(n!==seq||q!==$('address').value.trim())return;const el=$('suggestions');el.replaceChildren();(d.suggestions||[]).forEach(x=>{const b=document.createElement('button');b.type='button';b.textContent=x;b.onmousedown=e=>e.preventDefault();b.onclick=()=>{$('address').value=x;el.classList.add('hide');lookup()};el.append(b)});el.classList.toggle('hide',!el.children.length);$('address').setAttribute('aria-expanded',String(!!el.children.length));if(!el.children.length)$('status').textContent='Keep typing, or enter the street and city and select Explore property.';else $('status').textContent='Choose a suggested address, or keep typing.'}catch(e){if(n===seq)$('status').textContent='Address suggestions temporarily unavailable. You can still enter the complete address and click Explore property.'}},200)});
 document.addEventListener('click',e=>{if(!e.target.closest('.search'))$('suggestions').classList.add('hide')});
 let printPanels=[];
 window.addEventListener('beforeprint',()=>{

@@ -119,6 +119,56 @@ def test_property_conflicts_and_local_zoning_review(page, app_url, property_reco
     assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
 
 
+@pytest.mark.parametrize("width", [320, 390])
+def test_editing_address_hides_old_boston_parcel_candidates(page, app_url, property_record, width):
+    page.set_viewport_size({"width": width, "height": 844})
+    candidate = {"parcel_number": "0303029000", "address": "38-34 ATLANTIC AV, BOSTON, MA 02110"}
+    alias = "One Lewis Wharf, Boston, MA"
+    first = dict(property_record, address=alias, parcel=None, parcel_candidates=[candidate])
+    selected = dict(property_record, address=alias, assessor_address=candidate["address"],
+                    parcel={**candidate, "recorded_owners": ["ONE LEWIS WHARF LLC"]})
+    requests = []
+
+    def respond(route):
+        url = route.request.url
+        requests.append(url)
+        if "boston_pid=" in url:
+            route.fulfill(json=selected)
+        elif "Beacon" in url:
+            route.fulfill(status=503, json={"detail": "Assessor temporarily unavailable."})
+        else:
+            route.fulfill(json=first)
+
+    page.route("**/api/property?*", respond)
+    page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
+    page.goto(app_url)
+    field = page.get_by_role("combobox")
+    field.fill(alias)
+    field.press("Enter")
+    page.get_by_role("button", name="Confirm parcel").click()
+    candidate_button = page.get_by_role("button", name="Review this assessor record")
+    expect(candidate_button).to_be_visible()
+    field.fill("1 Beacon St, Boston, MA")
+    expect(page.locator("#results")).to_be_hidden()
+    expect(candidate_button).to_be_hidden()
+    page.locator("#parcelCandidates button").evaluate("button => button.click()")
+    field.press("Enter")
+    expect(page.locator("#status")).to_have_text("Assessor temporarily unavailable.")
+    expect(page.locator("#results")).to_be_hidden()
+    assert len(requests) == 2
+    assert "boston_pid=" not in requests[1]
+
+    field.fill(alias)
+    field.press("Enter")
+    page.get_by_role("button", name="Confirm parcel").click()
+    page.get_by_role("button", name="Review this assessor record").click()
+    expect(page.locator("#propertyAddress")).to_have_text(candidate["address"])
+    expect(page.locator("#ownerStatus")).to_contain_text("ONE LEWIS WHARF LLC")
+    assert "One%20Lewis%20Wharf" in requests[-1]
+    assert "boston_pid=0303029000" in requests[-1]
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
 def test_alias_selection_owner_and_sales(page, app_url, property_record):
     page.set_viewport_size({"width": 390, "height": 844})
     first=dict(property_record,parcel=None,existing_building=None,parcel_candidates=[{
