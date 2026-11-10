@@ -40,6 +40,12 @@ def requested_house_number(address):
 def clean(s):
     return re.sub(r"[^A-Z0-9]+", " ", str(s or "").upper()).strip()
 
+
+def has_explicit_unit(address):
+    """Recognize common unit designators followed by a number, letter, or PH."""
+    pattern = r"(?:(?<!\w)(?:APT\.?|APARTMENT|UNIT|STE\.?|SUITE)\s+|#\s*)([A-Z]*\d[A-Z0-9-]*|[A-Z]|PH)(?=$|[\s,])"
+    return any(len(clean(address[:match.start()]).split()) >= 2 for match in re.finditer(pattern, address, re.I))
+
 STREET_TYPES = {
     "ST": "STREET", "RD": "ROAD", "AVE": "AVENUE", "AV": "AVENUE",
     "BLVD": "BOULEVARD", "DR": "DRIVE", "LN": "LANE", "CT": "COURT",

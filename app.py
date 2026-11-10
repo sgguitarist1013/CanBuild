@@ -14,7 +14,10 @@ from pydantic import BaseModel, Field
 from typing import Literal
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from parcel_engine import resolve_parcel, conceptual_massing, normalize_address, same_street, street_name_conflicts, street_type_conflicts
+from parcel_engine import (
+    resolve_parcel, conceptual_massing, has_explicit_unit, normalize_address, same_street,
+    street_name_conflicts, street_type_conflicts,
+)
 import boston
 import ma_sales
 import municipal_zoning
@@ -226,6 +229,8 @@ def municipality_for_match(match):
 @app.get("/api/property")
 async def property_lookup(address:str=Query(min_length=5,max_length=240), boston_pid:str|None=Query(default=None,pattern=r"^\d{10}$")):
     address=normalize_address(re.sub(r",\s*(?:USA|United States(?: of America)?)\s*$", "", address, flags=re.I))
+    if has_explicit_unit(address):
+        raise HTTPException(409, "PlotDocket cannot verify individual units yet. To see the building's report, search again without the unit number.")
     if not re.search(r"\b(MA|Massachusetts)\b",address,re.I): address=address.rstrip(", ") + ", MA"
     result={"query":address,"checked_at":now(),"parcel_candidates":[],"sales_research":{"status":"Sales connector not configured for this municipality","candidates":[]},"address":None,"coordinates":None,"parcel":None,"zoning":None,"existing_building":None,"zoning_potential":None,"recommendations":[],"constraints":[],"zoning_review":None,"verification":{"address":"unverified","parcel":"unverified","assessor":"not matched","zoning":"unverified","amendments":"not checked"},"warnings":[],"sources":[SOURCES[0].copy()]}
     async with httpx.AsyncClient(timeout=13,follow_redirects=True) as client:

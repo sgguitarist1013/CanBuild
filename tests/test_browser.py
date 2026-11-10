@@ -64,12 +64,13 @@ def test_error_then_retry(page, app_url, property_record):
 
 
 @pytest.mark.parametrize("width", [320, 390])
-@pytest.mark.parametrize(("incorrect_address", "street_conflict"), [
-    ("106 Magazine Avenue, Cambridge, MA", "type"),
-    ("106 Magazne St, Cambridge, MA", "name"),
+@pytest.mark.parametrize(("incorrect_address", "message"), [
+    ("106 Magazine Avenue, Cambridge, MA", "The address match uses a different street type."),
+    ("106 Magazne St, Cambridge, MA", "The address match uses a different street name."),
+    ("106 Magazine St Apt 2, Cambridge, MA", "PlotDocket cannot verify individual units yet."),
 ])
-def test_street_conflict_keeps_the_typed_address_for_retry(page, app_url, property_record, width,
-                                                         incorrect_address, street_conflict):
+def test_address_conflict_keeps_the_typed_address_for_retry(page, app_url, property_record, width,
+                                                          incorrect_address, message):
     page.set_viewport_size({"width": width, "height": 844})
     corrected_address = "106 Magazine St, Cambridge, MA"
     corrected = dict(property_record, address=corrected_address,
@@ -77,8 +78,8 @@ def test_street_conflict_keeps_the_typed_address_for_retry(page, app_url, proper
 
     def respond(route):
         url = route.request.url
-        if "Avenue" in url or "Magazne" in url:
-            route.fulfill(status=409, json={"detail": f"The address match uses a different street {street_conflict}. Check the address and try again."})
+        if "Avenue" in url or "Magazne" in url or "Apt" in url:
+            route.fulfill(status=409, json={"detail": message})
         else:
             route.fulfill(json=corrected if "106" in url else property_record)
 
@@ -92,7 +93,7 @@ def test_street_conflict_keeps_the_typed_address_for_retry(page, app_url, proper
 
     field.fill(incorrect_address)
     field.press("Enter")
-    expect(page.locator("#status")).to_contain_text(f"different street {street_conflict}")
+    expect(page.locator("#status")).to_contain_text(message)
     expect(field).to_have_value(incorrect_address)
     expect(page.locator("#results")).to_be_hidden()
     expect(page.get_by_role("button", name="Explore property")).to_be_enabled()

@@ -175,10 +175,8 @@ def test_boston_rejects_changed_street_type_before_assessor_lookup(monkeypatch, 
     ("106 Magazine Avenue, Cambridge, MA", 106, True),
     ("106 Magazine Ave Cambridge MA 02139", 106, True),
     ("106 Magazine Ave Cambridge", 106, True),
-    ("106 Magazine Ave Apt. 2, Cambridge, MA", 106, True),
     ("106 Magazine St., Cambridge, MA", 106, False),
     ("106 Magazine Street Cambridge MA 02139", 106, False),
-    ("106 Magazine #2, Cambridge, MA", 106, False),
     ("95 Magazine St, Cambridge, MA", 95, False),
 ])
 def test_cambridge_street_type_must_agree_before_parcel_lookup(monkeypatch, mock_census, address, house, conflict):
@@ -209,6 +207,44 @@ def test_cambridge_street_type_must_agree_before_parcel_lookup(monkeypatch, mock
     else:
         assert response.status_code == 200
         assert response.json()["parcel"]["parcel_number"] == lot
+
+
+@pytest.mark.parametrize(("address", "pid"), [
+    ("106 Magazine St Apt. 2, Cambridge, MA", None),
+    ("106 Magazine St, Unit 2, Cambridge, MA", None),
+    ("106 Magazine #2, Cambridge, MA", None),
+    ("106 Magazine St Apartment B Cambridge MA 02139", None),
+    ("One Lewis Wharf Suite 2A, Boston, MA", "0303029000"),
+    ("38-34 Atlantic Ave Ste. PH, Boston, MA", "0303029000"),
+])
+def test_explicit_unit_search_cannot_load_a_building_report(monkeypatch, mock_census, address, pid):
+    matched = census_match("CAMBRIDGE", "Cambridge city", "Cambridge")
+    matched["matchedAddress"] = "106 MAGAZINE ST, CAMBRIDGE, MA"
+    matched["addressComponents"]["streetName"] = "MAGAZINE"
+    mock_census([matched])
+    lookup = AsyncMock(return_value=(None, None, None))
+    monkeypatch.setattr(server, "resolve_parcel", lookup)
+    monkeypatch.setattr(server.municipal_zoning, "cambridge_lookup", AsyncMock(return_value=None))
+    monkeypatch.setattr(server.municipal_zoning, "multifamily_screen", AsyncMock(return_value={}))
+    monkeypatch.setattr(server, "search_zoning_sources", AsyncMock(return_value={}))
+
+    params = {"address": address}
+    if pid:
+        params["boston_pid"] = pid
+    response = TestClient(server.app).get("/api/property", params=params)
+
+    assert response.status_code == 409
+    assert "individual units" in response.json()["detail"]
+    lookup.assert_not_awaited()
+
+
+@pytest.mark.parametrize("address", [
+    "100A Main St, Cambridge, MA",
+    "123 Unit Circle, Cambridge, MA",
+    "One Lewis Wharf, Boston, MA",
+])
+def test_unit_guard_leaves_building_addresses_eligible(address):
+    assert not parcel_engine.has_explicit_unit(address)
 
 
 @pytest.mark.parametrize("address", ["106 Magazne St, Cambridge, MA", "106 Main Street Cambridge MA 02139"])
