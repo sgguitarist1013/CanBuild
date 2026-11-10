@@ -64,7 +64,12 @@ def test_error_then_retry(page, app_url, property_record):
 
 
 @pytest.mark.parametrize("width", [320, 390])
-def test_street_type_conflict_keeps_the_typed_address_for_retry(page, app_url, property_record, width):
+@pytest.mark.parametrize(("incorrect_address", "street_conflict"), [
+    ("106 Magazine Avenue, Cambridge, MA", "type"),
+    ("106 Magazne St, Cambridge, MA", "name"),
+])
+def test_street_conflict_keeps_the_typed_address_for_retry(page, app_url, property_record, width,
+                                                         incorrect_address, street_conflict):
     page.set_viewport_size({"width": width, "height": 844})
     corrected_address = "106 Magazine St, Cambridge, MA"
     corrected = dict(property_record, address=corrected_address,
@@ -72,8 +77,8 @@ def test_street_type_conflict_keeps_the_typed_address_for_retry(page, app_url, p
 
     def respond(route):
         url = route.request.url
-        if "Avenue" in url:
-            route.fulfill(status=409, json={"detail": "The address match uses a different street type. Check the street name and try again."})
+        if "Avenue" in url or "Magazne" in url:
+            route.fulfill(status=409, json={"detail": f"The address match uses a different street {street_conflict}. Check the address and try again."})
         else:
             route.fulfill(json=corrected if "106" in url else property_record)
 
@@ -85,10 +90,9 @@ def test_street_type_conflict_keeps_the_typed_address_for_retry(page, app_url, p
     field.press("Enter")
     expect(page.locator("#propertyAddress")).to_contain_text("95 MAGAZINE ST")
 
-    incorrect_address = "106 Magazine Avenue, Cambridge, MA"
     field.fill(incorrect_address)
     field.press("Enter")
-    expect(page.locator("#status")).to_contain_text("different street type")
+    expect(page.locator("#status")).to_contain_text(f"different street {street_conflict}")
     expect(field).to_have_value(incorrect_address)
     expect(page.locator("#results")).to_be_hidden()
     expect(page.get_by_role("button", name="Explore property")).to_be_enabled()

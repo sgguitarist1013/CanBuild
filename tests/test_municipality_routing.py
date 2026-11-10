@@ -209,3 +209,35 @@ def test_cambridge_street_type_must_agree_before_parcel_lookup(monkeypatch, mock
     else:
         assert response.status_code == 200
         assert response.json()["parcel"]["parcel_number"] == lot
+
+
+@pytest.mark.parametrize("address", ["106 Magazne St, Cambridge, MA", "106 Main Street Cambridge MA 02139"])
+def test_changed_street_name_cannot_confirm_a_parcel(monkeypatch, mock_census, address):
+    matched = census_match("CAMBRIDGE", "Cambridge city", "Cambridge")
+    matched["matchedAddress"] = "106 MAGAZINE ST, CAMBRIDGE, MA, 02139"
+    matched["addressComponents"]["streetName"] = "MAGAZINE"
+    mock_census([matched])
+    lookup = AsyncMock(return_value=(None, None, None))
+    monkeypatch.setattr(server, "resolve_parcel", lookup)
+    monkeypatch.setattr(server.municipal_zoning, "cambridge_lookup", AsyncMock(return_value=None))
+    monkeypatch.setattr(server.municipal_zoning, "multifamily_screen", AsyncMock(return_value={}))
+    monkeypatch.setattr(server, "search_zoning_sources", AsyncMock(return_value={}))
+
+    response = TestClient(server.app).get("/api/property", params={"address": address})
+
+    assert response.status_code == 409
+    assert "different street name" in response.json()["detail"]
+    lookup.assert_not_awaited()
+
+
+@pytest.mark.parametrize(("address", "name", "suffix"), [
+    ("100 Mass Ave, Cambridge, MA", "MASSACHUSETTS", "AVE"),
+    ("100 Mount Auburn St Cambridge MA 02138", "MT AUBURN", "ST"),
+    ("100 O’Brien St Apt 2, Cambridge, MA", "OBRIEN", "ST"),
+    ("8 Saint Paul St, Brookline, MA", "ST PAUL", "ST"),
+    ("One Lewis Wharf, Boston, MA", "LEWIS WHARF", ""),
+])
+def test_street_name_guard_accepts_normalized_equivalents(address, name, suffix):
+    assert not parcel_engine.street_name_conflicts(address, {
+        "streetName": name, "suffixType": suffix, "postal_city": "CAMBRIDGE",
+    })

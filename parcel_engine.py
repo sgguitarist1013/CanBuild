@@ -83,6 +83,23 @@ def census_street(components):
     return " ".join(str(components[key]).strip() for key in fields if components.get(key))
 
 
+def requested_street_tokens(address, components):
+    if not requested_house_number(address):
+        return []
+    segment, _, remainder = normalize_address(address).partition(",")
+    segment = re.split(r"\s*(?:#|\s(?:unit|apt\.?)\s+)", segment, maxsplit=1, flags=re.I)[0].strip()
+    segment = re.sub(r"\s+(?:MA|Massachusetts)(?:\s+\d{5}(?:-\d{4})?)?$|\s+\d{5}(?:-\d{4})?$",
+                     "", segment, flags=re.I)
+    tokens = clean(segment.replace("'", "").replace("’", "")).split()[1:]
+    if not remainder or re.match(r"\s*(?:MA|Massachusetts|\d{5})\b", remainder, flags=re.I):
+        localities = (clean(components.get(key)).split() for key in ("postal_city", "city"))
+        for locality in sorted(localities, key=len, reverse=True):
+            if locality and tokens[-len(locality):] == locality:
+                tokens = tokens[:-len(locality)]
+                break
+    return tokens
+
+
 def street_type_conflicts(address, components):
     """Detect a known street type that Census replaced with another known type."""
     matched_type = clean(components.get("suffixType"))
@@ -92,20 +109,10 @@ def street_type_conflicts(address, components):
         if len(named_street) > 1:
             matched_type = named_street[-1]
     types = STREET_TYPES.values()
-    if matched_type not in types or not requested_house_number(address):
+    if matched_type not in types:
         return False
 
-    segment, _, remainder = normalize_address(address).partition(",")
-    segment = re.split(r"\s*(?:#|\s(?:unit|apt\.?)\s+)", segment, maxsplit=1, flags=re.I)[0].strip()
-    segment = re.sub(r"\s+(?:MA|Massachusetts)(?:\s+\d{5}(?:-\d{4})?)?$|\s+\d{5}(?:-\d{4})?$",
-                     "", segment, flags=re.I)
-    tokens = clean(segment).split()[1:]
-    if not remainder or re.match(r"\s*(?:MA|Massachusetts|\d{5})\b", remainder, flags=re.I):
-        localities = (clean(components.get(key)).split() for key in ("postal_city", "city"))
-        for locality in sorted(localities, key=len, reverse=True):
-            if locality and tokens[-len(locality):] == locality:
-                tokens = tokens[:-len(locality)]
-                break
+    tokens = requested_street_tokens(address, components)
     suffix_direction = clean(components.get("suffixDirection"))
     if tokens and suffix_direction and DIRECTIONS.get(tokens[-1], tokens[-1]) == DIRECTIONS.get(suffix_direction, suffix_direction):
         tokens.pop()
@@ -113,6 +120,18 @@ def street_type_conflicts(address, components):
         return False
     requested_type = STREET_TYPES.get(tokens[-1], tokens[-1])
     return requested_type in types and requested_type != matched_type
+
+
+def street_name_conflicts(address, components):
+    """Detect name substitutions when both addresses end in the same recognized street type."""
+    requested = street_tokens(" ".join(requested_street_tokens(address, components)))
+    matched = street_tokens(census_street(components).replace("'", "").replace("’", ""))
+    for street in (requested, matched):
+        if len(street) > 2 and street[0] == "ST":
+            street[0] = "SAINT"
+    return (len(requested) > 1 and len(matched) > 1
+            and requested[-1] == matched[-1] and requested[-1] in STREET_TYPES.values()
+            and requested != matched)
 
 
 def exact_address_match(feature, house, street, city, postal_city=None):
