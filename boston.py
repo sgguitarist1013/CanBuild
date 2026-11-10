@@ -1,5 +1,6 @@
 """Boston municipal assessor identity and recorded-sale research; never an appraisal."""
 from datetime import date, datetime, timezone
+import asyncio
 import math
 import re
 import httpx
@@ -74,16 +75,29 @@ async def lookup(client,lon,lat,parts,address,pid=None):
     if len(exact)==1 and not address_truncated:
         return next(iter(exact.values())),[], 'Exact Boston municipal street and house-number match', False
     # Nearby records are candidates only. No owner, area or value is attributed to the subject yet.
-    d=await fetch(client,0,{'geometry':f'{lon},{lat}','geometryType':'esriGeometryPoint','inSR':4326,
-                          'distance':150,'units':'esriSRUnit_Meter','spatialRel':'esriSpatialRelIntersects','resultRecordCount':1000})
+    spatial_query = {'geometry': f'{lon},{lat}', 'geometryType': 'esriGeometryPoint', 'inSR': 4326,
+                     'distance': 150, 'units': 'esriSRUnit_Meter', 'spatialRel': 'esriSpatialRelIntersects',
+                     'orderByFields': 'OBJECTID ASC', 'resultOffset': 0, 'resultRecordCount': 1000}
+    d = await fetch(client, 0, spatial_query)
     nearby={x['attributes']['PID']:x['attributes'] for x in d.get('features',[])}
+    spatial_truncated = bool(d.get('exceededTransferLimit'))
+    if spatial_truncated:
+        # Spatial filtering can return fewer rows than requested even when another page exists.
+        try:
+            async with asyncio.timeout(10):
+                page = await fetch(client, 0, {**spatial_query, 'resultOffset': spatial_query['resultRecordCount']})
+        except (TimeoutError, httpx.HTTPError, ValueError):
+            pass  # Keep the first page and its incomplete status if the follow-up fails.
+        else:
+            nearby.update((row['attributes']['PID'], row['attributes']) for row in page.get('features', []))
+            spatial_truncated = bool(page.get('exceededTransferLimit'))
     nearby.update(exact)
     words=set(clean(address.split(',')[0]).split())-{'1','ONE'}
     def relevance(a):
         text=set(clean(str(a.get('OWNER',''))+' '+str(a.get('FULL_ADDRESS',''))).split())
         return (a['PID'] in exact,len(words&text),not bool(a.get('UNIT_NUM')),bool(a.get('GROSS_AREA')))
     ordered=sorted(nearby.values(),key=relevance,reverse=True)
-    truncated=address_truncated or bool(d.get('exceededTransferLimit'))
+    truncated=address_truncated or spatial_truncated
     return None,[candidate(x) for x in ordered[:20]],'Review candidate assessor records',truncated
 
 

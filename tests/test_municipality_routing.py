@@ -136,9 +136,11 @@ def test_boston_empty_candidate_search_reports_source_completeness(monkeypatch, 
     matched["matchedAddress"] = "1 LEWIS WHARF, BOSTON, MA"
     matched["addressComponents"].update(streetName="LEWIS", suffixType="WHARF")
     mock_census([matched])
-    monkeypatch.setattr(server.boston, "fetch", AsyncMock(side_effect=[
-        {"features": []}, {"features": [], "exceededTransferLimit": truncated},
-    ]))
+    spatial_page = {"features": [], "exceededTransferLimit": truncated}
+    pages = [{"features": []}, spatial_page]
+    if truncated:
+        pages.append(spatial_page)
+    monkeypatch.setattr(server.boston, "fetch", AsyncMock(side_effect=pages))
     monkeypatch.setattr(server.municipal_zoning, "multifamily_screen", AsyncMock(return_value={}))
     monkeypatch.setattr(server, "search_zoning_sources", AsyncMock(return_value={}))
 

@@ -1,6 +1,7 @@
 from datetime import date
 import asyncio
 from unittest.mock import AsyncMock, patch
+import httpx
 import pytest
 import boston
 from parcel_engine import requested_house_number, normalize_address, same_street
@@ -64,3 +65,28 @@ def test_incomplete_explicit_id_search_does_not_verify_parcel():
     with patch("boston.fetch", new=AsyncMock(return_value={"features": [row], "exceededTransferLimit": True})):
         with pytest.raises(ValueError, match="incomplete"):
             asyncio.run(boston.lookup(None, -71.05, 42.36, {}, "1 Lewis Wharf, Boston, MA", "0303029000"))
+
+
+@pytest.mark.parametrize("followup,expected_pids,truncated", [
+    ({"features": [{"attributes": {"PID": "0303029000", "FULL_ADDRESS": "1 LEWIS WHARF"}}]},
+     ["0303029000", "neighbor"], False),
+    ({"features": [], "exceededTransferLimit": True}, ["neighbor"], True),
+    (httpx.ReadTimeout("Second page unavailable"), ["neighbor"], True),
+])
+def test_boston_spatial_search_fetches_one_more_page_when_incomplete(followup, expected_pids, truncated):
+    fetch = AsyncMock(side_effect=[
+        {"features": []},
+        {"features": [{"attributes": {"PID": "neighbor"}}], "exceededTransferLimit": True},
+        followup,
+    ])
+    with patch("boston.fetch", new=fetch):
+        record, candidates, _, incomplete = asyncio.run(boston.lookup(
+            None, -71.05, 42.36, {"streetName": "LEWIS WHARF"}, "1 Lewis Wharf, Boston, MA",
+        ))
+    assert record is None
+    assert [row["parcel_number"] for row in candidates] == expected_pids
+    assert incomplete is truncated
+    first_page, second_page = [call.args[2] for call in fetch.await_args_list[1:]]
+    assert first_page["orderByFields"] == "OBJECTID ASC"
+    assert first_page["resultOffset"] == 0
+    assert second_page == {**first_page, "resultOffset": first_page["resultRecordCount"]}
