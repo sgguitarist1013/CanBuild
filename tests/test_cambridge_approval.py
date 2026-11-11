@@ -27,6 +27,9 @@ def test_cambridge_neighbor_meeting_requires_both_thresholds_without_a_pricing_h
 @pytest.mark.parametrize(("house", "lot", "year", "area", "frontage", "living", "sales_state"), [
     (95, "101-200", 1873, 7450, 70, 2702, "held"),
     (106, "102-51", 1886, 1108, 19.07, 2083, "held"),
+    # Synthetic missing records: unit counts still identify an existing building.
+    (95, "101-200", None, 7450, 70, None, "held"),
+    (106, "102-51", None, 1108, 19.07, None, "held"),
     # Exercise the pricing path with a synthetic newer building. The actual parcel remains subject to review.
     (95, "101-200", 2020, 7450, 70, 2702, "empty"),
     (95, "101-200", 2020, 7450, 70, 2702, "unavailable"),
@@ -161,3 +164,19 @@ def test_cambridge_zoning_geometry_requires_one_exact_map_and_lot():
     assert asyncio.run(check([feature])).area > 0
     assert asyncio.run(check([feature, feature])) is None
     assert asyncio.run(check([{**feature, "attributes": {"ML": "101-99"}}])) is None
+
+
+@pytest.mark.parametrize('field', ['units', 'reported_units', 'use_classification_units'])
+@pytest.mark.parametrize('units', [1, 3, 3.0])
+def test_cambridge_missing_age_with_known_homes_requires_demolition_review(field, units):
+    review = cambridge_approval_screen([], {field: units}, date(2026, 11, 10))
+    assert review['pricing_on_hold']
+    assert review['checks'][0]['url'] == CAMBRIDGE_DEMOLITION
+    assert 'building age is missing' in review['checks'][0]['text']
+
+
+@pytest.mark.parametrize('units', [None, 0, -1, True, 'unknown'])
+def test_cambridge_no_positive_building_evidence_does_not_assert_demolition_review(units):
+    review = cambridge_approval_screen([], {'units': units}, date(2026, 11, 10))
+    assert not review['pricing_on_hold']
+    assert review['checks'] == []

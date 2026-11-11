@@ -364,7 +364,7 @@ def cambridge_approval_screen(constraints, building, today=None, *, c1_envelope=
                       "url": CAMBRIDGE_DEMOLITION})
     elif (type(year) is not int or not 0 < year <= current_year) and any(
         type(building.get(field)) in (int, float) and building[field] > 0
-        for field in ("building_area_sqft", "residential_area_sqft")
+        for field in ("building_area_sqft", "residential_area_sqft", "units", "reported_units", "use_classification_units")
     ):
         notes.append({"text": "The building age is missing. Confirm whether Cambridge's demolition review applies.",
                       "url": CAMBRIDGE_DEMOLITION})
