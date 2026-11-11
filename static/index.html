@@ -403,8 +403,11 @@ function renderRedevelopment(d){
 function openReportSection(target){
   const destination=$(target);
   if(destination.tagName==='DETAILS'){
-    const parent=destination.parentElement.closest('details');
-    if(parent) parent.open=true;
+    let parent=destination.parentElement.closest('details');
+    while(parent){
+      parent.open=true;
+      parent=parent.parentElement.closest('details');
+    }
     destination.open=true;
     if(target==='districtDetails'&& !$('onDemandZoning').classList.contains('hide')) $('onDemandZoning').open=true;
     destination.querySelector('summary').focus({preventScroll:true});
