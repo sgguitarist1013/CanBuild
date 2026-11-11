@@ -131,8 +131,8 @@ function renderValues(d){
   const best=d.redevelopment?.best;
   $('currentMarketValue').textContent=market?range(market.low,market.high):'Estimate unavailable';
   $('currentMarketBasis').textContent=market
-    ? market.comp_count+' Registry-confirmed sales within '+market.radius_miles+' mi, scaled to subject living area.'
-    : 'Requires three qualifying local sales confirmed in MassLandRecords.';
+    ? market.comp_count+' Registry-confirmed sale'+(market.comp_count===1?'':'s')+' within '+market.radius_miles+' mi, scaled to subject living area.'+(market.confidence==='limited'?' Limited evidence: indicative range only; additional comparable sales needed.':'')
+    : 'No qualifying deed-confirmed comparable sales found. Market estimate cannot be supported.';
   $('assessedValueContext').hidden=!assessment;
   $('assessedValueContext').textContent=assessment
     ? (assessment.fiscal_year?'FY '+assessment.fiscal_year+' tax assessment':'Tax assessment')+' · '+money(assessment.amount)+'. Separate from the market estimate.'
