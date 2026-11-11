@@ -279,13 +279,14 @@ def conceptual_massing(polygon, parcel, building, city, district):
     base_high=round(footprint_high*rules["stories"])
     result={"method":f"GIS polygon with {rules['side_rear_setback_ft']}–{rules['front_setback_ft']} ft all-edge inset sensitivity, {round(rules['open_space_fraction']*100)}% open-space cap and {rules['stories']}-story base scenario",
             "confidence":"conceptual, not a zoning determination",
+            "setback_review_required":True,
             "parcel_polygon_area_sqft":round(area),
             "gross_area_low_sqft":base_low,"gross_area_high_sqft":base_high,
             "additional_area_low_sqft":round(max(0,base_low-existing)) if existing is not None else None,
             "additional_area_high_sqft":round(max(0,base_high-existing)) if existing is not None else None,
             "stories":rules["stories"],"height_ft":rules["height_ft"],
             "source":rules["source"],
-            "limitations":"Conceptual envelope only. Confirm front, side and rear setbacks, qualifying open space, overlays, historic limits, Green Factor and zoning GFA. Cambridge also requires neighborhood outreach for buildings over three stories and 35 feet when Planning Board advisory consultation or special-permit review does not apply."}
+            "limitations":"Conceptual envelope only. Confirm front, side and rear setbacks, qualifying open space, overlays, historic limits, Green Factor and zoning GFA."}
     threshold = rules["inclusionary_min_lot_sqft"]
     assessor_area = parcel.get("gis_area_sqft_approx")
     if area >= threshold and (not assessor_area or assessor_area >= threshold):

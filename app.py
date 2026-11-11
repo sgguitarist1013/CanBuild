@@ -353,18 +353,31 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
             sales_task = asyncio.create_task(ma_sales.search(
                 client, lon, lat, parts.get("city"), result["parcel"], result.get("existing_building"),
             ))
+        if parts.get("city") == "CAMBRIDGE" and result.get("parcel"):
+            frontage = municipal_zoning.cambridge_mapped_frontage(result["parcel"])
+            if frontage:
+                result["cambridge_mapped_frontage"] = frontage
+            city_polygon = await municipal_zoning.cambridge_parcel_geometry(client, result["parcel"].get("parcel_number"), lat)
+            if city_polygon is not None:
+                polygon = city_polygon
+                result["parcel"]["zoning_geometry_source"] = "Cambridge parcel GIS, exact map and lot"
+                result["sources"].append({"name": "Cambridge parcel map used for zoning", "url": municipal_zoning.CAMBRIDGE_PARCEL_SOURCE})
+            elif polygon is not None:
+                result["parcel"]["zoning_geometry_source"] = "MassGIS parcel geometry"
         atlas_task = asyncio.create_task(municipal_zoning.multifamily_screen(
             client, parts.get("city") or "", polygon, lat, (result.get("parcel") or {}).get("loc_id"),
         ))
         if parts.get("city","").lower()=="cambridge":
+          constraint_task = asyncio.create_task(municipal_zoning.cambridge_constraints(client, polygon, lat))
           try:
             result['zoning']=await municipal_zoning.cambridge_lookup(client,polygon,lat)
             if result['zoning']:
-                result['verification']['zoning']='Municipal GIS selected-parcel polygon match; overlays/amendments not checked'
+                result['verification']['zoning']='Municipal GIS selected-parcel polygon match; see separate overlay checks'
             else:
                 result['warnings'].append('Cambridge zoning did not cover the selected parcel uniquely; district withheld.')
           except (httpx.HTTPError,ValueError,TypeError):
             result["warnings"].append("Cambridge zoning GIS unavailable; district not verified.")
+          result["constraints"] = await constraint_task
         elif parts.get('city','').upper() in municipal_zoning.LOCAL_CONNECTORS:
             try:
                 local=await municipal_zoning.lookup(client,parts['city'],polygon,lat,result.get('parcel') or {})
@@ -469,6 +482,10 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
             result["warnings"].append("Cannot calculate buildable envelope until selected parcel polygon is available.")
         elif not result.get("buildout_review"):
             result["warnings"].append("No verified zoning calculation rules configured for this municipality and district.")
+    if parcel and city.upper() == "CAMBRIDGE":
+        result["cambridge_approvals"] = municipal_zoning.cambridge_approval_screen(
+            result["constraints"], result.get("existing_building"), c1_envelope=result.get("zoning_potential"),
+        )
     result["warnings"] += ["MassGIS assessor extracts can be stale; BLD_AREA and RES_AREA use different measurement conventions and may not equal zoning gross floor area.","Parcel maps are not legal surveys; legal units and additions require independent confirmation.","Only listed municipal layers are screened. Additional overlays, zoning amendments, site constraints and legal buildability remain unverified."]
     if not result.get("zoning"):
         result["recommendations"].append({"title":"Verify the property's zoning district","reason":"PlotDocket could not confirm a base district for the selected parcel. Base district standards are needed to evaluate expansion.","next_step":"Use the municipality's official zoning map and confirm the parcel's base and overlay districts with its planning or building department.","confidence":"Not yet verified"})
@@ -503,37 +520,40 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
         result["recommendations"].append({"title":"Check local expansion standards","reason":"The district is mapped, but a reviewed rule set for this district is not available in PlotDocket.","next_step":"Confirm setbacks, height, lot coverage, open space, nonconforming-lot rules, overlays, and permit requirements with the municipality.","confidence":"District mapped; dimensional rules incomplete"})
     else:
         result["recommendations"].append({"title":"Review the preliminary zoning scenario","reason":"A district-specific scenario is available, subject to its stated assumptions and limitations.","next_step":"Have the city review a current survey and proposed footprint before paying for design work.","confidence":result["zoning_potential"].get("confidence")})
+    pricing_on_hold = result.get("cambridge_approvals", {}).get("pricing_on_hold")
     market_range = (result.get("current_valuation") or {}).get("market_range")
     result["redevelopment"] = analyze_redevelopment(result.get("zoning_potential"), result.get("existing_building"))
     if result["redevelopment"].get("best"):
-        references = None
-        try:
-            async with asyncio.timeout(13), httpx.AsyncClient(timeout=12, follow_redirects=True) as client:
-                if city.upper() == "CAMBRIDGE":
-                    coords = result["coordinates"]
-                    references = await cambridge_new_build_sales(client, lon=coords["lon"], lat=coords["lat"])
-                else:
-                    coords = result["coordinates"]
-                    references = await condo_sales(client, coords["lon"], coords["lat"], city,
-                        min_year_built=datetime.now().year - 4, radius_miles=3, new_build_only=True)
-        except (TimeoutError, httpx.HTTPError, ValueError, TypeError):
-            pass
-        if references:
-            references = registry.sale_report(city, references)
-            pending.extend(references.get("pending_registry_review", []))
-        candidates = (references or {}).get("candidates", [])
-        subject_parcel = (result.get("parcel") or {}).get("parcel_number")
-        comparable = [candidate for candidate in candidates if candidate.get("project_key") != subject_parcel]
-        result["redevelopment"] = analyze_redevelopment(
-            result["zoning_potential"], result.get("existing_building"),
-            comparable if references and not references.get("truncated") else [],
-            current_market_range=market_range,
-        )
-        result["redevelopment"]["sale_references"] = references
+        if not pricing_on_hold:
+            references = None
+            try:
+                async with asyncio.timeout(13), httpx.AsyncClient(timeout=12, follow_redirects=True) as client:
+                    if city.upper() == "CAMBRIDGE":
+                        coords = result["coordinates"]
+                        references = await cambridge_new_build_sales(client, lon=coords["lon"], lat=coords["lat"])
+                    else:
+                        coords = result["coordinates"]
+                        references = await condo_sales(client, coords["lon"], coords["lat"], city,
+                            min_year_built=datetime.now().year - 4, radius_miles=3, new_build_only=True)
+            except (TimeoutError, httpx.HTTPError, ValueError, TypeError):
+                pass
+            if references:
+                references = registry.sale_report(city, references)
+                pending.extend(references.get("pending_registry_review", []))
+            candidates = (references or {}).get("candidates", [])
+            subject_parcel = (result.get("parcel") or {}).get("parcel_number")
+            comparable = [candidate for candidate in candidates if candidate.get("project_key") != subject_parcel]
+            result["redevelopment"] = analyze_redevelopment(
+                result["zoning_potential"], result.get("existing_building"),
+                comparable if references and not references.get("truncated") else [],
+                current_market_range=market_range,
+            )
+            result["redevelopment"]["sale_references"] = references
     if scenario := result["redevelopment"].get("best"):
         result["dwelling_unit_summary"].update(
             potential_total=scenario["market_units"] + scenario["restricted_units"],
-            potential_status="Conceptual redevelopment program based on the screened zoning envelope.",
+            potential_status=("Conceptual program. City approval checks remain open." if pricing_on_hold
+                              else "Conceptual redevelopment program based on the screened zoning envelope."),
         )
     if pending:
         queue_registry_review(city, pending)

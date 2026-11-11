@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, model_validator
 
 import boston
 import ma_sales
+from municipal_zoning import CAMBRIDGE_PARCELS
 
 CAMBRIDGE_ASSESSOR = "https://data.cambridgema.gov/d/waa7-ibdu"
 CAMBRIDGE_ASSESSOR_API = "https://data.cambridgema.gov/resource/waa7-ibdu.json"

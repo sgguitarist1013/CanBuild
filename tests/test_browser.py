@@ -11,6 +11,68 @@ def property_record():
             "zoning": None, "zoning_potential": None}
 
 
+@pytest.mark.parametrize("width", [320, 390])
+@pytest.mark.parametrize(("house", "lot", "year", "frontage", "block", "gross_area", "answer"), [
+    (95, "101-200", 1873, 70, 101, 12000, "City review comes first for this rebuild."),
+    (95, "101-200", 2020, 70, 101, 12000, "City review comes first for this rebuild."),
+    (95, "101-200", None, 70, 101, 12000, "City review comes first for this rebuild."),
+    (106, "102-51", None, 19.07, 102, 1700, "Start with the existing building. The screened rebuild would lose space or units."),
+    (106, "102-51", 1886, 19.07, 102, 1700, "Start with the existing building. The screened rebuild would lose space or units."),
+])
+def test_cambridge_approval_step_is_visible_before_estimates(
+    page, app_url, property_record, width, house, lot, year, frontage, block, gross_area, answer,
+):
+    from municipal_zoning import (
+        CAMBRIDGE_DEMOLITION, CAMBRIDGE_DIMENSIONAL_TABLE, CAMBRIDGE_NEIGHBOR_NOTICE,
+        cambridge_approval_screen, cambridge_mapped_frontage,
+    )
+    from redevelopment import analyze_redevelopment
+
+    street = f"{house} Magazine St"
+    address = f"{street}, Cambridge, MA"
+    envelope = {"gross_area_low_sqft": 0, "gross_area_high_sqft": gross_area, "stories": 4,
+                "height_ft": 45, "setback_review_required": True}
+    building = {"year_built": year, "units": 3}
+    if year is not None:
+        building["residential_area_sqft"] = 2702 if house == 95 else 2083
+    parcel = dict(property_record["parcel"], parcel_number=lot, assessor_site_address=street)
+    record = dict(
+        property_record, address=address, parcel=parcel, existing_building=building,
+        zoning={"district": "C-1"}, zoning_potential=envelope,
+        redevelopment=analyze_redevelopment(envelope, building),
+        cambridge_mapped_frontage=cambridge_mapped_frontage(parcel),
+        cambridge_approvals=cambridge_approval_screen([], building, c1_envelope=envelope),
+    )
+    page.set_viewport_size({"width": width, "height": 844})
+    page.route("**/api/property?*", lambda route: route.fulfill(json=record))
+    page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
+    page.goto(app_url)
+    page.get_by_role("combobox").fill(address)
+    page.get_by_role("button", name="Explore property").click()
+    expect(page.locator("#potentialAnswer")).to_have_text(answer)
+    expect(page.locator("#redevelopmentMetrics")).to_be_hidden()
+    expect(page.locator("#autoSellout")).to_have_text("Estimate unavailable")
+    expect(page.locator("#cambridgeApprovalChecks")).to_be_hidden()
+    expect(page.locator("#cambridgeMappedFrontage")).to_be_hidden()
+    page.get_by_role("button", name="See what needs city review").click()
+    expect(page.locator("#cambridgeMappedFrontage")).to_contain_text(f"{frontage} feet along Magazine Street")
+    expect(page.locator("#cambridgeMappedFrontage").get_by_role("link")).to_have_attribute(
+        "href", f"https://gis.cambridgema.gov/blockmaps/Block_{block}.pdf",
+    )
+    if year != 2020:
+        expect(page.locator("#cambridgeApprovalChecks")).to_contain_text(
+            "building age is missing" if year is None else "demolition review with the Historical Commission",
+        )
+        expect(page.locator(f'#cambridgeApprovalChecks a[href="{CAMBRIDGE_DEMOLITION}"]')).to_be_visible()
+    else:
+        expect(page.locator(f'#cambridgeApprovalChecks a[href="{CAMBRIDGE_DEMOLITION}"]')).to_have_count(0)
+    expect(page.locator("#cambridgeApprovalChecks")).to_contain_text("Confirm the street-facing lot line")
+    expect(page.locator(f'#cambridgeApprovalChecks a[href="{CAMBRIDGE_DIMENSIONAL_TABLE}"]')).to_be_visible()
+    expect(page.locator("#cambridgeApprovalChecks")).to_contain_text("Neighbor meeting before a building permit")
+    expect(page.locator(f'#cambridgeApprovalChecks a[href="{CAMBRIDGE_NEIGHBOR_NOTICE}"]')).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
 def test_search_displays_selected_property_and_withholds_estimates(page, app_url, property_record):
     page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": ["95 Magazine St, Cambridge, MA"]}))
     page.route("**/api/property?*", lambda route: route.fulfill(json=property_record))
