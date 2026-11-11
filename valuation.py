@@ -42,12 +42,13 @@ def current_valuation(parcel, building, sales):
         matches.setdefault(sale["parcel_number"], sale)
     nearby = [sale for sale in matches.values() if sale["distance_miles"] <= .5]
     selected = nearby[:4] if len(nearby) >= 3 else list(matches.values())[:3]
-    if len(selected) >= 3:
+    if selected:
         prices = [sale["deed_verification"]["consideration"] / sale["comparison_area_sqft"] * area for sale in selected]
         result["market_range"] = {
             "low": floor(min(prices) / 10000) * 10000,
             "high": ceil(max(prices) / 10000) * 10000,
             "comp_count": len(selected),
+            "confidence": "limited" if len(selected) < 3 else "supported",
             "radius_miles": max(.5, selected[-1]["distance_miles"]),
             "comp_addresses": [sale["address"] for sale in selected],
         }
