@@ -692,3 +692,33 @@ def test_ask_keeps_building_checks_when_question_mentions_current_home(page, app
         result = page.evaluate('(args) => explainReport(args.prompt, args.record)', {'prompt': prompt, 'record': record})
         assert ('Start with the existing building' if hold == 'retain' else 'City review comes first') in result['answer']
         assert result['target'] == 'districtDetails'
+
+
+@pytest.mark.parametrize("width", [320, 390])
+def test_acquisition_budget_discloses_the_same_comp_median_as_the_report(page, app_url, property_record, width):
+    from redevelopment import analyze_redevelopment
+    from tests.test_redevelopment import verified_condos
+
+    market = {"low": 1320000, "median": 1340000, "high": 2400000, "comp_count": 3, "radius_miles": .5}
+    comps = [dict(row, arm_length_verified=True, new_construction_verified=True)
+             for row in verified_condos(1700)]
+    redevelopment = analyze_redevelopment(
+        {"gross_area_high_sqft": 8000, "stories": 4}, {}, comps, current_market_range=market,
+    )
+    record = dict(property_record, zoning={"district": "C-1"}, redevelopment=redevelopment,
+                  current_valuation={"market_range": market})
+    page.set_viewport_size({"width": width, "height": 844})
+    page.route("**/api/property?*", lambda route: route.fulfill(json=record))
+    page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
+    page.goto(app_url)
+    page.get_by_role("combobox").fill("95 Magazine St, Cambridge, MA")
+    page.get_by_role("button", name="Explore property").click()
+    expect(page.locator("#currentMarketValue")).to_contain_text("$1,340,000")
+    expect(page.locator("#redevelopmentEvidence")).to_be_hidden()
+    page.get_by_role("button", name="View development estimate").click()
+    expect(page.locator("#redevelopmentEvidence")).to_contain_text(
+        "the median of the size-adjusted comparable sales, $1,340,000, plus closing costs",
+    )
+    expect(page.locator("#redevelopmentEvidence")).to_contain_text("$1,366,800")
+    expect(page.locator("#autoSellout")).to_contain_text("$")
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")

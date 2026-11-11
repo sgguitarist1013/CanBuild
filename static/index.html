@@ -370,7 +370,10 @@ function renderRedevelopment(d){
   if(best.sellout_high!=null){
     paragraph('Gross market-rate sellout '+range(best.sellout_low,best.sellout_high)+'.');
     paragraph(screen.acquisition_proxy
-      ? 'Modeled acquisition uses the midpoint between the lowest and highest size-adjusted comp prices, '+money(screen.acquisition_proxy)+', plus closing costs.'
+      ? 'Modeled acquisition uses '+(screen.acquisition_basis==='comp_median'
+        ? 'the median of the size-adjusted comparable sales, '
+        : 'the midpoint between the lowest and highest size-adjusted comp prices, ')
+        +money(screen.acquisition_proxy)+', plus closing costs.'
       : 'The budget excludes acquisition and its financing. An as-is market estimate is required to model surplus.');
     if(best.surplus_high!=null) paragraph('Modeled surplus / loss '+range(best.surplus_low,best.surplus_high)+'.');
   }

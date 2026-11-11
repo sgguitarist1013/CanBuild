@@ -111,7 +111,15 @@ def analyze_redevelopment(massing, building, references=(), *, current_market_ra
     building = building or {}
     market = current_market_range or {}
     low, high = market.get("low"), market.get("high")
-    acquisition = (low + high) / 2 if positive_number(low) and positive_number(high) and low <= high else None
+    median = market.get("median")
+    acquisition = acquisition_basis = None
+    if positive_number(low) and positive_number(high) and low <= high:
+        if median is None:
+            acquisition = (low + high) / 2
+            acquisition_basis = "range_midpoint"
+        elif positive_number(median) and low <= median <= high:
+            acquisition = median
+            acquisition_basis = "comp_median"
     existing_gross = building.get("building_area_sqft")
     existing_living = building.get("residential_area_sqft")
     existing_units = building.get("units")
@@ -196,6 +204,7 @@ def analyze_redevelopment(massing, building, references=(), *, current_market_ra
             for row in modeled[1:]
         ],
         "ranking": ranking, "acquisition_proxy": acquisition, "demolition_area_proxy": not has_existing_area,
+        "acquisition_basis": acquisition_basis,
         "restricted_proceeds_credited": 0,
         "assumptions": "18% common/service area, standard assumed unit sizes, no dedicated parking, no restricted-unit proceeds, and no subsidies. Demolition area uses the assessor building area or a one-floor footprint proxy. Budget allowances are screening assumptions. Large abatement, relocation, remediation, unusual foundations, parking, insurance or offsite work can materially change costs. Surplus is before income tax and investor distributions.",
         "sources": [{"name": "Cambridge September 2026 underwriting study · tables 27, 30 and 34", "url": STUDY},
