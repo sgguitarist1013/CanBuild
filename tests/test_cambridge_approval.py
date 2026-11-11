@@ -9,7 +9,7 @@ from shapely.geometry import box
 
 import app as server
 from municipal_zoning import (
-    CAMBRIDGE_DEMOLITION, CAMBRIDGE_NEIGHBOR_NOTICE, cambridge_approval_screen, cambridge_constraints, cambridge_mapped_frontage,
+    CAMBRIDGE_DEMOLITION, CAMBRIDGE_DIMENSIONAL_TABLE, CAMBRIDGE_NEIGHBOR_NOTICE, cambridge_approval_screen, cambridge_constraints, cambridge_mapped_frontage,
     cambridge_parcel_geometry,
 )
 
@@ -30,10 +30,11 @@ def test_cambridge_neighbor_meeting_requires_both_thresholds_without_a_pricing_h
     # Synthetic missing records: unit counts still identify an existing building.
     (95, "101-200", None, 7450, 70, None, "held"),
     (106, "102-51", None, 1108, 19.07, None, "held"),
+    (95, "101-200", 2020, 7450, 70, 2702, "setback_only"),
     # Exercise the pricing path with a synthetic newer building. The actual parcel remains subject to review.
     (95, "101-200", 2020, 7450, 70, 2702, "empty"),
     (95, "101-200", 2020, 7450, 70, 2702, "unavailable"),
-    (106, "102-51", 2020, 1108, 19.07, 2083, "empty"),
+    (106, "102-51", 2020, 1108, 19.07, 2083, "setback_only"),
 ])
 def test_magazine_property_report_checks_approvals_before_replacement_pricing(
     monkeypatch, house, lot, year, area, frontage, living, sales_state,
@@ -64,6 +65,14 @@ def test_magazine_property_report_checks_approvals_before_replacement_pricing(
     monkeypatch.setattr(server.ma_sales, "search", AsyncMock(return_value={"candidates": []}))
     monkeypatch.setattr(server, "search_zoning_sources", AsyncMock(return_value={}))
     monkeypatch.setattr(server, "queue_registry_review", lambda *args: None)
+    if sales_state in {"empty", "unavailable"}:
+        # A synthetic envelope with reviewed setbacks exercises the independent sales-source checks.
+        real_massing = server.conceptual_massing
+
+        def reviewed_massing(*args):
+            return {**real_massing(*args), "setback_review_required": False}
+
+        monkeypatch.setattr(server, "conceptual_massing", reviewed_massing)
     pricing = AsyncMock(return_value={"candidates": []})
     if sales_state == "unavailable":
         pricing.side_effect = httpx.ConnectError("Condo sales temporarily unavailable")
@@ -77,9 +86,12 @@ def test_magazine_property_report_checks_approvals_before_replacement_pricing(
     assert report["zoning_potential"]["stories"] == 4
     assert [item["status"] for item in report["constraints"]] == ["no mapped intersection"] * 4
     review = report["cambridge_approvals"]
-    held = sales_state == "held"
+    held = sales_state in {"held", "setback_only"}
     assert review["pricing_on_hold"] is held
-    expected_checks = [CAMBRIDGE_DEMOLITION, CAMBRIDGE_NEIGHBOR_NOTICE] if held else [CAMBRIDGE_NEIGHBOR_NOTICE]
+    expected_checks = [CAMBRIDGE_DEMOLITION] if sales_state == "held" else []
+    if held:
+        expected_checks.append(CAMBRIDGE_DIMENSIONAL_TABLE)
+    expected_checks.append(CAMBRIDGE_NEIGHBOR_NOTICE)
     assert [check["url"] for check in review["checks"]] == expected_checks
     if held or house == 106:
         pricing.assert_not_awaited()

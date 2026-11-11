@@ -279,6 +279,7 @@ def conceptual_massing(polygon, parcel, building, city, district):
     base_high=round(footprint_high*rules["stories"])
     result={"method":f"GIS polygon with {rules['side_rear_setback_ft']}–{rules['front_setback_ft']} ft all-edge inset sensitivity, {round(rules['open_space_fraction']*100)}% open-space cap and {rules['stories']}-story base scenario",
             "confidence":"conceptual, not a zoning determination",
+            "setback_review_required":True,
             "parcel_polygon_area_sqft":round(area),
             "gross_area_low_sqft":base_low,"gross_area_high_sqft":base_high,
             "additional_area_low_sqft":round(max(0,base_low-existing)) if existing is not None else None,

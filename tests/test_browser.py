@@ -14,6 +14,7 @@ def property_record():
 @pytest.mark.parametrize("width", [320, 390])
 @pytest.mark.parametrize(("house", "lot", "year", "frontage", "block", "gross_area", "answer"), [
     (95, "101-200", 1873, 70, 101, 12000, "City review comes first for this rebuild."),
+    (95, "101-200", 2020, 70, 101, 12000, "City review comes first for this rebuild."),
     (95, "101-200", None, 70, 101, 12000, "City review comes first for this rebuild."),
     (106, "102-51", None, 19.07, 102, 1700, "Start with the existing building. The screened rebuild would lose space or units."),
     (106, "102-51", 1886, 19.07, 102, 1700, "Start with the existing building. The screened rebuild would lose space or units."),
@@ -21,12 +22,16 @@ def property_record():
 def test_cambridge_approval_step_is_visible_before_estimates(
     page, app_url, property_record, width, house, lot, year, frontage, block, gross_area, answer,
 ):
-    from municipal_zoning import CAMBRIDGE_DEMOLITION, CAMBRIDGE_NEIGHBOR_NOTICE, cambridge_approval_screen, cambridge_mapped_frontage
+    from municipal_zoning import (
+        CAMBRIDGE_DEMOLITION, CAMBRIDGE_DIMENSIONAL_TABLE, CAMBRIDGE_NEIGHBOR_NOTICE,
+        cambridge_approval_screen, cambridge_mapped_frontage,
+    )
     from redevelopment import analyze_redevelopment
 
     street = f"{house} Magazine St"
     address = f"{street}, Cambridge, MA"
-    envelope = {"gross_area_low_sqft": 0, "gross_area_high_sqft": gross_area, "stories": 4, "height_ft": 45}
+    envelope = {"gross_area_low_sqft": 0, "gross_area_high_sqft": gross_area, "stories": 4,
+                "height_ft": 45, "setback_review_required": True}
     building = {"year_built": year, "units": 3}
     if year is not None:
         building["residential_area_sqft"] = 2702 if house == 95 else 2083
@@ -54,11 +59,16 @@ def test_cambridge_approval_step_is_visible_before_estimates(
     expect(page.locator("#cambridgeMappedFrontage").get_by_role("link")).to_have_attribute(
         "href", f"https://gis.cambridgema.gov/blockmaps/Block_{block}.pdf",
     )
-    expect(page.locator("#cambridgeApprovalChecks")).to_contain_text(
-        "building age is missing" if year is None else "demolition review with the Historical Commission",
-    )
+    if year != 2020:
+        expect(page.locator("#cambridgeApprovalChecks")).to_contain_text(
+            "building age is missing" if year is None else "demolition review with the Historical Commission",
+        )
+        expect(page.locator(f'#cambridgeApprovalChecks a[href="{CAMBRIDGE_DEMOLITION}"]')).to_be_visible()
+    else:
+        expect(page.locator(f'#cambridgeApprovalChecks a[href="{CAMBRIDGE_DEMOLITION}"]')).to_have_count(0)
+    expect(page.locator("#cambridgeApprovalChecks")).to_contain_text("Confirm the street-facing lot line")
+    expect(page.locator(f'#cambridgeApprovalChecks a[href="{CAMBRIDGE_DIMENSIONAL_TABLE}"]')).to_be_visible()
     expect(page.locator("#cambridgeApprovalChecks")).to_contain_text("Neighbor meeting before a building permit")
-    expect(page.locator(f'#cambridgeApprovalChecks a[href="{CAMBRIDGE_DEMOLITION}"]')).to_be_visible()
     expect(page.locator(f'#cambridgeApprovalChecks a[href="{CAMBRIDGE_NEIGHBOR_NOTICE}"]')).to_be_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
 

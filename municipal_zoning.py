@@ -294,6 +294,10 @@ CAMBRIDGE_APPROVAL_LAYERS = (
     ("Neighborhood conservation districts", "Neighborhood_Conservation_Districts", "NAME", "historical/historical_nhoodconservationdist"),
     ("Landmarks and preservation easements", "Landmarks_and_Easements", "HISTORIC_N", "historical/historical_landmarkseasements"),
 )
+CAMBRIDGE_DIMENSIONAL_TABLE = (
+    "https://www.cambridgema.gov/~/media/files/cdd/zoningdevel/amendments/2024/multifamilyhousing/"
+    "250210ord20251multifamilyhousingzoningpetitionpartoneordainedasamendedfeb102025final.pdf#page=14"
+)
 CAMBRIDGE_DEMOLITION = "https://www.cambridgema.gov/historic/districtshistoricproperties/demolitionreview"
 CAMBRIDGE_NEIGHBOR_NOTICE = "https://www.cambridgema.gov/cdd/zoninganddevelopment/developmentreview/residentialneighbornotification"
 # Parenthesized green dimensions on the Cambridge FY2027 assessor block maps.
@@ -376,6 +380,13 @@ def cambridge_approval_screen(constraints, building, today=None, *, c1_envelope=
         elif item["status"] == "unavailable":
             notes.append({"text": item["name"] + " could not be checked. Confirm it with the city.",
                           "url": item["source_url"]})
+    if c1_envelope and c1_envelope.get("setback_review_required"):
+        notes.append({
+            "text": "Confirm the street-facing lot line, setbacks and usable open space before pricing. "
+                    "The estimate uses the same distance from every lot edge. A site plan must show how far "
+                    "the building sits from the front, side and rear boundaries.",
+            "url": CAMBRIDGE_DIMENSIONAL_TABLE,
+        })
     pricing_on_hold = bool(notes)
     if c1_envelope and c1_envelope["stories"] > 3 and c1_envelope["height_ft"] > 35:
         notes.append({
