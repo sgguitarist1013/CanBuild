@@ -469,6 +469,7 @@ def test_ask_report_keeps_the_magazine_st_buildout_recommendation(page, app_url,
     street = f"{house} MAGAZINE ST"
     address = f"{street}, CAMBRIDGE, MA"
     envelope = {"gross_area_low_sqft": 0, "gross_area_high_sqft": 1700 if retain else 12000, "stories": 4}
+    envelope["setback_review_required"] = city_review
     building = {"residential_area_sqft": 2083 if retain else 2702, "units": 3}
     parcel = dict(property_record["parcel"], assessor_site_address=street,
                   parcel_number="102-51" if retain else "101-200")
@@ -499,6 +500,17 @@ def test_ask_report_keeps_the_magazine_st_buildout_recommendation(page, app_url,
         if not retain:
             expect(answer).to_contain_text("City review comes first for this rebuild.")
         expect(answer).not_to_contain_text("$")
+    if city_review:
+        question = page.get_by_role("textbox", name="Question about this property report")
+        for prompt in ("What is the rebuild price?", "Why is the rebuild unpriced?",
+                       "Why is the development estimate unavailable?", "What approvals do I need?"):
+            question.fill(prompt)
+            question.press("Enter")
+            expect(answer).to_contain_text("Confirm the street-facing lot line")
+            expect(answer).to_contain_text("usable open space")
+            expect(answer).not_to_contain_text("$")
+            if retain:
+                expect(answer).to_contain_text("Start with the existing building.")
     detail = page.locator("#districtDetails" if city_review else "#envelopeDetails")
     assert not detail.evaluate("element => element.open")
     page.get_by_role("button", name="See supporting details").click()

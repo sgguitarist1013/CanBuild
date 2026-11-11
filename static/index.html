@@ -429,8 +429,9 @@ function explainReport(question, report){
   const upside=/\b(?:upside|make money|how much (?:could|would|can) (?:i|we) make)\b/.test(text)
     || /\b(?:project|development|redevelopment|rebuild)\b.*\b(?:worth|value)\b/.test(text)
     || /\b(?:value of|worth after) (?:this |the )?(?:project|development|redevelopment|rebuild)\b/.test(text);
-  const cost=/\b(?:profits?|loss(?:es)?|sellout|break[- ]even|costs?|budgets?|finance|financing|returns?)\b/.test(text);
-  const zoning=/\b(?:build|building|buildable|built|zoning|zones?|units?|homes?|add|additions?|adus?|height|floor|redevelop(?:ment)?|expand|setbacks?|alter(?:ation)?|as[- ]of[- ]right|by[- ]right)\b/.test(text);
+  const cost=/\b(?:profits?|loss(?:es)?|sellout|break[- ]even|costs?|budgets?|finance|financing|returns?)\b/.test(text)
+    || /\b(?:project|development|redevelopment|rebuild) (?:price|pricing|estimate|(?:is )?unpriced)\b/.test(text);
+  const zoning=/\b(?:build|building|buildable|built|zoning|zones?|units?|homes?|add|additions?|adus?|height|floor|redevelop(?:ment)?|expand|setbacks?|approvals?|alter(?:ation)?|as[- ]of[- ]right|by[- ]right)\b/.test(text);
 
   if(/\bpermits?\b/.test(text)){
     if(/\b(?:issued|filed|past|existing|previous|history|records|applications|look up|pull up|see)\b/.test(text)){
@@ -443,13 +444,17 @@ function explainReport(question, report){
   const historical=report.zoning?.historical_reference
     ? {answer:'The report found a historical map showing district '+report.zoning.district+'. Confirm the current district before deciding what can be built.',target:'districtDetails'}
     : null;
+  const setbackCheck=report.zoning_potential?.setback_review_required
+    ? ' Confirm the street-facing lot line, front, side and rear setbacks, and usable open space before pricing the rebuild.'
+    : '';
   const approvalHold=report.cambridge_approvals?.pricing_on_hold
-    ? {answer:'City review comes first for this rebuild. Open the approval checks to see what can affect the plan, timing and cost.',target:'districtDetails'}
+    ? {answer:'City review comes first for this rebuild.'+(setbackCheck||
+        ' Open the approval checks to see what can affect the plan, timing and cost.'),target:'districtDetails'}
     : null;
   const retain=screen?.decision==='retain_and_review'
     ? {
         answer:'Start with the existing building. The screened rebuild would lose space or homes. The report leaves the rebuild unpriced. An addition or alteration needs a separate review of the local rules and site.'
-          +(approvalHold?' City review remains open for the rebuild.':''),
+          +(approvalHold?' City review remains open for the rebuild.'+setbackCheck:''),
         target:approvalHold||!report.zoning_potential?'districtDetails':'envelopeDetails',
       }
     : null;
