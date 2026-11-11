@@ -614,3 +614,69 @@ def test_market_summary_and_ask_explain_nonqualifying_sales(page, app_url, prope
     page.get_by_role("button", name="See supporting details").click()
     expect(page.locator("#salesDetails > summary")).to_be_focused()
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+@pytest.mark.parametrize('width', [320, 390])
+@pytest.mark.parametrize(('scope', 'status', 'has_passages'), [
+    ('district_mentions', 'The evidence has been reviewed. These references are separate from the calculation rules.', True),
+    ('municipal_guidance', 'Official-source passages found. District applicability and amendments still need review.', True),
+    (None, 'The saved zoning research needs a fresh source check. Available references are shown below.', False),
+    (None, 'Latest official-source check was incomplete. Available references are shown below.', False),
+    (None, 'Official-source research is in progress or temporarily unavailable.', False),
+    (None, 'The current research was rejected in review. Links are retained for reference.', False),
+])
+def test_ask_explains_selected_zoning_research(page, app_url, property_record, width, scope, status, has_passages):
+    source = 'https://www.cambridgema.gov/inspection/zoning'
+    research = {'status': status, 'needs_review': False,
+                'sources': [{'title': 'Official zoning source', 'url': source, 'topics': ['dimensional standards']}],
+                'passage_scope': scope, 'passages': ([{'topic': 'dimensional standards',
+                    'excerpt': 'A source excerpt is not a parcel-specific approval.',
+                    'source_url': source, 'source_title': 'Official zoning source'}] if has_passages else [])}
+    record = dict(property_record, zoning={'district': 'C-1'} if scope != 'municipal_guidance' else None,
+                  on_demand_zoning_research=research)
+    page.set_viewport_size({'width': width, 'height': 844})
+    page.route('**/api/property?*', lambda route: route.fulfill(json=record))
+    page.route('**/api/suggest?*', lambda route: route.fulfill(json={'suggestions': []}))
+    page.goto(app_url)
+    page.get_by_role('combobox').fill('95 Magazine St, Cambridge, MA')
+    page.get_by_role('button', name='Explore property').click()
+    assert not page.locator('#onDemandZoning').evaluate('(element) => element.open')
+    page.get_by_text('Ask PlotDocket about this report', exact=True).click()
+    for prompt in ('Is the zoning source current?', 'What can I build here?'):
+        question = page.get_by_role('textbox', name='Question about this property report')
+        question.fill(prompt)
+        question.press('Enter')
+        answer = page.locator('#reportAnswerText')
+        expect(answer).to_contain_text(status)
+        expect(answer).to_contain_text('before estimating what fits')
+        if scope == 'district_mentions':
+            expect(answer).to_contain_text('mention the mapped district')
+        elif scope == 'municipal_guidance':
+            expect(answer).to_contain_text('general municipal guidance')
+            expect(answer).to_contain_text('Confirm the parcel’s district')
+        else:
+            expect(answer).not_to_contain_text('passages mention')
+    page.get_by_role('button', name='See supporting details').click()
+    expect(page.locator('#onDemandZoning > summary')).to_be_focused()
+    expect(page.locator('#onDemandStatus')).to_contain_text(status)
+    expect(page.get_by_role('link', name='Official zoning source', exact=False).first).to_have_attribute('href', source)
+    assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+    # A source question must explain source status even when a separate envelope exists.
+    result = page.evaluate('''record => explainReport('Is the zoning source current?', {
+        ...record, zoning_potential: {gross_area_low_sqft: 1000, gross_area_high_sqft: 2000}
+    })''', record)
+    assert status in result['answer']
+    assert result['target'] == 'onDemandZoning'
+
+
+@pytest.mark.parametrize('hold', ['retain', 'approval'])
+def test_ask_keeps_building_checks_when_question_mentions_current_home(page, app_url, property_record, hold):
+    page.goto(app_url)
+    record = dict(property_record, zoning={'district': 'C-1'},
+                  on_demand_zoning_research={'status': 'Official sources found.', 'passages': []},
+                  redevelopment={'decision': 'retain_and_review'} if hold == 'retain' else None,
+                  cambridge_approvals={'pricing_on_hold': hold == 'approval'})
+    for prompt in ('Can I expand the current building?', 'Can I add units to my current home?'):
+        result = page.evaluate('(args) => explainReport(args.prompt, args.record)', {'prompt': prompt, 'record': record})
+        assert ('Start with the existing building' if hold == 'retain' else 'City review comes first') in result['answer']
+        assert result['target'] == 'districtDetails'

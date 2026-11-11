@@ -519,6 +519,23 @@ function explainReport(question, report){
       target:'recordDetails'};
   }
   if(zoning){
+    const research=report.on_demand_zoning_research;
+    const sourceQuestion=/\b(?:sources?|research|amendments?)\b/.test(text)
+      || /\b(?:is|are) (?:the |this |these )?(?:zoning|rules|ordinance) (?:current|verified|checked|up[- ]to[- ]date)\b/.test(text);
+    const hasScenario=historical||retain||approvalHold||best||report.buildout_review||report.zoning_potential;
+    if(research&&(sourceQuestion||!hasScenario)){
+      const answer=[];
+      if(historical) answer.push(historical.answer);
+      if(research.status) answer.push(research.status);
+      if(research.passages?.length&&research.passage_scope==='district_mentions'){
+        answer.push('The official passages mention the mapped district. Confirm applicability, amendments and parcel conditions before estimating what fits.');
+      } else if(research.passages?.length&&research.passage_scope==='municipal_guidance'){
+        answer.push('These passages provide general municipal guidance. Confirm the parcel’s district and applicable rules before estimating what fits.');
+      } else {
+        answer.push('The available references do not establish current parcel-specific rules. A source and site review is needed before estimating what fits.');
+      }
+      return {answer:answer.join(' '),target:'onDemandZoning'};
+    }
     if(historical||retain||approvalHold) return historical||retain||approvalHold;
     if(best) return {
       answer:'The report models '+fmt(best.market_units+best.restricted_units)+' homes and '+fmt(best.gross_area_sqft)+' sq ft of total floor area. '+(best.conditional?'This option depends on meeting affordable-housing requirements. ':'')+'Setbacks, overlays and approvals can change what fits.',
