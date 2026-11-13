@@ -1,9 +1,9 @@
 from datetime import date
-from math import cos, radians
+from math import cos, log, pi, radians, tan
 
 import httpx
 import pytest
-from shapely.geometry import box
+from shapely.geometry import LineString, box
 
 from somerville import buildout, detached_triple_decker_fit, sale_candidates, sales
 
@@ -29,20 +29,21 @@ def test_nr_screen_uses_real_lot_area_and_distinguishes_unit_options_from_yield(
     result = buildout(PARCEL, SUBJECT)
     assert result["lot_area_sqft"] == 4996
     assert "1–3" in result["district_unit_range"]
+    assert "one to three homes" in result["summary"]
     assert result["existing_units"] is None
     assert any("multiple houses" in check for check in result["checks"])
     assert any("demolition" in check for check in result["checks"])
 
 
 def test_nr_triple_decker_screen_applies_adopted_setbacks_and_lot_coverage():
-    radius_ft = 6_371_008.8 * 3.280839895
+    radius_ft = 6_378_137 * 3.280839895
     lat = 42.4
     lon = -71.125
     delta_lon = 20 / (radius_ft * cos(radians(lat))) * 180 / 3.141592653589793
     frontage_lon = lon + delta_lon
     frontage_lat = lat + 2 / radius_ft * 180 / 3.141592653589793
     x = radius_ft * radians(lon) * cos(radians(lat))
-    y = radius_ft * radians(lat)
+    y = radius_ft * log(tan(pi / 4 + radians(lat) / 2)) * cos(radians(lat))
     parcel = {"gis_area_sqft_approx": 5400, "polygon_area_sqft_approx": 5400}
     result = detached_triple_decker_fit(parcel, box(x, y, x + 60, y + 90), {"lon": frontage_lon, "lat": frontage_lat})
     assert result["status"] == "dimensional_screen_pass"
@@ -50,6 +51,23 @@ def test_nr_triple_decker_screen_applies_adopted_setbacks_and_lot_coverage():
     assert result["lot_depth_ft_approx"] == 90
     assert result["max_principal_footprint_sqft"] == 1500
     assert result["gross_area_high_sqft"] == 4500
+
+
+def test_named_street_centerline_resolves_frontage_when_address_point_is_inside_lot():
+    radius_ft = 6_378_137 * 3.280839895
+    lat = 42.4
+    lon = -71.125
+    x = radius_ft * radians(lon) * cos(radians(lat))
+    y = radius_ft * log(tan(pi / 4 + radians(lat) / 2)) * cos(radians(lat))
+    parcel = {"gis_area_sqft_approx": 5400, "polygon_area_sqft_approx": 5400}
+    road = {"status": "matched", "street_name": "EXAMPLE STREET",
+            "geometry": LineString([(x - 10, y - 26), (x + 70, y - 26)])}
+    result = detached_triple_decker_fit(
+        parcel, box(x, y, x + 60, y + 90), {"lon": lon, "lat": lat}, road,
+    )
+    assert result["status"] == "dimensional_screen_pass"
+    assert result["frontage_match"] == "matched named municipal road centerline"
+    assert result["frontage_source"] == "EXAMPLE STREET"
 
 
 def test_comp_match_preserves_size_rooms_and_distinguishes_assessor_class():
