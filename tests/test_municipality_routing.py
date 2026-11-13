@@ -76,6 +76,7 @@ def test_hyannis_uses_barnstable_parcel_sales_zoning_and_deed_route(monkeypatch,
     monkeypatch.setattr(server.municipal_zoning, "multifamily_screen", atlas)
     sales = AsyncMock(return_value={"candidates": []})
     monkeypatch.setattr(server.ma_sales, "search", sales)
+    monkeypatch.setattr(server, "new_build_sales_research", AsyncMock(return_value={"candidates": []}))
     research = AsyncMock(return_value={})
     monkeypatch.setattr(server, "search_zoning_sources", research)
     monkeypatch.setattr(server, "queue_registry_review", lambda *args: None)
