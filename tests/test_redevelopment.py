@@ -1,4 +1,4 @@
-from redevelopment import analyze_redevelopment
+from redevelopment import analyze_redevelopment, cost_budget
 from condo_analysis import reference_summary
 
 
@@ -9,6 +9,40 @@ def verified_condos(rate):
          "price_per_living_sqft": rate, "deed_verification": {"status": "verified", "consideration": area * rate}}
         for project in range(3) for beds, baths, area in ((1, 1, 700), (2, 2, 1050), (3, 2, 1400))
     ]
+
+
+def test_somerville_costs_use_local_hard_cost_soft_cost_and_financing_inputs():
+    base = cost_budget(4500, 4254, 3, 3, 1_650_000, 2_700_000,
+                       stress=False, municipality="SOMERVILLE")
+    stress = cost_budget(4500, 4254, 3, 3, 1_650_000, 2_700_000,
+                         stress=True, municipality="SOMERVILLE")
+    assert base["Building construction, GC overhead and profit"] == 1_125_000
+    assert stress["Building construction, GC overhead and profit"] == 1_318_500
+    assert base["Architecture, engineering and consultants"] == 257_562
+    assert stress["Brokerage, marketing, closing, excise and concessions"] == 202_500
+
+
+def test_somerville_three_unit_scenario_prices_only_matching_verified_condo_sales():
+    references = [
+        {"project_key": f"somerville-{i}", "living_area_sqft": area,
+         "distance_miles": distance, "bedrooms_reported": 3, "bathrooms_reported": 2,
+         "sale_price": area * rate, "price_per_living_sqft": rate,
+         "deed_verification": {"status": "verified", "consideration": area * rate}}
+        for i, (area, rate, distance) in enumerate(((1074, 754, .4), (1200, 687, .8), (1217, 809, 1.2)))
+    ]
+    report = analyze_redevelopment(
+        {"gross_area_high_sqft": 4500, "stories": 3},
+        {"building_area_sqft": 4254, "residential_area_sqft": 2722, "units": 3},
+        references, current_market_range={"low": 1_500_000, "high": 1_700_000},
+        municipality="SOMERVILLE",
+    )
+    best = report["best"]
+    assert best["market_units"] == 3
+    assert best["unit_mix"][0]["bedrooms"] == 3
+    assert best["unit_mix"][0]["bathrooms_assumed"] == 2
+    assert best["sellout_low"] is not None and best["sellout_high"] is not None
+    assert best["cost_low"] is not None and best["cost_high"] is not None
+    assert report["sources"][0]["url"].startswith("https://somervillema.legistar.com/")
 
 
 def test_automatic_scenario_reserves_whole_affordable_units_and_ranks_after_costs():
