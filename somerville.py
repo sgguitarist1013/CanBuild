@@ -5,8 +5,10 @@ from math import asin, ceil, cos, floor, radians, sin, sqrt
 import httpx
 
 import boston
+import registry
 from ma_sales import candidate_point, use_group
 from municipal_zoning import SOMERVILLE
+from valuation import positive_number, similar_lot
 
 GIS = SOMERVILLE + "/ZoningByParcel/MapServer/0"
 NR_TYPES = "https://online.encodeplus.com/regs/somerville-ma/doc-view.aspx?pn=0&ajax=0&secid=470"
@@ -84,17 +86,21 @@ def sale_candidates(features, lon, lat, parcel, building, today):
     area_field = "LIVING_AREA" if living else "GROSS_AREA"
     area_basis = "assessor living area" if living else "assessor gross building area"
     subject_beds, subject_baths = building["bedrooms_reported"], building["bathrooms_reported"]
+    subject_lot = parcel.get("gis_area_sqft_approx")
     rows = {}
     for feature in features:
         row = feature.get("attributes") or {}
         pid, code = row.get("MBL"), row.get("PCC")
         if not pid or pid != row.get("TaxParMBL") or pid == parcel.get("parcel_number") or row.get("SALE_VALID") != "Q":
             continue
-        if code != subject_class and (subject_class != "1090" or code not in {"1040", "1050"}):
+        if code not in CLASSES:
+            continue
+        lot = row.get("Shape_Area")  # The city parcel layer measures polygon area in square feet.
+        if positive_number(subject_lot) and not similar_lot(subject_lot, lot):
             continue
         sold, price, size = boston.sale_date(row.get("SALE_DATE")), row.get("SALE_PRICE"), row.get(area_field)
         beds, baths = row.get("BEDROOM"), row.get("BATH")
-        if (not sold or not 0 <= (today - sold).days <= 1096 or not row.get("AddNum") or not row.get("Street")
+        if (not sold or not 0 <= (today - sold).days <= 1827 or not row.get("AddNum") or not row.get("Street")
                 or not isinstance(price, (int, float)) or price < 10000
                 or not isinstance(size, (int, float)) or abs(size - subject_area) > SIZE_TOLERANCE * subject_area
                 or not isinstance(beds, (int, float)) or beds <= 0 or abs(beds - subject_beds) > 1
@@ -109,8 +115,10 @@ def sale_candidates(features, lon, lat, parcel, building, today):
         record = {"address": f"{row['AddNum']} {row['Street']}", "sale_date": sold.isoformat(), "sale_price": price,
             "parcel_number": pid, "use_description": CLASSES[code], "comparison_area_sqft": size,
             "comparison_area_basis": area_basis, "price_per_comparison_sqft": round(price / size),
+            "older_reference": (today - sold).days > 1096,
             "distance_miles": distance, "size_difference_pct": round((size - subject_area) / subject_area * 100),
-            "bedrooms_reported": beds, "bathrooms_reported": baths, "record_reference": row.get("BOOK_PAGE"),
+            "bedrooms_reported": beds, "bathrooms_reported": baths, "lot_area_sqft": lot,
+            "record_reference": row.get("BOOK_PAGE"),
             "source_url": GIS, "source_name": "Somerville municipal GIS sales", "arm_length_status": "City sale flag Q",
             "comparison_label": "Same assessor class" if code == subject_class else "Similar residential sale · different assessor class"}
         if pid not in rows or rows[pid]["sale_date"] < record["sale_date"]:
@@ -128,34 +136,45 @@ async def sales(client, lon, lat, parcel, building):
         return {"status": "Size-matched sales require reported area, bedrooms and bathrooms", "candidates": [], "source_url": GIS}
     today = date.today()
     cutoff = (today - timedelta(days=1096)).isoformat()
-    codes = "'1040','1050','1090'" if code == "1090" else f"'{code}'"
+    codes = ",".join(f"'{residential_code}'" for residential_code in CLASSES)
     area_field = "LIVING_AREA" if living else "GROSS_AREA"
     low, high = ceil(area * (1 - SIZE_TOLERANCE)), floor(area * (1 + SIZE_TOLERANCE))
     params = {
-        "where": (f"SALE_VALID = 'Q' AND SALE_PRICE >= 10000 AND SALE_DATE >= timestamp '{cutoff} 00:00:00'"
+        "where": (f"SALE_VALID = 'Q' AND SALE_PRICE >= 10000"
                   f" AND PCC IN ({codes}) AND {area_field} BETWEEN {low} AND {high}"
                   f" AND BEDROOM BETWEEN {max(1, beds-1)} AND {beds+1} AND BATH BETWEEN {max(1, baths-1)} AND {baths+1}"),
         "outSR": 4326,
-        "outFields": "MBL,TaxParMBL,AddNum,Street,PCC,SALE_VALID,SALE_PRICE,SALE_DATE,LIVING_AREA,GROSS_AREA,BEDROOM,BATH,BOOK_PAGE",
+        "outFields": "MBL,TaxParMBL,AddNum,Street,PCC,SALE_VALID,SALE_PRICE,SALE_DATE,LIVING_AREA,GROSS_AREA,BEDROOM,BATH,Shape_Area,BOOK_PAGE",
         "returnGeometry": "true", "geometryPrecision": 6, "resultRecordCount": 500, "orderByFields": "SALE_DATE DESC",
     }
-    # A bounding envelope contains the initial radius. Keep only true centroid distances.
-    data = await query(client, {**params, "geometry": f"{lon-.011},{lat-.008},{lon+.011},{lat+.008}",
+    # Check Registry confirmation before deciding whether to search past the initial radius.
+    date_filter = " AND SALE_DATE >= timestamp '{} 00:00:00'"
+    data = await query(client, {**params, "where": params["where"] + date_filter.format(cutoff),
+        "geometry": f"{lon-.011},{lat-.008},{lon+.011},{lat+.008}",
         "geometryType": "esriGeometryEnvelope", "inSR": 4326, "spatialRel": "esriSpatialRelIntersects"})
     records = sale_candidates(data["features"], lon, lat, parcel, building, today)
-    matches = [record for record in records if record["distance_miles"] <= INITIAL_RADIUS]
-    expanded = len(matches) < MINIMUM_COMPS
+    close = [sale for sale in records if sale["distance_miles"] <= INITIAL_RADIUS]
+    confirmed = sum(not sale["older_reference"]
+                    and registry.sale_deed("SOMERVILLE", sale)["status"] == "verified" for sale in close)
+    expanded = confirmed < MINIMUM_COMPS or bool(data.get("exceededTransferLimit"))
+    expansion_failed = False
+    matches = close
     if expanded:
-        data = await query(client, params)
-        matches = sale_candidates(data["features"], lon, lat, parcel, building, today)[:MINIMUM_COMPS]
-    else:
-        matches = matches[:4]
-    radius = max(INITIAL_RADIUS, matches[-1]["distance_miles"]) if matches else INITIAL_RADIUS
+        try:
+            older_cutoff = (today - timedelta(days=1827)).isoformat()
+            wider = await query(client, {**params, "where": params["where"] + date_filter.format(older_cutoff)})
+            matches = sale_candidates(wider["features"], lon, lat, parcel, building, today)
+            data = wider
+        except (httpx.HTTPError, ValueError):
+            expansion_failed = True
+    matches = registry.shortlist("SOMERVILLE", matches)
+    radius = max(INITIAL_RADIUS, max(sale["distance_miles"] for sale in matches)) if matches else INITIAL_RADIUS
     for record in matches:
         record["distance_miles"] = round(record["distance_miles"], 3)
     exact_count = sum(record["comparison_label"] == "Same assessor class" for record in matches)
-    return {"status": f"{len(matches)} local sale reference(s) matched on size, beds and baths" if matches else "No local sales matched the size and room criteria",
+    return {"status": f"{len(matches)} local sale reference(s) matched on size and rooms" if matches else "No local sales matched the size and room criteria",
             "candidates": matches, "count": len(matches), "same_class_count": exact_count, "source_url": GIS,
-            "expanded": expanded, "radius_miles": round(radius, 3), "truncated": bool(data.get("exceededTransferLimit")),
-            "method": "Somerville only. Within 15% of subject area using the same measurement, within one bedroom and one bathroom, and city sale flag Q in the last three years. Start at 0.5 mile and, if needed, return the three nearest matches in the municipality. For multiple-house parcels, similar two- and three-family sales are labeled separately by assessor class.",
+            "expanded": expanded, "expanded_search": True, "radius_miles": round(radius, 3),
+            "truncated": expansion_failed or bool(data.get("exceededTransferLimit")),
+            "method": "Somerville residential sales. Within 15% of home size, within one bedroom and one bathroom, and within 25% of lot size when the subject lot is available. Start within 0.5 mile, then widen within Somerville if fewer than three close sales are deed-confirmed. Sales older than three years, up to five years, are historical references.",
             "limitations": "Assessor counts, recorded sales and building areas require verification. These references do not establish market value or completed-project sellout."}

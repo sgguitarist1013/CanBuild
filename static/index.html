@@ -17,6 +17,13 @@
 .value-summary small+strong+small{margin-top:5px}
 .value-card h3{margin:0}
 #ownershipSummary{overflow-wrap:anywhere}
+.ask-form{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
+.ask-form input{flex:1 1 210px;min-width:0;border:1px solid #c7dad3;border-radius:8px;padding:10px 12px;font-size:16px}
+.ask-examples{display:flex;gap:6px;flex-wrap:wrap}
+.ask-examples button{font-size:12px;padding:6px 9px}
+.ask-result.has-answer{background:#f2f7f5;border-radius:10px;padding:12px;margin:12px 0 0}
+.ask-result p{margin:0 0 8px}
+.ask-result p:last-child{margin:0}
 .estimate-summary strong{font-size:clamp(16px,2.2vw,24px);letter-spacing:-.4px;margin-top:3px}
 .research-card{margin:0 0 10px;border-top:1px solid #e1e9e6}
 .research-card summary{min-height:36px;align-content:center}
@@ -58,9 +65,9 @@
 <details id="qualityDetails" class="small"><summary id="qualitySummary">Research quality checks</summary><ul id="qualityChecks"></ul></details>
 <p id="salePreview" class="small" hidden></p>
 <div class="grid estimate-summary" id="redevelopmentMetrics" hidden>
-<div class="metric"><small>Proposed units</small><strong id="autoUnits"></strong></div>
+<div class="metric"><small>Homes in this scenario</small><strong id="autoUnits"></strong></div>
 <div class="metric" id="autoCostMetric" hidden><small>Estimated project cost</small><strong id="autoCost"></strong></div>
-<div class="metric"><small>Modeled gross floor area</small><strong id="autoGrossArea"></strong></div>
+<div class="metric"><small>Total floor area</small><strong id="autoGrossArea"></strong></div>
 </div>
 <p id="surplusSummary" class="small" hidden>Modeled surplus / loss <strong id="autoSurplus"></strong></p>
 <p id="potentialLimit" class="small muted" hidden></p>
@@ -74,6 +81,23 @@
 </div>
 <p id="assessedValueContext" class="small muted" hidden></p>
 </section>
+<details class="card research-card" id="askDetails" hidden>
+<summary>Ask PlotDocket about this report</summary>
+<p class="small muted">Ask what the numbers mean or what to check next.</p>
+<div class="ask-examples">
+<button class="secondary" type="button">What can I build?</button>
+<button class="secondary" type="button">How much is it worth?</button>
+<button class="secondary" type="button">Could this project make money?</button>
+</div>
+<form class="ask-form" id="askReport">
+<input id="reportQuestion" aria-label="Question about this property report" placeholder="Ask a question about this property" maxlength="240" required>
+<button class="secondary" type="submit">Ask</button>
+</form>
+<div class="ask-result small" id="reportAnswer">
+<p id="reportAnswerText" role="status"></p>
+<button class="secondary" type="button" id="reportAnswerLink" hidden>See supporting details</button>
+</div>
+</details>
 <details class="card research-card" id="recordDetails"><summary>Property records</summary>
 <div id="parcelResearch"><h3>Ownership &amp; parcel identity</h3><p id="ownerStatus" class="small muted"></p><p id="lastTransfer" class="small muted"></p><div id="parcelCandidates" class="details"></div></div>
 <p id="sourceStatus" class="small muted"></p>
@@ -88,8 +112,9 @@
 </details>
 <button class="secondary no-print" id="print">Print report</button></details>
 <details class="card research-card" id="salesDetails"><summary>Comparable sales</summary>
-<div id="salesResearch"><p id="salesStatus" class="small muted"></p><div id="salesCandidates"></div><p id="salesLimits" class="small muted"></p></div>
-<details id="pendingRegistrySales" hidden><summary>Sale leads awaiting registry confirmation</summary><div id="pendingRegistryList"></div></details>
+<div id="salesResearch"><p id="salesStatus" class="small"></p><p id="marketCompSpread" class="small muted" hidden></p><div id="salesCandidates"></div></div>
+<details id="pendingRegistrySales" hidden><summary>Sales still being checked</summary><div id="pendingRegistryList"></div></details>
+<details id="salesMethodDetails" hidden><summary>How sales were chosen</summary><p id="salesMethod" class="small muted"></p><p id="salesLimits" class="small muted"></p></details>
 </details>
 <details class="card research-card" id="sourceDetails"><summary>Sources &amp; assumptions</summary><p class="muted small">Source dates and verification status</p><div class="links" id="links"></div>
 <details id="buildoutDetails" hidden><summary>Buildout summary</summary>
@@ -124,16 +149,30 @@ const $=id=>document.getElementById(id);const fmt=n=>Number.isFinite(Number(n))&
 function addFact(label,value){if(value===null||value===undefined||value==='')return;const d=document.createElement('div');d.className='item';const a=document.createElement('span');a.textContent=label;const b=document.createElement('strong');b.textContent=String(value);d.append(a,b);$('facts').append(d)}
 const money=n=>n==null?'Unavailable':(n<0?'−':'')+'$'+fmt(Math.abs(n));
 const range=(low,high)=>money(low)+' to '+money(high);
+const marketHeadline=(market, prefix='About ')=>(market.median!=null?prefix+money(market.median):range(market.low,market.high));
+function missingMarketEstimate(valuation,sales){
+  if(sales?.truncated) return 'The sales search returned incomplete results. We need a complete search to estimate market value.';
+  if(/\b(?:temporarily unavailable|unavailable|not configured)\b/i.test(sales?.status||'')) return 'Comparable sale records are unavailable for this report.';
+  const evidence=valuation?.market_evidence;
+  if(evidence?.qualifying_count===null) return 'We need the property’s living area, bedroom count, bathroom count and lot size to compare sales.';
+  if(evidence?.confirmed_count>0){
+    const total=evidence.confirmed_count;
+    const count=evidence.qualifying_count;
+    const detail='Only '+count+' '+(count===1?'matches':'match')+' on home size, location, beds, baths and lot size.';
+    return total+' deed-confirmed '+(total===1?'sale found. ':'sales found. ')+detail+' We need three qualifying sales.';
+  }
+  return 'We need at least three similar local sales with confirmed deed prices.';
+}
 function renderValues(d){
   $('valueComparison').hidden=!d.parcel;
   const valuation=d.current_valuation;
   const market=valuation?.market_range;
   const assessment=valuation?.assessment;
   const best=d.redevelopment?.best;
-  $('currentMarketValue').textContent=market?range(market.low,market.high):'Estimate unavailable';
+  $('currentMarketValue').textContent=market?marketHeadline(market):'Estimate unavailable';
   $('currentMarketBasis').textContent=market
-    ? market.comp_count+' Registry-confirmed sales within '+market.radius_miles+' mi, scaled to subject living area.'
-    : 'Requires three qualifying local sales confirmed in MassLandRecords.';
+    ? market.comp_count+' Registry-confirmed sales within '+market.radius_miles+' mi. '+(market.median!=null?'Median after adjusting for home size. See Comparable sales for the spread.':'Scaled to subject living area.')
+    : missingMarketEstimate(valuation,d.sales_research);
   $('assessedValueContext').hidden=!assessment;
   $('assessedValueContext').textContent=assessment
     ? (assessment.fiscal_year?'FY '+assessment.fiscal_year+' tax assessment':'Tax assessment')+' · '+money(assessment.amount)+'. Separate from the market estimate.'
@@ -145,7 +184,7 @@ function renderValues(d){
     ? 'Gross market-rate condo sales for the '+(best.conditional?'conditional ':'')+best.stories+'-story scenario, before project costs.'
     : decision==='retain_and_review'?'The screened rebuild would lose existing space or units.'
     : decision==='modeled_loss'?'The priced rebuild shows a loss even in the upside case.'
-    : best?'Requires three deed-confirmed sales per market-rate unit type.'
+    : best?'We need three similar condo sales with confirmed deed prices for each type of home.'
     : 'Requires a parcel-specific zoning scenario and completed-project pricing.';
 }
 
@@ -238,8 +277,8 @@ function renderOpportunity(d) {
   $('salePreview').textContent=sale?[
     sales.length+(sale.deed_verification?.status==='verified'?' registry-confirmed':' nearby')+' sale reference'+(sales.length===1?'':'s'),
     sale.address+' sold for $'+fmt(sale.sale_price),
+    sale.older_reference?'Historical reference':null,
     sale.comparison_area_sqft?fmt(sale.comparison_area_sqft)+' sq ft':null,
-    sale.comparison_label||null,
   ].filter(Boolean).join(' · '):'';
   $('buildoutDetails').hidden=!buildout;
   $('buildoutScope').textContent=buildout?[buildout.district_unit_range+'.',buildout.accessory_option].join(' '):'';
@@ -259,19 +298,7 @@ function renderOpportunity(d) {
   $('potentialLimit').textContent=limit;
   $('potentialLimit').hidden=!limit;
   $('resultAction').textContent=action;
-  $('resultAction').onclick=()=>{
-    const destination=$(target);
-    if(destination.tagName==='DETAILS'){
-      const parent=destination.parentElement.closest('details');
-      if(parent) parent.open=true;
-      destination.open=true;
-      if(target==='districtDetails'&& !$('onDemandZoning').classList.contains('hide')) $('onDemandZoning').open=true;
-      destination.querySelector('summary').focus({preventScroll:true});
-    } else {
-      destination.focus({preventScroll:true});
-    }
-    destination.scrollIntoView({block:'start'});
-  };
+  $('resultAction').onclick=()=>openReportSection(target);
 
   $('envelopeDetails').hidden=!envelope;
   const additional=envelope?.additional_area_high_sqft!=null
@@ -344,7 +371,10 @@ function renderRedevelopment(d){
   if(best.sellout_high!=null){
     paragraph('Gross market-rate sellout '+range(best.sellout_low,best.sellout_high)+'.');
     paragraph(screen.acquisition_proxy
-      ? 'Modeled acquisition uses the midpoint of the as-is market range, '+money(screen.acquisition_proxy)+', plus closing costs.'
+      ? 'Modeled acquisition uses '+(screen.acquisition_basis==='comp_median'
+        ? 'the median of the size-adjusted comparable sales, '
+        : 'the midpoint between the lowest and highest size-adjusted comp prices, ')
+        +money(screen.acquisition_proxy)+', plus closing costs.'
       : 'The budget excludes acquisition and its financing. An as-is market estimate is required to model surplus.');
     if(best.surplus_high!=null) paragraph('Modeled surplus / loss '+range(best.surplus_low,best.surplus_high)+'.');
   }
@@ -374,8 +404,190 @@ function renderRedevelopment(d){
   }
 }
 
+function openReportSection(target){
+  const destination=$(target);
+  if(destination.tagName==='DETAILS'){
+    let parent=destination.parentElement.closest('details');
+    while(parent){
+      parent.open=true;
+      parent=parent.parentElement.closest('details');
+    }
+    destination.open=true;
+    if(target==='districtDetails'&& !$('onDemandZoning').classList.contains('hide')) $('onDemandZoning').open=true;
+    destination.querySelector('summary').focus({preventScroll:true});
+  } else {
+    destination.focus({preventScroll:true});
+  }
+  destination.scrollIntoView({block:'start'});
+}
+
+function explainReport(question, report){
+  const text=question.toLowerCase();
+  const screen=report.redevelopment;
+  const best=screen?.best;
+  const market=report.current_valuation?.market_range;
+  const assessment=report.current_valuation?.assessment;
+  const sales=report.sales_research;
+  const deed=report.parcel?.deed_verification;
+  const restricted=/\b(?:affordable|restricted|inclusionary)\b/.test(text);
+  const upside=/\b(?:upside|make money|how much (?:could|would|can) (?:i|we) make)\b/.test(text)
+    || /\b(?:project|development|redevelopment|rebuild)\b.*\b(?:worth|value)\b/.test(text)
+    || /\b(?:value of|worth after) (?:this |the )?(?:project|development|redevelopment|rebuild)\b/.test(text);
+  const cost=/\b(?:profits?|loss(?:es)?|sellout|break[- ]even|costs?|budgets?|finance|financing|returns?)\b/.test(text)
+    || /\b(?:project|development|redevelopment|rebuild) (?:price|pricing|estimate|(?:is )?unpriced)\b/.test(text);
+  const zoning=/\b(?:build|building|buildable|built|zoning|zones?|units?|homes?|add|additions?|adus?|height|floor|redevelop(?:ment)?|expand|setbacks?|approvals?|alter(?:ation)?|as[- ]of[- ]right|by[- ]right)\b/.test(text);
+
+  if(/\bpermits?\b/.test(text)){
+    if(/\b(?:issued|filed|past|existing|previous|history|records|applications|look up|pull up|see)\b/.test(text)){
+      return report.permit_coverage
+        ? {answer:'Open the city records to see any permit applications or issued permits the city has published for this parcel.',target:'permitDetails'}
+        : {answer:'PlotDocket does not have a city permit feed for this property. Check the local building department for records.',target:'recordDetails'};
+    }
+    return {answer:'The permits and reviews a project needs depend on the work proposed. Start with the district standards and confirm the approval steps with the city.',target:'districtDetails'};
+  }
+  const historical=report.zoning?.historical_reference
+    ? {answer:'The report found a historical map showing district '+report.zoning.district+'. Confirm the current district before deciding what can be built.',target:'districtDetails'}
+    : null;
+  const setbackCheck=report.zoning_potential?.setback_review_required
+    ? ' Confirm the street-facing lot line, front, side and rear setbacks, and usable open space before pricing the rebuild.'
+    : '';
+  const approvalHold=report.cambridge_approvals?.pricing_on_hold
+    ? {answer:'City review comes first for this rebuild.'+(setbackCheck||
+        ' Open the approval checks to see what can affect the plan, timing and cost.'),target:'districtDetails'}
+    : null;
+  const retain=screen?.decision==='retain_and_review'
+    ? {
+        answer:'Start with the existing building. The screened rebuild would lose space or homes. The report leaves the rebuild unpriced. An addition or alteration needs a separate review of the local rules and site.'
+          +(approvalHold?' City review remains open for the rebuild.'+setbackCheck:''),
+        target:approvalHold||!report.zoning_potential?'districtDetails':'envelopeDetails',
+      }
+    : null;
+  if(restricted){
+    if(historical||approvalHold) return historical||approvalHold;
+    if(/\b(?:costs?|prices?|proceeds|sell|sale|worth|value)\b/.test(text)){
+      return {answer:'A price for a restricted home depends on the applicable program rules and project-specific approval. The model leaves those proceeds out until the prices are supported.',target:best?'estimateDetails':'districtDetails'};
+    }
+    if(best?.restricted_units>0){
+      const units=best.restricted_units;
+      return {answer:'This scenario models '+fmt(units)+' income-restricted '+(units===1?'home':'homes')+'. The city can confirm the affordability requirements for a specific project.',target:'estimateDetails'};
+    }
+    return {answer:'The report does not confirm a required number of affordable homes for this project. Review the district and program rules with the city.',target:'districtDetails'};
+  }
+  if(cost||upside){
+    if(historical||retain||approvalHold) return historical||retain||approvalHold;
+    const answer=[];
+    const hasBudget=best?.cost_low!=null&&best?.cost_high!=null;
+    const hasSellout=best?.sellout_low!=null&&best?.sellout_high!=null;
+    const restrictedHomes=best?.restricted_units>0;
+    const acquisition=Boolean(screen?.acquisition_proxy);
+    if(hasBudget){
+      const budget=[best.cost_low,best.cost_high].sort((a,b)=>a-b);
+      const exclusions=[];
+      if(!acquisition) exclusions.push('acquisition');
+      if(!hasSellout) exclusions.push('selling costs');
+      else if(restrictedHomes) exclusions.push('restricted-home selling costs');
+      answer.push(exclusions.length
+        ? 'The partial modeled budget is '+range(...budget)+' and excludes '+exclusions.join(' and ')+'.'
+        : 'The modeled project budget is '+range(...budget)+' including modeled acquisition.');
+    }
+    if(hasSellout){
+      answer.push('Total market-rate condo sales are modeled at '+range(best.sellout_low,best.sellout_high)+'.');
+    }
+    if(hasBudget&&hasSellout&&acquisition&&!restrictedHomes&&best.surplus_low!=null&&best.surplus_high!=null){
+      const outcome='Modeled profit or loss ranges from '+range(best.surplus_low,best.surplus_high)+'.';
+      if(upside) answer.unshift(outcome);
+      else answer.push(outcome);
+    } else if(answer.length) {
+      const missing=[];
+      if(!hasBudget) missing.push('a modeled budget');
+      if(!hasSellout) missing.push('comparable closed condo sales');
+      if(!acquisition) missing.push('a supported acquisition estimate');
+      if(restrictedHomes) missing.push('restricted-home sale proceeds');
+      const limitation=missing.length?'Estimating project profit still requires '+missing.join(', ')+'.'
+        :'The report does not show a project profit estimate.';
+      if(upside) answer.unshift(limitation);
+      else answer.push(limitation);
+    } else answer.push('A cost and profit estimate needs a supported building plan and comparable closed condo sales.');
+    return {answer:answer.join(' '),target:best?'estimateDetails':report.zoning_potential?'envelopeDetails':'districtDetails'};
+  }
+  if(/\b(?:own|owns|owned|owners?|ownership|title|entity|transfers?)\b|\b(?:last|latest|recorded)\s+(?:deed|sale)\b|\b(?:it|this|the property)\s+sell\b/.test(text)){
+    const owners=report.parcel?.recorded_owners||[];
+    let answer=owners.length?'The assessor lists '+owners.join('; ')+' on the property records.':'The assessor record did not identify an owner here.';
+    if(deed?.status==='verified') answer+=' PlotDocket confirmed a transfer recorded on '+deed.recorded_date+' for '+money(deed.consideration)+'.';
+    return {answer:answer+' Current ownership requires checking the latest deed.',target:'recordDetails'};
+  }
+  if(/\b(?:comps?|comparables?|sales?|prices?|worth|value|assess(?:ed|ment|or)?|market)\b/.test(text)){
+    const answer=[];
+    if(market) answer.push('The as-is market estimate is '+marketHeadline(market,'about ')+', based on '+market.comp_count+' similar deed-confirmed sales.');
+    else answer.push(missingMarketEstimate(report.current_valuation,sales));
+    if(assessment) answer.push('The assessor lists '+money(assessment.amount)+(assessment.fiscal_year?' for FY '+assessment.fiscal_year:'')+' for tax purposes.');
+    if(sales?.pending_registry_review?.length) answer.push('Check Comparable sales for possible matches still being reviewed.');
+    return {answer:answer.join(' '),target:'salesDetails'};
+  }
+  if(/\bdeeds?\b/.test(text)){
+    return {answer:deed?.status==='verified'
+      ? 'PlotDocket confirmed a transfer recorded on '+deed.recorded_date+' for '+money(deed.consideration)+'.'
+      : 'PlotDocket has not confirmed the transfer details for this property.',
+      target:'recordDetails'};
+  }
+  if(zoning){
+    const research=report.on_demand_zoning_research;
+    const sourceQuestion=/\b(?:sources?|research|amendments?)\b/.test(text)
+      || /\b(?:is|are) (?:the |this |these )?(?:zoning|rules|ordinance) (?:current|verified|checked|up[- ]to[- ]date)\b/.test(text);
+    const hasScenario=historical||retain||approvalHold||best||report.buildout_review||report.zoning_potential;
+    if(research&&(sourceQuestion||!hasScenario)){
+      const answer=[];
+      if(historical) answer.push(historical.answer);
+      if(research.status) answer.push(research.status);
+      if(research.passages?.length&&research.passage_scope==='district_mentions'){
+        answer.push('The official passages mention the mapped district. Confirm applicability, amendments and parcel conditions before estimating what fits.');
+      } else if(research.passages?.length&&research.passage_scope==='municipal_guidance'){
+        answer.push('These passages provide general municipal guidance. Confirm the parcel’s district and applicable rules before estimating what fits.');
+      } else {
+        answer.push('The available references do not establish current parcel-specific rules. A source and site review is needed before estimating what fits.');
+      }
+      return {answer:answer.join(' '),target:'onDemandZoning'};
+    }
+    if(historical||retain||approvalHold) return historical||retain||approvalHold;
+    if(best) return {
+      answer:'The report models '+fmt(best.market_units+best.restricted_units)+' homes and '+fmt(best.gross_area_sqft)+' sq ft of total floor area. '+(best.conditional?'This option depends on meeting affordable-housing requirements. ':'')+'Setbacks, overlays and approvals can change what fits.',
+      target:'estimateDetails',
+    };
+    if(report.buildout_review) return {answer:report.buildout_review.summary+' '+report.buildout_review.limit,target:'buildoutDetails'};
+    if(report.zoning_potential) return {answer:'The initial zoning screen models '+fmt(report.zoning_potential.gross_area_low_sqft)+'–'+fmt(report.zoning_potential.gross_area_high_sqft)+' sq ft of total floor area. Review parcel conditions before using this as a building plan.',target:'envelopeDetails'};
+    return {answer:report.zoning
+      ? 'The report identifies zoning district '+report.zoning.district+'. The parcel still needs a site-specific check before we can estimate what fits.'
+      : 'We need to confirm the parcel’s zoning district before we can estimate what fits.',
+      target:'districtDetails'};
+  }
+  return {answer:'I can explain the building options, value, comparable sales, project costs and returns, ownership, or permit records shown in this report. Try one of the example questions above.',target:null};
+}
+
+$('askReport').addEventListener('submit',event=>{
+  event.preventDefault();
+  if(!last?.parcel||!$('reportQuestion').value.trim()) return;
+  const {answer,target}=explainReport($('reportQuestion').value,last);
+  $('reportAnswer').classList.add('has-answer');
+  $('reportAnswerText').textContent=answer;
+  const link=$('reportAnswerLink');
+  link.hidden=!target;
+  link.onclick=target?()=>openReportSection(target):null;
+});
+$('askDetails').querySelectorAll('.ask-examples button').forEach(button=>{
+  button.onclick=()=>{
+    $('reportQuestion').value=button.textContent;
+    $('askReport').requestSubmit();
+  };
+});
+
 function render(d) {
   last=d;
+  $('askDetails').hidden=!d.parcel;
+  $('reportQuestion').value='';
+  $('reportAnswer').classList.remove('has-answer');
+  $('reportAnswerText').textContent='';
+  $('reportAnswerLink').hidden=true;
+  $('reportAnswerLink').onclick=null;
   document.body.classList.add('has-results');
   $('intro').classList.add('hide');
   $('results').classList.remove('hide');
@@ -544,7 +756,21 @@ if(p?.deed_verification) appendDeed($('lastTransfer'),p.deed_verification);
 $('parcelCandidates').replaceChildren();
 (d.parcel_candidates||[]).forEach(c=>{const el=document.createElement('div');el.className='item';const title=document.createElement('strong');title.textContent=c.address;const note=document.createElement('p');note.className='small muted';note.textContent='Parcel '+c.parcel_number+' · '+(c.use_description||'Use unavailable')+' · Recorded owner: '+(c.recorded_owner||'Unavailable');const b=document.createElement('button');b.className='secondary';b.textContent='Review this assessor record';b.onclick=()=>lookup(c.parcel_number);el.append(title,note,b);$('parcelCandidates').append(el)});
 const sales=d.sales_research||{};
-$('salesStatus').textContent=(sales.status||'Sales research unavailable')+(sales.median_sale_price?' · Median reported sale $'+fmt(sales.median_sale_price):'')+'. '+(sales.method||'');
+const confirmed=sales.candidates?.length||0;
+const pending=sales.pending_registry_review||[];
+const countLabel=(count,label)=>count+' '+label+(count===1?'':'s');
+const summary=[
+  confirmed?countLabel(confirmed,'confirmed sale'):null,
+  pending.length?countLabel(pending.length,'possible match')+' still being checked':null,
+].filter(Boolean).join(' · ');
+$('salesStatus').textContent=summary?summary+'.':sales.status||'Sales research unavailable';
+const market=d.current_valuation?.market_range;
+$('marketCompSpread').hidden=market?.median==null;
+$('marketCompSpread').textContent=market?.median!=null
+  ? 'Size-adjusted comp range '+range(market.low,market.high)+'. The estimate uses the median of the individual size-adjusted sale prices.'
+  : '';
+$('salesMethodDetails').hidden=!sales.method&&!sales.limitations&&!sales.truncated;
+$('salesMethod').textContent=sales.method||'';
 $('salesLimits').textContent=(sales.limitations||'Candidate sales are not a valuation or a verified appraisal.')+(sales.truncated?' Source result limit reached; coverage is incomplete.':'');
 $('salesCandidates').replaceChildren();
 for(const c of sales.candidates||[]){
@@ -558,12 +784,13 @@ for(const c of sales.candidates||[]){
   const basis=c.comparison_area_basis||'assessor gross building area';
   const rate=c.price_per_comparison_sqft??c.price_per_gross_sqft;
   note.textContent=[
-    c.sale_date||'Sale date unavailable','$'+fmt(c.sale_price),
+    c.sale_date||'Sale date unavailable',c.older_reference?'Historical reference':null,'$'+fmt(c.sale_price),
     c.distance_miles!=null?Number(c.distance_miles).toFixed(2)+' mi':null,
+    c.lot_area_sqft>0?fmt(c.lot_area_sqft)+' sq ft lot':null,
     size!=null?fmt(size)+' sq ft ('+basis+')':null,
     c.size_difference_pct!=null?(c.size_difference_pct>0?'+':'')+c.size_difference_pct+'% vs subject':null,
     c.bedrooms_reported!=null?c.bedrooms_reported+' beds / '+c.bathrooms_reported+' baths':null,
-    rate?'$'+fmt(rate)+'/sq ft':null,c.use_description,c.comparison_label,
+    rate?'$'+fmt(rate)+'/sq ft':null,c.use_description,
     c.parcel_number?'Parcel '+c.parcel_number:null,c.record_reference,c.arm_length_status,
     d.current_valuation?.market_range?.comp_addresses?.includes(c.address)?'Used for current market estimate':null,
   ].filter(Boolean).join(' · ');
@@ -579,14 +806,22 @@ for(const c of sales.candidates||[]){
   }
   $('salesCandidates').append(el);
 }
-const pending=sales.pending_registry_review||[];
 $('pendingRegistrySales').hidden=!pending.length;
 $('pendingRegistryList').replaceChildren();
 for(const lead of pending){
   const item=document.createElement('p');
   item.className='small';
-  item.textContent=(lead.address||'Address unavailable')+' · ';
+  item.textContent=[
+    lead.address||'Address unavailable',lead.sale_date,
+    lead.distance_miles!=null?Number(lead.distance_miles).toFixed(2)+' mi':null,
+    lead.comparison_area_sqft?fmt(lead.comparison_area_sqft)+' sq ft ('+lead.comparison_area_basis+')':null,
+    lead.older_reference?'Historical reference':null,
+  ].filter(Boolean).join(' · ')+' · ';
   appendDeed(item,lead.deed_verification);
+  if(lead.source_url){
+    item.append(' · ');
+    permitLink(item,'Assessor sale source',lead.source_url);
+  }
   $('pendingRegistryList').append(item);
 }
 

@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from parcel_engine import resolve_parcel, conceptual_massing, normalize_address, same_street
 import boston
+import cambridge_sales
 import ma_sales
 import municipal_zoning
 from data_quality import review_building
@@ -224,6 +225,17 @@ def municipality_for_match(match):
     return "", None
 
 
+async def property_sales(client, lon, lat, city, parcel, building):
+    if city == "CAMBRIDGE":
+        try:
+            report = await cambridge_sales.search(client, lon, lat, parcel, building)
+            if report:
+                return report
+        except (httpx.HTTPError, ValueError, TypeError, KeyError):
+            pass
+    return await ma_sales.search(client, lon, lat, city, parcel, building)
+
+
 @app.get("/api/property")
 async def property_lookup(address:str=Query(min_length=5,max_length=240), boston_pid:str|None=Query(default=None,pattern=r"^\d{10}$")):
     address=normalize_address(re.sub(r",\s*(?:USA|United States(?: of America)?)\s*$", "", address, flags=re.I))
@@ -351,7 +363,7 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
                 client, lon, lat, result["parcel"], result["existing_building"],
             ))
         elif result.get("parcel") and result["verification"]["assessor"] != "Assessor record unconfirmed":
-            sales_task = asyncio.create_task(ma_sales.search(
+            sales_task = asyncio.create_task(property_sales(
                 client, lon, lat, parts.get("city"), result["parcel"], result.get("existing_building"),
             ))
         atlas_task = asyncio.create_task(municipal_zoning.multifamily_screen(

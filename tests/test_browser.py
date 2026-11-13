@@ -241,7 +241,7 @@ def test_automatic_redevelopment_shows_default_estimate_without_input(page, app_
     expect(page.locator("#currentMarketBasis")).to_contain_text("3 Registry-confirmed sales")
     expect(page.locator("#assessedValueContext")).to_contain_text("FY 2026 tax assessment · $900,000")
     expect(page.locator("#autoSellout")).to_have_text("Estimate unavailable")
-    expect(page.locator("#potentialValueBasis")).to_contain_text("three deed-confirmed sales")
+    expect(page.locator("#potentialValueBasis")).to_contain_text("three similar condo sales")
     expect(page.locator("#autoGrossArea")).to_have_text("12,000 sq ft")
     expect(page.locator("#autoCostMetric")).to_be_hidden()
     expect(page.locator("#autoUnits")).to_have_text(str(redevelopment["best"]["market_units"] + redevelopment["best"]["restricted_units"]))
@@ -276,7 +276,11 @@ def test_smaller_rebuild_leads_with_existing_building_on_mobile(page, app_url, p
     expect(page.locator("#redevelopmentMetrics")).to_be_hidden()
     expect(page.locator("#surplusSummary")).to_be_hidden()
     expect(page.locator("#autoSellout")).to_have_text("Estimate unavailable")
-    page.get_by_role("button", name="View zoning comparison").click()
+    page.get_by_text("Ask PlotDocket about this report", exact=True).click()
+    page.get_by_role("textbox", name="Question about this property report").fill("Can I build more homes here?")
+    page.get_by_role("button", name="Ask", exact=True).click()
+    expect(page.locator("#reportAnswer")).to_contain_text("would lose space or homes")
+    page.get_by_role("button", name="See supporting details").click()
     expect(page.locator("#opportunityNote")).to_contain_text("1,050 sq ft of modeled unit area")
     expect(page.locator("#opportunityNote")).to_contain_text("2,083 sq ft of existing living area")
 
@@ -308,16 +312,21 @@ def test_somerville_zoning_details_open_from_mobile_summary(page, app_url, prope
     assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
 
 
-def test_nr_buildout_and_size_matched_sales_are_visible_on_mobile(page, app_url, property_record):
+@pytest.mark.parametrize("width", [320, 390])
+def test_nr_buildout_and_size_matched_sales_are_visible_on_mobile(page, app_url, property_record, width):
     from somerville import buildout
 
-    page.set_viewport_size({"width": 390, "height": 844})
+    page.set_viewport_size({"width": width, "height": 844})
     building = {"use_description": "Multiple Houses on one parcel", "residential_area_sqft": 2722,
                 "bedrooms_reported": 5, "bathrooms_reported": 2, "year_built": 1910}
     record = dict(property_record, address="9 GORHAM ST, SOMERVILLE, MA", zoning={"district": "NR"},
                   existing_building=building, buildout_review=buildout(property_record["parcel"], building),
+                  current_valuation={"market_range": {
+                      "median": 1340000, "low": 1320000, "high": 2400000, "comp_count": 3, "radius_miles": .5,
+                      "comp_addresses": ["9 JAY ST", "62 CHANDLER ST", "47 NEWBURY ST"],
+                  }},
                   sales_research={"candidates": [{"address": "9 JAY ST", "sale_price": 1430000,
-                      "comparison_area_sqft": 2945, "size_difference_pct": 8, "bedrooms_reported": 6,
+                      "lot_area_sqft": 3905, "comparison_area_sqft": 2945, "size_difference_pct": 8, "bedrooms_reported": 6,
                       "bathrooms_reported": 3, "comparison_label": "Similar residential sale · different assessor class"}]})
     page.route("**/api/property?*", lambda route: route.fulfill(json=record))
     page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
@@ -326,11 +335,19 @@ def test_nr_buildout_and_size_matched_sales_are_visible_on_mobile(page, app_url,
     page.get_by_role("button", name="Explore property").click()
     expect(page.locator("#potentialAnswer")).to_contain_text("one to three")
     expect(page.locator("#propertyFactsSummary")).to_contain_text("2,722 sq ft living area · 5 beds · 2 baths")
+    expect(page.locator("#currentMarketValue")).to_have_text("About $1,340,000")
+    expect(page.locator("#marketCompSpread")).to_be_hidden()
+    page.get_by_text("Ask PlotDocket about this report", exact=True).click()
+    page.get_by_role("button", name="How much is it worth?").click()
+    expect(page.locator("#reportAnswerText")).to_contain_text("The as-is market estimate is about $1,340,000")
     expect(page.locator("#salePreview")).to_contain_text("9 JAY ST sold for $1,430,000")
     page.get_by_role("button", name="View buildout summary").click()
     expect(page.locator("#buildoutChecks")).to_contain_text("nonconforming rights")
     page.get_by_text("Comparable sales", exact=True).click()
     expect(page.locator("#salesCandidates")).to_contain_text("+8% vs subject · 6 beds / 3 baths")
+    expect(page.locator("#marketCompSpread")).to_contain_text("$1,320,000 to $2,400,000")
+    expect(page.locator("#salesCandidates")).to_contain_text("3,905 sq ft lot")
+    expect(page.locator("#salesCandidates")).to_contain_text("Used for current market estimate")
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
 
 
@@ -355,7 +372,8 @@ def test_verified_deed_and_pending_lead_stay_visibly_distinct(page, app_url, pro
     expect(page.locator("#lastTransfer")).to_contain_text("Book 80505, page 62")
     expect(page.locator("#lastTransfer").get_by_role("link")).to_have_attribute("href", deed["url"])
     page.get_by_text("Comparable sales", exact=True).click()
-    page.get_by_text("Sale leads awaiting registry confirmation", exact=True).click()
+    expect(page.locator("#salesStatus")).to_have_text("1 possible match still being checked.")
+    page.get_by_text("Sales still being checked", exact=True).click()
     expect(page.locator("#pendingRegistryList")).to_contain_text("Book 123, page 456")
     expect(page.locator("#pendingRegistryList")).to_contain_text("Awaiting MassLandRecords confirmation")
 
@@ -390,3 +408,337 @@ def test_permit_history_loads_only_when_opened_and_keeps_city_links(page, app_ur
     page.get_by_text("Building permits and applications", exact=True).click()
     expect(page.locator("#permitRecords")).to_contain_text("Issued 2021-08-23")
     assert len(calls) == 1
+
+
+def test_ask_report_routes_zoning_permits_and_unavailable_sales_on_mobile(page, app_url, property_record):
+    record = dict(property_record, zoning={"district": "C-1", "historical_reference": True},
+                  sales_research={"status": "MassGIS sale records are temporarily unavailable", "candidates": []},
+                  coverage={"municipality": "CAMBRIDGE"},
+                  permit_coverage={"coverage_note": "Cambridge permits"})
+    page.set_viewport_size({"width": 320, "height": 720})
+    page.route("**/api/property?*", lambda route: route.fulfill(json=record))
+    page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
+    page.route("**/api/permits?*", lambda route: route.fulfill(json={
+        "status": "found", "records": [{"permit_id": "BP-95", "permit_type": "Building", "issued_on": "2024-01-01"}],
+    }))
+    page.goto(app_url)
+    page.get_by_role("combobox").fill("95 Magazine St, Cambridge, MA")
+    page.get_by_role("button", name="Explore property").click()
+    page.get_by_text("Ask PlotDocket about this report", exact=True).click()
+    question = page.get_by_role("textbox", name="Question about this property report")
+    answer = page.locator("#reportAnswerText")
+
+    question.fill("Is the addition zoning-compliant?")
+    question.press("Enter")
+    expect(answer).to_contain_text("historical map showing district C-1")
+    expect(answer).to_contain_text("Confirm the current district")
+    page.get_by_role("button", name="See supporting details").click()
+    expect(page.locator("#districtDetails > summary")).to_be_focused()
+
+    question.fill("What building permits have been issued?")
+    question.press("Enter")
+    expect(answer).to_contain_text("issued permits the city has published")
+    page.get_by_role("button", name="See supporting details").click()
+    expect(page.locator("#permitDetails > summary")).to_be_focused()
+    expect(page.locator("#permitRecords")).to_contain_text("BP-95")
+
+    question.fill("What is this home worth?")
+    question.press("Enter")
+    expect(answer).to_contain_text("Comparable sale records are unavailable")
+    page.get_by_role("button", name="See supporting details").click()
+    expect(page.locator("#salesDetails > summary")).to_be_focused()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+def test_ask_report_distinguishes_affordable_home_count_and_pricing(page, app_url, property_record):
+    from redevelopment import analyze_redevelopment
+
+    redevelopment = analyze_redevelopment({"gross_area_high_sqft": 12000, "stories": 4}, None)
+    restricted = redevelopment["best"]["restricted_units"]
+    assert restricted > 0
+    record = dict(property_record, zoning={"district": "C-1"}, redevelopment=redevelopment)
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.route("**/api/property?*", lambda route: route.fulfill(json=record))
+    page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
+    page.goto(app_url)
+    page.get_by_role("combobox").fill("95 Magazine St, Cambridge, MA")
+    page.get_by_role("button", name="Explore property").click()
+    page.get_by_text("Ask PlotDocket about this report", exact=True).click()
+    question = page.get_by_role("textbox", name="Question about this property report")
+    answer = page.locator("#reportAnswerText")
+
+    question.fill("How many affordable homes could I build?")
+    question.press("Enter")
+    expect(answer).to_contain_text(f"This scenario models {restricted} income-restricted")
+    question.fill("What do income-restricted homes cost?")
+    question.press("Enter")
+    expect(answer).to_contain_text("The model leaves those proceeds out")
+
+    question.fill("What's the project upside?")
+    question.press("Enter")
+    expect(answer).to_contain_text("needs a supported building plan and comparable closed condo sales")
+
+
+@pytest.mark.parametrize("width", [320, 390])
+@pytest.mark.parametrize(("house", "city_review"), [(95, True), (106, True), (106, False)])
+def test_ask_report_keeps_the_magazine_st_buildout_recommendation(page, app_url, property_record, width,
+                                                               house, city_review):
+    from redevelopment import analyze_redevelopment
+
+    retain = house == 106
+    street = f"{house} MAGAZINE ST"
+    address = f"{street}, CAMBRIDGE, MA"
+    envelope = {"gross_area_low_sqft": 0, "gross_area_high_sqft": 1700 if retain else 12000, "stories": 4}
+    envelope["setback_review_required"] = city_review
+    building = {"residential_area_sqft": 2083 if retain else 2702, "units": 3}
+    parcel = dict(property_record["parcel"], assessor_site_address=street,
+                  parcel_number="102-51" if retain else "101-200")
+    record = dict(property_record, address=address, parcel=parcel, zoning={"district": "C-1"},
+                  zoning_potential=envelope, existing_building=building,
+                  redevelopment=analyze_redevelopment(envelope, building),
+                  cambridge_approvals={"pricing_on_hold": city_review})
+    page.set_viewport_size({"width": width, "height": 844})
+    page.route("**/api/property?*", lambda route: route.fulfill(json=record))
+    page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
+    page.goto(app_url)
+    page.get_by_role("combobox").fill(address)
+    page.get_by_role("button", name="Explore property").click()
+    expect(page.locator("#propertyAddress")).to_have_text(address)
+    if retain:
+        expect(page.locator("#potentialAnswer")).to_contain_text("Start with the existing building.")
+    page.get_by_text("Ask PlotDocket about this report", exact=True).click()
+    answer = page.locator("#reportAnswerText")
+    for prompt in ("What can I build?", "Could this project make money?"):
+        page.get_by_role("button", name=prompt).click()
+        if retain:
+            expect(answer).to_contain_text("Start with the existing building. The screened rebuild would lose space or homes.")
+            expect(answer).to_contain_text("The report leaves the rebuild unpriced.")
+        if city_review:
+            expect(answer).to_contain_text("City review")
+        else:
+            expect(answer).not_to_contain_text("City review")
+        if not retain:
+            expect(answer).to_contain_text("City review comes first for this rebuild.")
+        expect(answer).not_to_contain_text("$")
+    if city_review:
+        question = page.get_by_role("textbox", name="Question about this property report")
+        for prompt in ("What is the rebuild price?", "Why is the rebuild unpriced?",
+                       "Why is the development estimate unavailable?", "What approvals do I need?"):
+            question.fill(prompt)
+            question.press("Enter")
+            expect(answer).to_contain_text("Confirm the street-facing lot line")
+            expect(answer).to_contain_text("usable open space")
+            expect(answer).not_to_contain_text("$")
+            if retain:
+                expect(answer).to_contain_text("Start with the existing building.")
+    detail = page.locator("#districtDetails" if city_review else "#envelopeDetails")
+    assert not detail.evaluate("element => element.open")
+    page.get_by_role("button", name="See supporting details").click()
+    expect(detail.locator("summary").first).to_be_focused()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+@pytest.mark.parametrize("width", [320, 390])
+@pytest.mark.parametrize("restricted", [False, True])
+def test_ask_report_explains_what_partial_pricing_excludes(page, app_url, property_record, width, restricted):
+    from redevelopment import analyze_redevelopment
+
+    market = {"low": 1000000, "high": 1200000, "comp_count": 3}
+    area = 12000 if restricted else 6000
+    redevelopment = analyze_redevelopment({"gross_area_high_sqft": area, "stories": 4}, None,
+                                          current_market_range=market)
+    best = redevelopment["best"]
+    assert bool(best["restricted_units"]) is restricted
+    best.update(cost_low=2800000, cost_high=3000000)
+    if restricted:
+        # Legacy payloads may carry a surplus that excludes restricted-home proceeds.
+        best.update(sellout_low=2900000, sellout_high=3200000, surplus_low=-100000, surplus_high=400000)
+    record = dict(property_record, zoning={"district": "C-1"}, redevelopment=redevelopment)
+    page.set_viewport_size({"width": width, "height": 844})
+    page.route("**/api/property?*", lambda route: route.fulfill(json=record))
+    page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
+    page.goto(app_url)
+    page.get_by_role("combobox").fill("95 Magazine St, Cambridge, MA")
+    page.get_by_role("button", name="Explore property").click()
+    page.get_by_text("Ask PlotDocket about this report", exact=True).click()
+    page.get_by_role("button", name="Could this project make money?").click()
+    answer = page.locator("#reportAnswerText")
+    missing = "restricted-home sale proceeds" if restricted else "comparable closed condo sales"
+    excluded = "restricted-home selling costs" if restricted else "selling costs"
+    expect(answer).to_contain_text(f"Estimating project profit still requires {missing}.")
+    expect(answer).to_contain_text(f"The partial modeled budget is $2,800,000 to $3,000,000 and excludes {excluded}.")
+    expect(answer).not_to_contain_text("acquisition estimate")
+    expect(answer).not_to_contain_text("$400,000")
+    if restricted:
+        expect(answer).to_contain_text("Total market-rate condo sales are modeled at $2,900,000 to $3,200,000.")
+    else:
+        expect(answer).not_to_contain_text("condo sales are modeled at")
+    assert not page.locator("#estimateDetails").evaluate("element => element.open")
+    page.get_by_role("button", name="See supporting details").click()
+    expect(page.locator("#estimateDetails > summary")).to_be_focused()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+def test_ask_report_distinguishes_project_upside_from_as_is_value(page, app_url, property_record):
+    from redevelopment import analyze_redevelopment
+
+    market = {"low": 1000000, "high": 1200000, "comp_count": 3}
+    redevelopment = analyze_redevelopment({"gross_area_high_sqft": 6000, "stories": 3}, None,
+                                          current_market_range=market)
+    redevelopment["best"].update(cost_low=2800000, cost_high=3000000, sellout_low=2900000,
+                                 sellout_high=3200000, surplus_low=-100000, surplus_high=400000)
+    record = dict(property_record, zoning={"district": "C-1"}, redevelopment=redevelopment,
+                  current_valuation={"market_range": market})
+    page.set_viewport_size({"width": 320, "height": 720})
+    page.route("**/api/property?*", lambda route: route.fulfill(json=record))
+    page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
+    page.goto(app_url)
+    page.get_by_role("combobox").fill("95 Magazine St, Cambridge, MA")
+    page.get_by_role("button", name="Explore property").click()
+    page.get_by_text("Ask PlotDocket about this report", exact=True).click()
+    answer = page.locator("#reportAnswerText")
+
+    page.get_by_role("button", name="Could this project make money?").click()
+    expect(answer).to_have_text(
+        "Modeled profit or loss ranges from −$100,000 to $400,000. "
+        "The modeled project budget is $2,800,000 to $3,000,000 including modeled acquisition. "
+        "Total market-rate condo sales are modeled at $2,900,000 to $3,200,000."
+    )
+    page.get_by_role("button", name="See supporting details").click()
+    expect(page.locator("#estimateDetails > summary")).to_be_focused()
+
+    question = page.get_by_role("textbox", name="Question about this property report")
+    for prompt in ("What could this redevelopment be worth?", "What is the value of this development?"):
+        question.fill(prompt)
+        question.press("Enter")
+        expect(answer).to_contain_text("Total market-rate condo sales")
+        expect(answer).not_to_contain_text("as-is market estimate")
+
+    page.get_by_role("button", name="How much is it worth?").click()
+    expect(answer).to_contain_text("The as-is market estimate is $1,000,000 to $1,200,000")
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+@pytest.mark.parametrize("width", [320, 390])
+def test_market_summary_and_ask_explain_nonqualifying_sales(page, app_url, property_record, width):
+    record = dict(property_record, address="9 GORHAM ST, SOMERVILLE, MA",
+                  current_valuation={
+                      "market_range": None,
+                      "assessment": {"amount": 1645700, "fiscal_year": 2025},
+                      "market_evidence": {
+                          "confirmed_count": 4, "qualifying_count": 2,
+                      },
+                  })
+    page.set_viewport_size({"width": width, "height": 844})
+    page.route("**/api/property?*", lambda route: route.fulfill(json=record))
+    page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
+    page.goto(app_url)
+    page.get_by_role("combobox").fill("9 Gorham St, Somerville, MA")
+    page.get_by_role("button", name="Explore property").click()
+    reason = "4 deed-confirmed sales found. Only 2 match on home size, location, beds, baths and lot size."
+    expect(page.locator("#currentMarketValue")).to_have_text("Estimate unavailable")
+    expect(page.locator("#currentMarketBasis")).to_contain_text(reason)
+    expect(page.locator("#assessedValueContext")).to_contain_text("FY 2025 tax assessment · $1,645,700")
+    assert not page.locator("#salesDetails").evaluate("element => element.open")
+    page.get_by_text("Ask PlotDocket about this report", exact=True).click()
+    page.get_by_role("button", name="How much is it worth?").click()
+    expect(page.locator("#reportAnswerText")).to_contain_text(reason)
+    page.get_by_role("button", name="See supporting details").click()
+    expect(page.locator("#salesDetails > summary")).to_be_focused()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+@pytest.mark.parametrize('width', [320, 390])
+@pytest.mark.parametrize(('scope', 'status', 'has_passages'), [
+    ('district_mentions', 'The evidence has been reviewed. These references are separate from the calculation rules.', True),
+    ('municipal_guidance', 'Official-source passages found. District applicability and amendments still need review.', True),
+    (None, 'The saved zoning research needs a fresh source check. Available references are shown below.', False),
+    (None, 'Latest official-source check was incomplete. Available references are shown below.', False),
+    (None, 'Official-source research is in progress or temporarily unavailable.', False),
+    (None, 'The current research was rejected in review. Links are retained for reference.', False),
+])
+def test_ask_explains_selected_zoning_research(page, app_url, property_record, width, scope, status, has_passages):
+    source = 'https://www.cambridgema.gov/inspection/zoning'
+    research = {'status': status, 'needs_review': False,
+                'sources': [{'title': 'Official zoning source', 'url': source, 'topics': ['dimensional standards']}],
+                'passage_scope': scope, 'passages': ([{'topic': 'dimensional standards',
+                    'excerpt': 'A source excerpt is not a parcel-specific approval.',
+                    'source_url': source, 'source_title': 'Official zoning source'}] if has_passages else [])}
+    record = dict(property_record, zoning={'district': 'C-1'} if scope != 'municipal_guidance' else None,
+                  on_demand_zoning_research=research)
+    page.set_viewport_size({'width': width, 'height': 844})
+    page.route('**/api/property?*', lambda route: route.fulfill(json=record))
+    page.route('**/api/suggest?*', lambda route: route.fulfill(json={'suggestions': []}))
+    page.goto(app_url)
+    page.get_by_role('combobox').fill('95 Magazine St, Cambridge, MA')
+    page.get_by_role('button', name='Explore property').click()
+    assert not page.locator('#onDemandZoning').evaluate('(element) => element.open')
+    page.get_by_text('Ask PlotDocket about this report', exact=True).click()
+    for prompt in ('Is the zoning source current?', 'What can I build here?'):
+        question = page.get_by_role('textbox', name='Question about this property report')
+        question.fill(prompt)
+        question.press('Enter')
+        answer = page.locator('#reportAnswerText')
+        expect(answer).to_contain_text(status)
+        expect(answer).to_contain_text('before estimating what fits')
+        if scope == 'district_mentions':
+            expect(answer).to_contain_text('mention the mapped district')
+        elif scope == 'municipal_guidance':
+            expect(answer).to_contain_text('general municipal guidance')
+            expect(answer).to_contain_text('Confirm the parcel’s district')
+        else:
+            expect(answer).not_to_contain_text('passages mention')
+    page.get_by_role('button', name='See supporting details').click()
+    expect(page.locator('#onDemandZoning > summary')).to_be_focused()
+    expect(page.locator('#onDemandStatus')).to_contain_text(status)
+    expect(page.get_by_role('link', name='Official zoning source', exact=False).first).to_have_attribute('href', source)
+    assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+    # A source question must explain source status even when a separate envelope exists.
+    result = page.evaluate('''record => explainReport('Is the zoning source current?', {
+        ...record, zoning_potential: {gross_area_low_sqft: 1000, gross_area_high_sqft: 2000}
+    })''', record)
+    assert status in result['answer']
+    assert result['target'] == 'onDemandZoning'
+
+
+@pytest.mark.parametrize('hold', ['retain', 'approval'])
+def test_ask_keeps_building_checks_when_question_mentions_current_home(page, app_url, property_record, hold):
+    page.goto(app_url)
+    record = dict(property_record, zoning={'district': 'C-1'},
+                  on_demand_zoning_research={'status': 'Official sources found.', 'passages': []},
+                  redevelopment={'decision': 'retain_and_review'} if hold == 'retain' else None,
+                  cambridge_approvals={'pricing_on_hold': hold == 'approval'})
+    for prompt in ('Can I expand the current building?', 'Can I add units to my current home?'):
+        result = page.evaluate('(args) => explainReport(args.prompt, args.record)', {'prompt': prompt, 'record': record})
+        assert ('Start with the existing building' if hold == 'retain' else 'City review comes first') in result['answer']
+        assert result['target'] == 'districtDetails'
+
+
+@pytest.mark.parametrize("width", [320, 390])
+def test_acquisition_budget_discloses_the_same_comp_median_as_the_report(page, app_url, property_record, width):
+    from redevelopment import analyze_redevelopment
+    from tests.test_redevelopment import verified_condos
+
+    market = {"low": 1320000, "median": 1340000, "high": 2400000, "comp_count": 3, "radius_miles": .5}
+    comps = [dict(row, arm_length_verified=True, new_construction_verified=True)
+             for row in verified_condos(1700)]
+    redevelopment = analyze_redevelopment(
+        {"gross_area_high_sqft": 8000, "stories": 4}, {}, comps, current_market_range=market,
+    )
+    record = dict(property_record, zoning={"district": "C-1"}, redevelopment=redevelopment,
+                  current_valuation={"market_range": market})
+    page.set_viewport_size({"width": width, "height": 844})
+    page.route("**/api/property?*", lambda route: route.fulfill(json=record))
+    page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
+    page.goto(app_url)
+    page.get_by_role("combobox").fill("95 Magazine St, Cambridge, MA")
+    page.get_by_role("button", name="Explore property").click()
+    expect(page.locator("#currentMarketValue")).to_contain_text("$1,340,000")
+    expect(page.locator("#redevelopmentEvidence")).to_be_hidden()
+    page.get_by_role("button", name="View development estimate").click()
+    expect(page.locator("#redevelopmentEvidence")).to_contain_text(
+        "the median of the size-adjusted comparable sales, $1,340,000, plus closing costs",
+    )
+    expect(page.locator("#redevelopmentEvidence")).to_contain_text("$1,366,800")
+    expect(page.locator("#autoSellout")).to_contain_text("$")
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
