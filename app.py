@@ -138,7 +138,8 @@ async def condo_references(municipality:str=Query(min_length=2,max_length=80,pat
             report = await condo_sales(client,lon,lat,municipality,boston_pid,min_year_built)
         report = registry.sale_report(municipality, report)
         queue_registry_review(municipality, report.get("pending_registry_review", []))
-        return report
+        # Nearby reference sales are not matched to the manual program's individual unit layouts.
+        return {**report, "observed_price_per_sqft_low": None, "observed_price_per_sqft_high": None}
     except (httpx.HTTPError,ValueError,TypeError):
         raise HTTPException(503,'Condominium sale references are temporarily unavailable. Your scenario inputs are preserved; try again later.')
 def matching_suggestions(values, query):
@@ -504,7 +505,9 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
     else:
         result["recommendations"].append({"title":"Review the preliminary zoning scenario","reason":"A district-specific scenario is available, subject to its stated assumptions and limitations.","next_step":"Have the city review a current survey and proposed footprint before paying for design work.","confidence":result["zoning_potential"].get("confidence")})
     market_range = (result.get("current_valuation") or {}).get("market_range")
-    result["redevelopment"] = analyze_redevelopment(result.get("zoning_potential"), result.get("existing_building"))
+    result["redevelopment"] = analyze_redevelopment(
+        result.get("zoning_potential"), result.get("existing_building"), include_costs=False,
+    )
     if result["redevelopment"].get("best"):
         references = None
         try:

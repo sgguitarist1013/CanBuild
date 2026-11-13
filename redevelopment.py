@@ -58,19 +58,21 @@ def matching_condos(references, beds, baths, area):
 
 def pricing(references):
     rates = []
-    verified = [
+    qualified = [
         row for row in references
         if (deed := row.get("deed_verification") or {}).get("status") == "verified"
         and positive_number(row.get("sale_price")) and deed.get("consideration") == row["sale_price"]
         and positive_number(row.get("price_per_living_sqft"))
+        and row.get("arm_length_verified") is True
+        and row.get("new_construction_verified") is True
     ]
     for beds, (area, baths) in enumerate(zip(UNIT_SIZES, UNIT_BATHS), 1):
-        rows = matching_condos(verified, beds, baths, area)
+        rows = matching_condos(qualified, beds, baths, area)
         if len(rows) >= 3:
             low, _, high = quantiles([r["price_per_living_sqft"] for r in rows], n=4, method="inclusive")
             rates.append((round(low), round(high), "MassLandRecords-confirmed Cambridge sales", rows))
         else:
-            rates.append((None, None, "Insufficient matching deed-confirmed sales", rows))
+            rates.append((None, None, "Insufficient qualifying new-condo sales", rows))
     return rates
 
 
@@ -100,12 +102,14 @@ def cost_budget(gross_area, existing_area, stories, units, acquisition, sellout,
         .70 * development * (.0125 + .075 * .5 * months / 12)
         + .70 * (acquisition or 0) * (.0125 + .075 * months / 12)
     )
-    lines["Brokerage, marketing, closing, excise and concessions"] = sellout * (.075 if stress else .055)
+    lines["Brokerage, marketing, closing, excise and concessions"] = (
+        sellout * (.075 if stress else .055) if sellout is not None else None
+    )
     lines["Acquisition proxy and buyer closing costs"] = acquisition * 1.02 if acquisition else None
     return {key: round(value) if value is not None else None for key, value in lines.items()}
 
 
-def analyze_redevelopment(massing, building, references=(), *, current_market_range=None):
+def analyze_redevelopment(massing, building, references=(), *, current_market_range=None, include_costs=True):
     if not massing or not massing.get("gross_area_high_sqft"):
         return {"status": "No supported redevelopment envelope for this parcel."}
     building = building or {}
@@ -158,19 +162,22 @@ def analyze_redevelopment(massing, building, references=(), *, current_market_ra
             "surplus_low": None, "surplus_high": None, "cost_lines": [],
         }
         market_mix = [row for row in mix if row["market_units"]]
-        if market_mix and all(row["price_per_sqft_low"] is not None for row in market_mix):
-            sale_low, sale_high = (
-                sum(row["market_units"] * row["area_sqft"] * row[f"price_per_sqft_{band}"] for row in market_mix)
-                for band in ("low", "high")
-            )
+        if include_costs:
+            sale_low = sale_high = None
+            if market_mix and all(row["price_per_sqft_low"] is not None for row in market_mix):
+                sale_low, sale_high = (
+                    sum(row["market_units"] * row["area_sqft"] * row[f"price_per_sqft_{band}"] for row in market_mix)
+                    for band in ("low", "high")
+                )
             downside = cost_budget(gross, demolition_area, option["stories"], sum(counts), acquisition, sale_low, stress=True)
             upside = cost_budget(gross, demolition_area, option["stories"], sum(counts), acquisition, sale_high, stress=False)
             costs_high = sum(x for x in downside.values() if x is not None)
             costs_low = sum(x for x in upside.values() if x is not None)
+            complete_project = sale_high is not None and acquisition is not None and not scenario["restricted_units"]
             scenario.update(
                 sellout_low=sale_low, sellout_high=sale_high, cost_low=costs_low, cost_high=costs_high,
-                surplus_low=sale_low - costs_high if acquisition else None,
-                surplus_high=sale_high - costs_low if acquisition else None,
+                surplus_low=sale_low - costs_high if complete_project else None,
+                surplus_high=sale_high - costs_low if complete_project else None,
                 cost_lines=[{"name": key, "upside": value, "downside": downside[key]} for key, value in upside.items()],
             )
         modeled.append(scenario)
@@ -185,12 +192,14 @@ def analyze_redevelopment(massing, building, references=(), *, current_market_ra
         ranking = "Ranked by highest modeled surplus after acquisition."
     else:
         modeled.sort(key=lambda row: row["gross_area_sqft"], reverse=True)
-        ranking = "Largest modeled floor area. Financial ranking requires comparable sales and an as-is market estimate."
+        ranking = "Largest modeled floor area. Financial ranking requires pricing for all units and an as-is market estimate."
     best = modeled[0]
-    upside_loss = best["sellout_high"] is not None and best["sellout_high"] <= best["cost_low"]
+    decision = "screened"
+    if best["sellout_high"] is not None and best["sellout_high"] < best["cost_low"]:
+        decision = "market_rate_shortfall" if best["restricted_units"] else "modeled_loss"
     return {
         "status": "Preliminary redevelopment screen",
-        "decision": "modeled_loss" if upside_loss else "screened",
+        "decision": decision,
         "best": best, "alternatives": [
             {key: row[key] for key in ("name", "conditional", "stories", "gross_area_sqft", "sellout_low", "sellout_high", "surplus_low", "surplus_high")}
             for row in modeled[1:]

@@ -1,4 +1,5 @@
 from datetime import date, timedelta
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -7,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from app import app
 from condo_analysis import CondoProgram, analyze_program, condo_sales, reference_summary
+import app as server
 
 
 @pytest.fixture
@@ -62,6 +64,36 @@ def test_api_calculates_sellout_and_returns_useful_validation():
     assert response.json()['gross_sellout_high']==1800000
     assert response.json()['total_proposed_dwelling_units']==2
     assert client.post('/api/condo-scenario',json={'market_units':[{'units':2,'low_price_per_sqft':1000,'high_price_per_sqft':800}]}).status_code==422
+
+
+def test_manual_condo_endpoint_keeps_deed_confirmed_references_without_pricing_range(monkeypatch):
+    candidates = [
+        {"address": f"{i} Test St Unit 1", "sale_price": price, "price_per_living_sqft": price / 1000,
+         "record_reference": f"100/{i}", "arm_length_verified": False, "new_construction_verified": False}
+        for i, price in enumerate((700000, 800000, 900000, 1000000), 1)
+    ]
+    monkeypatch.setattr(server, "condo_sales", AsyncMock(return_value={
+        "candidates": candidates, "observed_price_per_sqft_low": 700, "observed_price_per_sqft_high": 1000,
+    }))
+    def check_deed(city, address, pair, price, registered_reference=None):
+        if price < 1000000:
+            return {"status": "verified", "consideration": price}
+        return {"status": "pending"}
+
+    monkeypatch.setattr(server.registry, "check", check_deed)
+    monkeypatch.setattr(server, "queue_registry_review", lambda *args: None)
+
+    response = TestClient(app).get("/api/condo-sales", params={
+        "municipality": "Cambridge", "lat": 42.36, "lon": -71.1,
+    })
+
+    assert response.status_code == 200
+    report = response.json()
+    assert report["observed_price_per_sqft_low"] is report["observed_price_per_sqft_high"] is None
+    assert [sale["sale_price"] for sale in report["candidates"]] == [700000, 800000, 900000]
+    assert report["pending_registry_review"] == [
+        {"address": "4 Test St Unit 1", "deed_verification": {"status": "pending"}},
+    ]
 
 
 def test_observed_range_requires_three_unbundled_unit_references():

@@ -167,7 +167,8 @@ def test_condo_program_totals_sellout_and_property_reset(page,app_url,property_r
     expect(page.locator('#proposedDwellingUnits')).to_have_text('Define unit mix')
 
 
-def test_condo_sale_range_is_an_explicit_assumption(page,app_url,property_record):
+@pytest.mark.parametrize("width", [320, 390])
+def test_condo_sale_references_do_not_set_manual_assumptions(page, app_url, property_record, width):
     record=dict(property_record,coordinates={'lat':42.36,'lon':-71.1},coverage={'municipality':'CAMBRIDGE'})
     refs={'status':'3 condominium sale references','method':'Reported living area.','limitations':'New-construction condition is not verified.','observed_price_per_sqft_low':700,'observed_price_per_sqft_high':900,
         'candidates':[{'address':'Test condo '+str(i),'sale_date':'2026-10-01','sale_price':p,'living_area_sqft':1000,'price_per_living_sqft':p/1000,'source_url':'https://www.mass.gov/'} for i,p in enumerate([700000,800000,900000])]}
@@ -178,6 +179,7 @@ def test_condo_sale_range_is_an_explicit_assumption(page,app_url,property_record
         calls.append(1)
         route.fulfill(status=503,json={'detail':'Condo source temporarily unavailable'}) if len(calls)==1 else route.fulfill(json=refs)
     page.route('**/api/condo-sales?*',pricing_response)
+    page.set_viewport_size({"width": width, "height": 844})
     page.goto(app_url)
     page.get_by_role('combobox').fill('95 Magazine St, Cambridge, MA')
     page.get_by_role('button',name='Explore property').click()
@@ -186,30 +188,35 @@ def test_condo_sale_range_is_an_explicit_assumption(page,app_url,property_record
     row=page.locator('.unit-mix-row').first
     row.locator('[data-field="units"]').fill('3')
     row.locator('[data-field="area_sqft"]').fill('1000')
-    page.get_by_text('Condominium sale references for pricing',exact=True).click()
-    expect(page.get_by_role('button',name='Use observed range as assumptions')).to_be_disabled()
+    low = row.locator('[data-field="low_price_per_sqft"]')
+    high = row.locator('[data-field="high_price_per_sqft"]')
+    low.fill('650')
+    high.fill('950')
+    page.get_by_text('Nearby condo sale records',exact=True).click()
     page.get_by_role('button',name='Find nearby condo sales').click()
     expect(page.locator('#condoCompStatus')).to_contain_text('temporarily unavailable')
     expect(row.locator('[data-field="units"]')).to_have_value('3')
     expect(row.locator('[data-field="area_sqft"]')).to_have_value('1000')
+    expect(low).to_have_value('650')
+    expect(high).to_have_value('950')
     page.get_by_role('button',name='Find nearby condo sales').click()
     expect(page.locator('#condoReferences')).to_contain_text('Test condo 0')
     expect(page.locator('#condoCompStatus')).to_contain_text('not verified')
-    page.get_by_role('button',name='Use observed range as assumptions').click()
-    row=page.locator('.unit-mix-row').first
-    expect(row.locator('[data-field="low_price_per_sqft"]')).to_have_value('700')
-    expect(row.locator('[data-field="high_price_per_sqft"]')).to_have_value('900')
-    row.locator('[data-field="units"]').fill('3')
-    row.locator('[data-field="area_sqft"]').fill('1000')
+    expect(page.get_by_role('button', name='Use observed range as assumptions')).to_have_count(0)
+    expect(low).to_have_value('650')
+    expect(high).to_have_value('950')
+    expect(page.locator('.unit-mix-row').nth(1).locator('[data-field="low_price_per_sqft"]')).to_have_value('')
     page.get_by_role('button',name='Calculate unit totals & sellout').click()
-    expect(page.locator('#condoSellout')).to_have_text('$2,100,000–$2,700,000')
+    expect(page.locator('#condoSellout')).to_have_text('$1,950,000–$2,850,000')
     expect(page.locator('#restrictedUnitPrice')).to_have_value('')
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
 
 
-def test_automatic_redevelopment_shows_default_estimate_without_input(page, app_url, property_record):
+@pytest.mark.parametrize("width", [320, 390])
+def test_automatic_redevelopment_shows_default_estimate_without_input(page, app_url, property_record, width):
     from redevelopment import analyze_redevelopment
 
-    page.set_viewport_size({"width": 390, "height": 844})
+    page.set_viewport_size({"width": width, "height": 844})
     redevelopment = analyze_redevelopment({"gross_area_high_sqft": 12000, "stories": 4},
                                           {"assessed_value": 900000, "building_area_sqft": 3000})
     redevelopment["best"]["conditional"] = True
@@ -229,7 +236,9 @@ def test_automatic_redevelopment_shows_default_estimate_without_input(page, app_
     expect(page.locator("#autoSellout")).to_have_text("Estimate unavailable")
     expect(page.locator("#potentialValueBasis")).to_contain_text("three deed-confirmed sales")
     expect(page.locator("#autoGrossArea")).to_have_text("12,000 sq ft")
-    expect(page.locator("#autoCostMetric")).to_be_hidden()
+    expect(page.locator("#autoCostMetric small")).to_have_text("Estimated costs (partial)")
+    expect(page.locator("#autoCost")).to_contain_text("before acquisition")
+    expect(page.locator("#surplusSummary")).to_be_hidden()
     expect(page.locator("#autoUnits")).to_have_text(str(redevelopment["best"]["market_units"] + redevelopment["best"]["restricted_units"]))
     expect(page.locator("#potentialLimit")).to_contain_text("affordable-housing requirements")
     expect(page.locator("#redevelopmentAreas")).to_be_hidden()
@@ -241,8 +250,37 @@ def test_automatic_redevelopment_shows_default_estimate_without_input(page, app_
     expect(page.locator("#estimateDetails > summary")).to_be_focused()
     expect(page.locator("#redevelopmentAreas")).to_be_visible()
     expect(page.locator("#redevelopmentAreas")).to_contain_text("restricted")
-    expect(page.locator("#redevelopmentMix")).to_contain_text("Insufficient matching deed-confirmed sales")
+    expect(page.locator("#redevelopmentMix")).to_contain_text("Insufficient qualifying new-condo sales")
+    expect(page.locator("#redevelopmentEvidence")).to_contain_text("the buyer and seller acted independently")
+    expect(page.locator("#redevelopmentEvidence")).to_contain_text("excludes selling costs")
+    expect(page.locator("#redevelopmentEvidence")).to_contain_text("closing, excise and concessions: Unavailable")
     assert not page.get_by_text("Optional manual condo scenario", exact=True).evaluate("(el) => el.parentElement.open")
+
+
+def test_inclusionary_shortfall_explains_missing_overall_result_on_mobile(page, app_url, property_record):
+    from redevelopment import analyze_redevelopment
+    from tests.test_redevelopment import verified_condos
+
+    redevelopment = analyze_redevelopment(
+        {"gross_area_high_sqft": 12000, "stories": 4}, {}, verified_condos(350),
+        current_market_range={"low": 1000000, "high": 1200000},
+    )
+    record = dict(property_record, zoning={"district": "C-1"}, redevelopment=redevelopment)
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.route("**/api/property?*", lambda route: route.fulfill(json=record))
+    page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
+    page.goto(app_url)
+    page.get_by_role("combobox").fill("95 Magazine St, Cambridge, MA")
+    page.get_by_role("button", name="Explore property").click()
+    expect(page.locator("#potentialAnswer")).to_have_text("Market-rate condo sales alone fall short of the modeled costs.")
+    expect(page.locator("#potentialLimit")).to_contain_text("overall profit or loss is still unknown")
+    expect(page.locator("#potentialValueLabel")).to_have_text("Market-rate condo sales only")
+    expect(page.locator("#autoCostMetric small")).to_have_text("Estimated costs (partial)")
+    expect(page.locator("#surplusSummary")).to_be_hidden()
+    assert page.locator('details.research-card[open]').count() == 0
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    page.get_by_role("button", name="View development estimate").click()
+    expect(page.locator("#redevelopmentEvidence")).to_contain_text("exclude their selling costs")
 
 
 def test_smaller_rebuild_leads_with_existing_building_on_mobile(page, app_url, property_record):
