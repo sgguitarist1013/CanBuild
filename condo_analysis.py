@@ -286,11 +286,13 @@ async def condo_sales(client, lon, lat, city, boston_pid=None, min_year_built=No
                     or (min_year_built and (not isinstance(year, (int, float)) or not min_year_built <= year <= today.year))):
                 continue
             book_page = str(a.get('BOOK_PAGE') or '').strip()
-            if not re.fullmatch(r'[1-9][0-9]*/[0-9]+', book_page):
+            house, street = str(a.get('AddNum') or '').strip(), str(a.get('Street') or '').strip()
+            if (not house or not street
+                    or not re.fullmatch(r'[1-9][0-9]*/[0-9]+', book_page)):
                 continue
             attrs = {
-                'SITE_ADDR': f"{a.get('AddNum', '').strip()} {a.get('Street', '').strip()}".strip(),
-                'PROP_ID': a.get('MBL'), 'LOC_ID': f"{a.get('AddNum')} {a.get('Street')}",
+                'SITE_ADDR': f'{house} {street}',
+                'PROP_ID': a.get('MBL'), 'LOC_ID': f'{house} {street}',
                 'YEAR_BUILT': year, '_record_reference': book_page,
             }
             comp = reference(attrs, price, sold, area, somerville.GIS)
