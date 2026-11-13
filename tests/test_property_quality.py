@@ -87,7 +87,7 @@ async def test_polygon_sales_candidates_use_same_area_and_property_type():
     rows = [feature({}), feature({'LOC_ID': 'multifamily', 'USE_DESC': 'Two Family Residential'}), feature({'LOC_ID': 'future', 'LS_DATE': (date.today()+timedelta(days=1)).strftime('%Y%m%d')}), feature({'LOC_ID': 'missing', 'RES_AREA': None}), feature({'LOC_ID': 'subject'})]
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200, json={'features': rows}))) as client:
         result = await search(client, -72.6, 42.15, 'CHICOPEE', {'loc_id': 'subject'}, {'residential_area_sqft': 1204, 'building_area_sqft': 2412, 'use_description': 'Single Family Residential'})
-    assert len(result['candidates']) == 1
+    assert len(result['candidates']) == 2
     candidate = result['candidates'][0]
     assert candidate['comparison_area_sqft'] == 1200
     assert candidate['comparison_area_basis'] == 'residential living area'

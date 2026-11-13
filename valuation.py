@@ -27,15 +27,18 @@ def current_valuation(parcel, building, sales):
         sale_beds, sale_baths = sale.get("bedrooms_reported"), sale.get("bathrooms_reported")
         distance = sale.get("distance_miles")
         price = deed.get("consideration")
+        lot_area = sale.get("lot_area_sqft")
+        subject_lot = (parcel or {}).get("gis_area_sqft_approx")
+        lot_match = (not positive_number(subject_lot) or
+                     (positive_number(lot_area) and abs(lot_area-subject_lot) <= .30*subject_lot))
         if (deed.get("status") == "verified" and price == sale.get("sale_price")
-                and sale.get("comparison_label") == "Same assessor class"
-                and sale.get("arm_length_status") == "City sale flag Q"
                 and sale.get("comparison_area_basis") == "assessor living area"
                 and sale.get("parcel_number") and sale["parcel_number"] != parcel.get("parcel_number")
                 and all(positive_number(n) for n in (size, sale_beds, sale_baths, price))
                 and type(distance) in (int, float) and isfinite(distance) and distance >= 0
                 and abs(size - area) <= .15 * area
-                and abs(sale_beds - beds) <= 1 and abs(sale_baths - baths) <= 1):
+                and abs(sale_beds - beds) <= 1 and abs(sale_baths - baths) <= 1
+                and lot_match):
             eligible.append(sale)
     matches = {}
     for sale in sorted(eligible, key=lambda row: (row["distance_miles"], abs(row["comparison_area_sqft"] - area))):
@@ -48,7 +51,7 @@ def current_valuation(parcel, building, sales):
             "low": floor(min(prices) / 10000) * 10000,
             "high": ceil(max(prices) / 10000) * 10000,
             "comp_count": len(selected),
-            "radius_miles": max(.5, selected[-1]["distance_miles"]),
+            "radius_miles": max(sale["distance_miles"] for sale in selected),
             "comp_addresses": [sale["address"] for sale in selected],
         }
     return result

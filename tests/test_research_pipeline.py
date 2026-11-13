@@ -38,7 +38,7 @@ def test_priced_buildout_flags_cohorts_without_three_comparable_projects():
                       "price_per_sqft_high": 900, "comparable_projects": 2}],
     }}})
     checks = {check["key"]: check for check in quality["checks"]}
-    assert checks["buildout"]["state"] == "supported"
+    assert checks["buildout"]["state"] == "error"
     assert checks["economics"]["state"] == "error"
     assert quality["status"] == "error"
 
@@ -47,6 +47,8 @@ def test_valid_scenario_still_carries_local_review_and_cost_assumption_limits():
     quality = inspect_report({
         "parcel": {"parcel_number": "1"}, "address": "95 Main St",
         "zoning": {"district": "R-1"}, "constraints": [],
+        "constraints_screen_complete": True,
+        "zoning_potential": {"rule_basis_verified": True},
         "redevelopment": {"best": {"gross_area_sqft": 12000,
             "sellout_low": 1_000_000, "sellout_high": 1_200_000,
             "cost_low": 900_000, "cost_high": 1_100_000,
@@ -56,7 +58,47 @@ def test_valid_scenario_still_carries_local_review_and_cost_assumption_limits():
     })
     checks = {check["key"]: check for check in quality["checks"]}
     assert checks["parcel_identity"]["state"] == "supported"
-    assert checks["economics"]["state"] == "review"
+    assert checks["economics"]["state"] == "supported"
+
+
+def test_incomplete_public_report_contains_no_property_facts_or_partial_estimates():
+    from research_pipeline import public_report
+
+    report = {"address": "229 MAIN ST, MONSON, MA", "parcel": {"owner": "PRIVATE OWNER"},
+              "current_valuation": {"market_range": None}, "research_quality": {"status": "partial"}}
+    assert public_report(report) == {
+        "ready": False,
+        "status": "researching",
+        "message": "We’re collecting and checking parcel, zoning, sale, and project-cost evidence. The property report will appear after all required checks are complete.",
+    }
+
+
+def test_report_is_released_only_after_every_required_stage_is_supported():
+    from research_pipeline import public_report
+
+    complete = {
+        "address": "95 Example St, Test, MA", "parcel": {"parcel_number": "1"},
+        "zoning": {"district": "R-1", "current_rules_verified": True},
+        "constraints_screen_complete": True,
+        "zoning_potential": {"rule_basis_verified": True},
+        "current_valuation": {"market_range": {"low": 1_000_000, "high": 1_200_000, "comp_count": 3}},
+        "redevelopment": {"best": {
+            "gross_area_sqft": 12000, "sellout_low": 2_000_000, "sellout_high": 2_400_000,
+            "cost_low": 1_500_000, "cost_high": 1_800_000,
+            "surplus_low": 200_000, "surplus_high": 900_000,
+            "cost_lines": [{"name": "Construction", "upside": 1_000_000, "downside": 1_200_000}],
+            "unit_mix": [{"market_units": 3, "price_per_sqft_low": 1000,
+                          "price_per_sqft_high": 1200, "comparable_projects": 3}],
+        }},
+    }
+    released = public_report(guard_report(complete))
+    assert released["ready"] is True
+    assert released["address"] == complete["address"]
+
+    complete["zoning"]["current_rules_verified"] = False
+    withheld = public_report(guard_report(complete))
+    assert withheld["ready"] is False
+    assert "address" not in withheld
 
 
 def test_surplus_must_reconcile_to_sellout_and_cost_ranges():

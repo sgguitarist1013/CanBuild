@@ -130,7 +130,7 @@ function renderValues(d){
   const market=valuation?.market_range;
   const assessment=valuation?.assessment;
   const best=d.redevelopment?.best;
-  $('currentMarketValue').textContent=market?range(market.low,market.high):'Estimate unavailable';
+  $('currentMarketValue').textContent=market?range(market.low,market.high):'—';
   $('currentMarketBasis').textContent=market
     ? market.comp_count+' Registry-confirmed sales within '+market.radius_miles+' mi, scaled to subject living area.'
     : 'Requires three qualifying local sales confirmed in MassLandRecords.';
@@ -140,7 +140,7 @@ function renderValues(d){
     : '';
   const decision=d.redevelopment?.decision;
   const priced=best?.sellout_high!=null&&decision!=='modeled_loss';
-  $('autoSellout').textContent=priced?range(best.sellout_low,best.sellout_high):'Estimate unavailable';
+  $('autoSellout').textContent=priced?range(best.sellout_low,best.sellout_high):'—';
   $('potentialValueBasis').textContent=priced
     ? 'Gross market-rate condo sales for the '+(best.conditional?'conditional ':'')+best.stories+'-story scenario, before project costs.'
     : decision==='retain_and_review'?'The screened rebuild would lose existing space or units.'
@@ -715,7 +715,13 @@ async function lookup(selectedPid=null) {
   const deadline=setTimeout(()=>controller.abort(),75000);
   try {
     const url='/api/property?address='+encodeURIComponent(query)+(selectedPid?'&boston_pid='+encodeURIComponent(selectedPid):'');
-    render(await jsonResponse(url,{signal:controller.signal}));
+    const report=await jsonResponse(url,{signal:controller.signal});
+    if(report.ready!==true){
+      $('results').classList.add('hide');
+      $('intro').classList.remove('hide');
+      document.body.classList.remove('has-results');
+      status.textContent=report.message||'Research is still running. No property details are shown until every required check is complete.';
+    } else render(report);
   } catch(error) {
     status.textContent=controller.signal.aborted?'The lookup took too long. Try the address again.':error.message;
   } finally {

@@ -33,17 +33,19 @@ def inspect_report(report):
 
     if zoning.get("district"):
         historical = bool(zoning.get("historical_reference"))
-        checks.append(_check("zoning", "review" if historical else "supported",
-            "The mapped zoning reference is historical and needs current confirmation." if historical
-            else "A zoning district is mapped; confirm current rules, overlays and approvals."))
+        current = zoning.get("current_rules_verified") is True
+        checks.append(_check("zoning", "supported" if current else "review",
+            "Current district rules and applicable amendments were verified for this parcel." if current
+            else "A mapped district exists, but current district rules and applicable amendments are not verified."))
     else:
         checks.append(_check("zoning", "unavailable", "A zoning district was not confirmed."))
 
     constraints = report.get("constraints") or []
     unavailable = [row for row in constraints if row.get("status") == "unavailable"]
-    checks.append(_check("site_constraints", "review" if unavailable else "partial",
-        f"{len(unavailable)} mapped constraint layer(s) could not be checked." if unavailable
-        else "Only the listed map layers were screened; unlisted constraints remain unchecked."))
+    constraints_complete = report.get("constraints_screen_complete") is True
+    checks.append(_check("site_constraints", "supported" if constraints_complete else "review",
+        "Required site-constraint layers were checked for this parcel." if constraints_complete
+        else f"{len(unavailable)} required layer(s) failed; screening is incomplete until all required layers are checked."))
 
     if market:
         count = market.get("comp_count")
@@ -57,10 +59,12 @@ def inspect_report(report):
         checks.append(_check("as_is_comps", "unavailable", "A current market range is unavailable."))
 
     if best:
-        envelope_ok = type(best.get("gross_area_sqft")) in (int, float) and best.get("gross_area_sqft", 0) > 0
+        envelope_ok = (type(best.get("gross_area_sqft")) in (int, float)
+                       and best.get("gross_area_sqft", 0) > 0
+                       and (report.get("zoning_potential") or {}).get("rule_basis_verified") is True)
         checks.append(_check("buildout", "supported" if envelope_ok else "error",
-            "A preliminary scenario has a positive modeled floor area." if envelope_ok
-            else "The redevelopment scenario has no valid modeled floor area."))
+            "A parcel-specific scenario is calculated from verified current zoning rules." if envelope_ok
+            else "A modeled floor area is not enough; verified parcel-specific zoning rules are required."))
         market_mix = [row for row in best.get("unit_mix", []) if row.get("market_units", 0) > 0]
         pricing_rows = [row for row in market_mix if row.get("price_per_sqft_low") is not None
                         or row.get("price_per_sqft_high") is not None]
@@ -77,7 +81,7 @@ def inspect_report(report):
         elif has_financials and not _financials_consistent(best):
             checks.append(_check("economics", "error", "Financial ranges or surplus arithmetic are internally inconsistent."))
         elif has_financials:
-            checks.append(_check("economics", "review", "Economics are modeled from comparable sales and screening cost assumptions; confirm project-specific inputs."))
+            checks.append(_check("economics", "supported", "Sellout and cost ranges reconcile to verified sales and disclosed cost assumptions."))
         else:
             checks.append(_check("economics", "unavailable", "Financial estimates are withheld because required pricing evidence is incomplete."))
     else:
@@ -85,7 +89,7 @@ def inspect_report(report):
         checks.append(_check("economics", "unavailable", "Financial estimates require a supported building scenario and pricing evidence."))
 
     states = {row["state"] for row in checks}
-    overall = "error" if "error" in states else "review_required" if "review" in states else "partial"
+    overall = "error" if "error" in states else "ready" if states <= {"supported"} else "review_required" if "review" in states else "partial"
     return {"status": overall, "checks": checks,
             "summary": f"{sum(row['state'] in ('review', 'error') for row in checks)} checks need review; unsupported sections remain unavailable."}
 
@@ -110,6 +114,36 @@ def guard_report(report):
         redevelopment["financial_estimates_withheld_reason"] = "Comparable-pricing or arithmetic validation failed."
     report["research_quality"] = quality
     return report
+
+
+def report_is_publishable(report):
+    """Return true only when every required research stage is verified and generated."""
+    quality = (report or {}).get("research_quality") or inspect_report(report)
+    if quality.get("status") != "ready":
+        return False
+    checks = {row.get("key"): row.get("state") for row in quality.get("checks", [])}
+    required = {"parcel_identity", "zoning", "site_constraints", "as_is_comps", "buildout", "economics"}
+    if not required <= checks.keys() or any(checks[key] != "supported" for key in required):
+        return False
+    valuation = (report.get("current_valuation") or {}).get("market_range") or {}
+    best = ((report.get("redevelopment") or {}).get("best") or {})
+    return bool(
+        valuation.get("comp_count", 0) >= 3
+        and best.get("sellout_low") is not None and best.get("sellout_high") is not None
+        and best.get("cost_low") is not None and best.get("cost_high") is not None
+        and best.get("cost_lines")
+    )
+
+
+def public_report(report):
+    """Keep every property-specific fact private until the report is complete."""
+    if report_is_publishable(report):
+        return {**report, "ready": True}
+    return {
+        "ready": False,
+        "status": "researching",
+        "message": "We’re collecting and checking parcel, zoning, sale, and project-cost evidence. The property report will appear after all required checks are complete.",
+    }
 
 
 def _financials_consistent(scenario):
