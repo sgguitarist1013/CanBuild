@@ -27,10 +27,12 @@ def test_as_is_estimate_uses_three_distinct_registry_confirmed_like_sales():
         comp("far", .8, 2000, 1900000),
     ]
     report = current_valuation(parcel, building, {"candidates": candidates})
-    assert report["market_range"] == {"low": 1000000, "high": 1200000, "comp_count": 3,
+    assert report["market_range"] == {"low": 1000000, "high": 1200000, "comp_count": 3, "confidence": "supported",
                                        "radius_miles": .55, "comp_addresses": ["a", "b", "c"]}
     assert report["assessment"] == {"amount": 900000, "fiscal_year": 2026}
-    assert current_valuation(parcel, building, {"candidates": candidates[:7]})["market_range"] is None
+    limited = current_valuation(parcel, building, {"candidates": candidates[:7]})["market_range"]
+    assert limited["comp_count"] == 2
+    assert limited["confidence"] == "limited"
     assert current_valuation(parcel, building, {"candidates": candidates, "truncated": True})["market_range"] is None
 
 
