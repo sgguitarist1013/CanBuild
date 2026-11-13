@@ -88,6 +88,28 @@ def inspect_report(report):
             "summary": f"{sum(row['state'] in ('review', 'error') for row in checks)} checks need review; unsupported sections remain unavailable."}
 
 
+def guard_report(report):
+    """Withhold suspect numeric estimates, retaining the report and audit trail."""
+    quality = inspect_report(report)
+    errors = {row["key"] for row in quality["checks"] if row["state"] == "error"}
+    if "as_is_comps" in errors:
+        valuation = report.get("current_valuation") or {}
+        valuation["market_range"] = None
+        valuation["market_range_withheld_reason"] = "Comp count or value-range validation failed."
+    if "economics" in errors:
+        redevelopment = report.get("redevelopment") or {}
+        for scenario in ([redevelopment.get("best")] + redevelopment.get("alternatives", [])):
+            if not scenario:
+                continue
+            for field in ("sellout_low", "sellout_high", "cost_low", "cost_high",
+                          "surplus_low", "surplus_high", "cost_lines"):
+                scenario[field] = [] if field == "cost_lines" else None
+        redevelopment["acquisition_proxy"] = None
+        redevelopment["financial_estimates_withheld_reason"] = "Comparable-pricing or arithmetic validation failed."
+    report["research_quality"] = quality
+    return report
+
+
 def _financials_consistent(scenario):
     """Check published ranges and the surplus arithmetic without rounding drift."""
     sellout_low, sellout_high = scenario.get("sellout_low"), scenario.get("sellout_high")
