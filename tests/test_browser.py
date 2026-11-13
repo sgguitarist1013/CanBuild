@@ -5,7 +5,7 @@ from playwright.sync_api import expect
 
 @pytest.fixture
 def property_record():
-    return {"address": "95 MAGAZINE ST, CAMBRIDGE, MA", "checked_at": "2026-11-06T12:00:00Z",
+    return {"ready": True, "address": "95 MAGAZINE ST, CAMBRIDGE, MA", "checked_at": "2026-11-06T12:00:00Z",
             "parcel": {"parcel_number": "test-95", "assessor_site_address": "95 MAGAZINE ST", "gis_area_sqft_approx": 4000},
             "existing_building": {"units": 2}, "verification": {}, "sources": [], "warnings": [],
             "zoning": None, "zoning_potential": None}
@@ -38,6 +38,19 @@ def test_partial_research_never_renders_any_property_details(page, app_url):
     expect(page.locator("#results")).to_be_hidden()
     expect(page.locator("body")).not_to_contain_text("229 MAIN ST")
     expect(page.locator("body")).not_to_contain_text("Estimate unavailable")
+
+
+def test_report_without_explicit_ready_flag_is_withheld(page, app_url):
+    page.route("**/api/property?*", lambda route: route.fulfill(json={
+        "address": "95 MAGAZINE ST, CAMBRIDGE, MA", "parcel": {"parcel_number": "private-fact"},
+    }))
+    page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
+    page.goto(app_url)
+    page.get_by_role("combobox").fill("95 Magazine St, Cambridge, MA")
+    page.get_by_role("button", name="Explore property").click()
+    expect(page.locator("#results")).to_be_hidden()
+    expect(page.locator("body")).not_to_contain_text("95 MAGAZINE ST")
+    expect(page.locator("body")).not_to_contain_text("private-fact")
 
 
 def test_research_quality_checks_are_visible_and_rendered_as_text(page, app_url, property_record):
