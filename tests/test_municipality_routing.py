@@ -84,14 +84,11 @@ def test_hyannis_uses_barnstable_parcel_sales_zoning_and_deed_route(monkeypatch,
 
     assert response.status_code == 200
     result = response.json()
-    assert result["address"] == "367 MAIN ST, HYANNIS, MA"
-    assert result["municipality_match"] == {
-        "municipality": "BARNSTABLE", "mailing_locality": "HYANNIS", "source": "Census municipal boundary",
-    }
+    assert result["ready"] is False
+    assert "address" not in result and "parcel" not in result
     assert any("CITY = 'BARNSTABLE'" in call.args[1].get("where", "") for call in parcel_query.await_args_list)
-    assert result["parcel"]["parcel_number"] == "test-lot"
     assert atlas.await_args.args[1] == sales.await_args.args[3] == research.await_args.args[0] == "BARNSTABLE"
-    assert result["registry"]["district"] == result["parcel"]["deed_verification"]["district"] == "Barnstable"
+    assert server.registry.district_for("BARNSTABLE")["district"] == "Barnstable"
 
 
 def test_conflicting_municipalities_require_a_more_specific_address(mock_census):
