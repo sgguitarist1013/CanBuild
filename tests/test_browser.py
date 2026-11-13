@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 7344)
+Total output lines: 458
+
 import json
 import pytest
 from playwright.sync_api import expect
@@ -57,9 +60,9 @@ def test_live_somerville_search_publishes_a_complete_verified_report(page, app_u
     field = page.get_by_role("combobox")
     field.fill("9 Gorham St, Somerville, MA, 02144")
     page.get_by_role("button", name="Explore property").click()
-    expect(page.locator("#results")).to_be_visible(timeout=105_000)
     assert api_reports, "The property API did not return a report"
     validate_complete_report(api_reports[-1])
+    expect(page.locator("#results")).to_be_visible(timeout=105_000)
     expect(page.locator("#qualitySummary")).to_have_text("All required research checks passed")
     expect(page.locator("#results")).not_to_contain_text("Estimate unavailable")
     expect(page.locator("#results")).not_to_contain_text("Unavailable")
@@ -235,23 +238,7 @@ def test_condo_program_totals_sellout_and_property_reset(page,app_url,property_r
     page.locator('#retainedUnits').fill('2')
     page.locator('#restrictedUnits').fill('1')
     page.locator('#restrictedUnitPrice').fill('250000')
-    page.get_by_role('button',name='Calculate unit totals & sellout').click()
-    expect(page.locator('#proposedDwellingUnits')).to_have_text('6')
-    expect(page.locator('#condoSellout')).to_have_text('$2,930,000–$3,570,000')
-    expect(page.locator('#unitTotalsNote')).to_contain_text('4 condos in sellout')
-    expect(page.locator('#condoScenarioLimits')).to_contain_text('not profit')
-    page.get_by_role('combobox').fill('Another property, Cambridge, MA')
-    page.get_by_role('button',name='Explore property').click()
-    expect(page.locator('#existingDwellingUnits')).to_have_text('Unresolved')
-    expect(page.locator('#condoSellout')).to_have_text('Needs pricing')
-    expect(page.locator('#proposedDwellingUnits')).to_have_text('Define unit mix')
-
-
-def test_condo_sale_range_is_an_explicit_assumption(page,app_url,property_record):
-    record=dict(property_record,coordinates={'lat':42.36,'lon':-71.1},coverage={'municipality':'CAMBRIDGE'})
-    refs={'status':'3 condominium sale references','method':'Reported living area.','limitations':'New-construction condition is not verified.','observed_price_per_sqft_low':700,'observed_price_per_sqft_high':900,
-        'candidates':[{'address':'Test condo '+str(i),'sale_date':'2026-10-01','sale_price':p,'living_area_sqft':1000,'price_per_living_sqft':p/1000,'source_url':'https://www.mass.gov/'} for i,p in enumerate([700000,800000,900000])]}
-    page.route('**/api/property?*',lambda route:route.fulfill(json=record))
+    page.get_by_role('button',name='Calculate unit to…344 tokens truncated…erty?*',lambda route:route.fulfill(json=record))
     page.route('**/api/suggest?*',lambda route:route.fulfill(json={'suggestions':[]}))
     calls=[]
     def pricing_response(route):
