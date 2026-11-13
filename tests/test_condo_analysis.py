@@ -75,8 +75,12 @@ def test_manual_condo_endpoint_keeps_deed_confirmed_references_without_pricing_r
     monkeypatch.setattr(server, "condo_sales", AsyncMock(return_value={
         "candidates": candidates, "observed_price_per_sqft_low": 700, "observed_price_per_sqft_high": 1000,
     }))
-    monkeypatch.setattr(server.registry, "check", lambda city, address, pair, price:
-                        {"status": "verified", "consideration": price} if price < 1000000 else {"status": "pending"})
+    def check_deed(city, address, pair, price, registered_reference=None):
+        if price < 1000000:
+            return {"status": "verified", "consideration": price}
+        return {"status": "pending"}
+
+    monkeypatch.setattr(server.registry, "check", check_deed)
     monkeypatch.setattr(server, "queue_registry_review", lambda *args: None)
 
     response = TestClient(app).get("/api/condo-sales", params={
