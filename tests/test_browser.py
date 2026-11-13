@@ -26,6 +26,20 @@ def test_search_displays_selected_property_and_withholds_estimates(page, app_url
     expect(page.locator("#go")).to_be_enabled()
 
 
+def test_partial_research_never_renders_any_property_details(page, app_url):
+    pending = {"ready": False, "status": "researching",
+               "message": "Collecting and checking evidence before publishing the report."}
+    page.route("**/api/property?*", lambda route: route.fulfill(json=pending))
+    page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
+    page.goto(app_url)
+    page.get_by_role("combobox").fill("229 Main St, Monson, MA 01057")
+    page.get_by_role("button", name="Explore property").click()
+    expect(page.locator("#status")).to_have_text(pending["message"])
+    expect(page.locator("#results")).to_be_hidden()
+    expect(page.locator("body")).not_to_contain_text("229 MAIN ST")
+    expect(page.locator("body")).not_to_contain_text("Estimate unavailable")
+
+
 def test_research_quality_checks_are_visible_and_rendered_as_text(page, app_url, property_record):
     record=dict(property_record,research_quality={
         'status':'review_required','checks':[{'key':'zoning','state':'review',
