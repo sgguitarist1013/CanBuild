@@ -1,14 +1,16 @@
 """Somerville Neighborhood Residence screening and assessor sale references."""
 from datetime import date, timedelta
-from math import asin, ceil, cos, floor, radians, sin, sqrt
+from math import acos, asin, ceil, cos, degrees, floor, log, pi, radians, sin, sqrt, tan
 
 import httpx
 
 import boston
 from ma_sales import candidate_point, use_group
+from parcel_engine import street_tokens
 from municipal_zoning import SOMERVILLE
 
 GIS = SOMERVILLE + "/ZoningByParcel/MapServer/0"
+MASSGIS_ROADS = "https://services1.arcgis.com/hGdibHYSPO59RG1h/ArcGIS/rest/services/MassGIS_Roads_Hosted_Feature_Layer/FeatureServer/0"
 NR_TYPES = "https://online.encodeplus.com/regs/somerville-ma/doc-view.aspx?pn=0&ajax=0&secid=470"
 NR_PURPOSE = "https://online.encodeplus.com/regs/somerville-ma/doc-view.aspx?pn=0&ajax=0&secid=467"
 NR_STANDARDS = "https://online.encodeplus.com/regs/somerville-ma/doc-view.aspx?pn=0&ajax=0&secid=475"
@@ -30,6 +32,51 @@ def assessor_class(building):
     return CODES.get(use_group(use))
 
 
+async def street_frontage(client, polygon, latitude, street_line):
+    """Fetch the named state road centerline near this parcel for frontage matching."""
+    if polygon is None or polygon.is_empty or not isinstance(latitude, (int, float)) or not street_line:
+        return {"status": "unavailable", "reason": "Parcel, latitude, or requested street is missing."}
+    requested_street = str(street_line).split(maxsplit=1)
+    if len(requested_street) != 2:
+        return {"status": "unavailable", "reason": "Requested street name could not be parsed."}
+    standard_name = " ".join(street_tokens(requested_street[1]))
+    safe_name = standard_name.replace("'", "''")
+    scale = 3.280839895 * cos(radians(latitude))
+    # The parcel is local ground feet; the MassGIS roads service is EPSG:3857 meters.
+    margin_m = 100 / scale
+    xmin, ymin, xmax, ymax = polygon.bounds
+    bounds = (xmin / scale - margin_m, ymin / scale - margin_m,
+              xmax / scale + margin_m, ymax / scale + margin_m)
+    response = await client.get(MASSGIS_ROADS + "/query", params={
+        "f": "json", "where": f"UPPER(ST_NAME_STD) = '{safe_name}'",
+        "geometry": ",".join(str(value) for value in bounds),
+        "geometryType": "esriGeometryEnvelope", "inSR": 3857, "outSR": 3857,
+        "spatialRel": "esriSpatialRelIntersects",
+        "outFields": "OBJECTID,ST_NAME_STD,ROAD_CLASS,MUNI_L,MUNI_R",
+        "returnGeometry": "true", "resultRecordCount": 100,
+    }, timeout=httpx.Timeout(8, connect=3))
+    response.raise_for_status()
+    data = response.json()
+    if (data.get("error") or data.get("exceededTransferLimit")
+            or not isinstance(data.get("features"), list)):
+        return {"status": "unavailable", "reason": "MassGIS road response was incomplete."}
+    from shapely.geometry import LineString
+    from shapely.ops import unary_union
+    roads = []
+    for feature in data["features"]:
+        attrs = feature.get("attributes") or {}
+        if (" ".join(street_tokens(attrs.get("ST_NAME_STD"))) != standard_name
+                or not {attrs.get("MUNI_L"), attrs.get("MUNI_R")} & {"SOMERVILLE"}):
+            continue
+        for path in (feature.get("geometry") or {}).get("paths", []):
+            if len(path) >= 2:
+                roads.append(LineString([(x * scale, y * scale) for x, y in path]))
+    if not roads:
+        return {"status": "unavailable", "reason": "No matching Somerville road centerline was returned."}
+    return {"status": "matched", "street_name": standard_name,
+            "geometry": unary_union(roads), "source_url": MASSGIS_ROADS}
+
+
 def parcel_area_sqft(feature):
     """Calculate a screening lot area from the selected parcel polygon geometry."""
     try:
@@ -48,7 +95,7 @@ def parcel_area_sqft(feature):
         return None
 
 
-def detached_triple_decker_fit(parcel, polygon, coordinates):
+def detached_triple_decker_fit(parcel, polygon, coordinates, frontage_road=None):
     """Calculate a conservative GIS fit for the adopted NR triple-decker envelope."""
     if polygon is None or polygon.is_empty or not coordinates:
         return {"status": "unavailable", "reason": "Selected parcel polygon or address point is missing."}
@@ -68,8 +115,14 @@ def detached_triple_decker_fit(parcel, polygon, coordinates):
     lon, lat = coordinates.get("lon"), coordinates.get("lat")
     if not isinstance(lon, (int, float)) or not isinstance(lat, (int, float)):
         return {"status": "unavailable", "reason": "Geocoded parcel point is missing."}
-    radius_ft = 6_371_008.8 * 3.280839895
-    point = Point(radius_ft * radians(lon) * cos(radians(lat)), radius_ft * radians(lat))
+    # Parcel geometry is transformed from EPSG:3857, whose sphere is 6,378,137 m.
+    radius_ft = 6_378_137 * 3.280839895
+    latitude = radians(lat)
+    scale = cos(latitude)
+    point = Point(
+        radius_ft * radians(lon) * scale,
+        radius_ft * log(tan(pi / 4 + latitude / 2)) * scale,
+    )
     sorted_edges = sorted(edges, key=lambda row: point.distance(row[1]))
     frontage_ft, front_line = sorted_edges[0]
     # A rectangle's frontage is the length of the nearest edge; lot depth is
@@ -82,6 +135,47 @@ def detached_triple_decker_fit(parcel, polygon, coordinates):
     frontage_distance = point.distance(front_line)
     next_distance = point.distance(sorted_edges[1][1])
     frontage_status = "address point near one parcel edge" if frontage_distance <= 20 and next_distance - frontage_distance >= 8 else "frontage edge ambiguous"
+    frontage_source = "address point"
+    if isinstance(frontage_road, dict) and frontage_road.get("status") == "matched":
+        from shapely.geometry import LineString
+        road = frontage_road.get("geometry")
+        road_segments = []
+        for part in ([road] if road and road.geom_type == "LineString" else list(road.geoms) if road else []):
+            coords = list(part.coords)
+            road_segments.extend(LineString([a, b]) for a, b in zip(coords, coords[1:]) if a != b)
+        frontage_candidates = []
+        for index, (length, edge) in enumerate(edges):
+            a, b = list(edge.coords)
+            ev = (b[0] - a[0], b[1] - a[1])
+            en = sqrt(ev[0] ** 2 + ev[1] ** 2)
+            for segment in road_segments:
+                c, d = list(segment.coords)
+                rv = (d[0] - c[0], d[1] - c[1])
+                rn = sqrt(rv[0] ** 2 + rv[1] ** 2)
+                if not en or not rn:
+                    continue
+                alignment = abs((ev[0] * rv[0] + ev[1] * rv[1]) / (en * rn))
+                angle = degrees(acos(min(1.0, alignment)))
+                if angle > 15:
+                    continue
+                distance = edge.distance(segment)
+                overlap = edge.intersection(segment.buffer(40)).length
+                frontage_candidates.append((distance, -overlap, index, length, angle, overlap))
+        frontage_candidates.sort()
+        if frontage_candidates:
+            best = frontage_candidates[0]
+            second_edge = next((candidate for candidate in frontage_candidates[1:] if candidate[2] != best[2]), None)
+            if (best[0] <= 80 and best[5] >= min(20, best[3] * .4)
+                    and (second_edge is None or second_edge[0] - best[0] >= 10)):
+                frontage_distance, _, edge_index, frontage_ft, road_angle, road_overlap = best
+                front_line = edges[edge_index][1]
+                depth_ft = next((length for i, (length, _) in enumerate(edges)
+                                 if abs(length - frontage_ft) > 1), depth_ft)
+                frontage_status = "matched named municipal road centerline"
+                frontage_source = frontage_road.get("street_name") or frontage_source
+                next_distance = second_edge[0] if second_edge else None
+            else:
+                frontage_status = "named road centerline does not identify one parcel edge"
 
     # Assume access from the front lot line and apply the triple-decker side
     # setback sum (12 ft), 10 ft front setback, and 20 ft rear setback. This
@@ -92,10 +186,13 @@ def detached_triple_decker_fit(parcel, polygon, coordinates):
     lot_area = parcel.get("polygon_area_sqft_approx") or parcel.get("gis_area_sqft_approx")
     coverage_cap = lot_area * .60 if isinstance(lot_area, (int, float)) else None
     footprint = min(max_width * max_depth, coverage_cap) if coverage_cap is not None else max_width * max_depth
-    if frontage_status != "address point near one parcel edge":
+    if frontage_status not in {"address point near one parcel edge", "matched named municipal road centerline"}:
         return {"status": "review", "reason": "The geocoder point does not establish which parcel edge is the street frontage.",
                 "lot_frontage_ft_approx": round(frontage_ft, 1), "lot_depth_ft_approx": round(depth_ft, 1),
-                "frontage_match": frontage_status}
+                "frontage_match": frontage_status,
+                "frontage_source": frontage_source,
+                "nearest_edge_distance_ft": round(frontage_distance, 1),
+                "next_edge_distance_ft": round(next_distance, 1) if next_distance is not None else None}
     if max_width < min_width or max_depth < min_depth or footprint < min_width * min_depth:
         return {"status": "no_fit_under_screened_standards", "reason": "The mapped parcel dimensions do not fit the minimum detached triple-decker massing under the screened setbacks.",
                 "lot_frontage_ft_approx": round(frontage_ft, 1), "lot_depth_ft_approx": round(depth_ft, 1),
@@ -104,13 +201,14 @@ def detached_triple_decker_fit(parcel, polygon, coordinates):
     gross_min = min(gross_max, round(min_width * min_depth * 3))
     return {"status": "dimensional_screen_pass", "lot_frontage_ft_approx": round(frontage_ft, 1),
             "lot_depth_ft_approx": round(depth_ft, 1), "frontage_match": frontage_status,
+            "frontage_source": frontage_source,
             "max_principal_footprint_sqft": round(footprint), "gross_area_low_sqft": gross_min,
             "gross_area_high_sqft": gross_max, "stories": 3,
-            "method": "Minimum rotated parcel rectangle; geocoder point used to infer frontage; front 10 ft, rear 20 ft, side setbacks totaling 12 ft, max 30 ft building width, max 50 ft building depth, three stories, and 60% lot-coverage cap.",
+            "method": "Minimum rotated parcel rectangle; named MassGIS road centerline matched to the frontage edge; front 10 ft, rear 20 ft, side setbacks totaling 12 ft, max 30 ft building width, max 50 ft building depth, three stories, and 60% lot-coverage cap.",
             "limitations": "Screening geometry, not a boundary survey or zoning determination. Assumes frontage-driveway side-setback standard, excludes an accessory cottage, existing accessory footprints, Green Score, easements, historic review, and the final design's principal entrance and component rules. Confirm with a survey and Somerville Planning before relying on it."}
 
 
-def buildout(parcel, building, polygon=None, coordinates=None):
+def buildout(parcel, building, polygon=None, coordinates=None, frontage_road=None):
     building = building or {}
     multi_house = assessor_class(building) == "1090"
     year = building.get("year_built")
@@ -124,10 +222,10 @@ def buildout(parcel, building, polygon=None, coordinates=None):
     lot_coverage_ceiling = round(lot_area * .60) if isinstance(lot_area, (int, float)) and lot_area > 0 else None
     triple_decker_max_footprint = min(30 * 50, lot_coverage_ceiling) if lot_coverage_ceiling else 30 * 50
     triple_decker_gross_ceiling = triple_decker_max_footprint * 3
-    site_fit = detached_triple_decker_fit(parcel, polygon, coordinates)
+    site_fit = detached_triple_decker_fit(parcel, polygon, coordinates, frontage_road)
     return {
         "title": "Neighborhood Residence buildout screen",
-        "summary": "The adopted NR ordinance permits a detached triple-decker without the former lot-depth, dwelling-unit-per-lot, or development-benefit conditions. A triple-decker accommodates two or three vertically stacked homes; site placement and demolition review remain separate checks.",
+        "summary": "The NR district allows principal-building types with one to three homes. The adopted ordinance permits a detached triple-decker without the former lot-depth, dwelling-unit-per-lot, or development-benefit conditions. A triple-decker accommodates two or three vertically stacked homes; site placement and demolition review remain separate checks.",
         "district_unit_range": "1–3 principal-building homes",
         "adopted_principal_building_scenario": {
             "building_type": "Detached triple-decker",
@@ -161,6 +259,7 @@ def buildout(parcel, building, polygon=None, coordinates=None):
                     {"name": "Somerville §3.1.17 · Development standards", "url": NR_STANDARDS},
                     {"name": "Somerville Ordinance 23-1198 · three units by right", "url": TRIPLE_DECKER_ORDINANCE},
                     {"name": "City-hosted 2026 NR triple-decker dimensional table", "url": TRIPLE_DECKER_DIMENSIONAL_EXAMPLE},
+                    {"name": "MassGIS Roads · named road centerlines", "url": MASSGIS_ROADS},
                     {"name": "City permit and demolition review", "url": DEMOLITION}],
     }
 
