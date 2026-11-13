@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from somerville_legislation import screen_current_amendments
+from somerville_legislation import screen_current_amendments, triple_decker_rules_current
 
 
 @pytest.mark.anyio
@@ -50,3 +50,22 @@ async def test_legistar_unavailable_never_certifies_current_zoning():
     assert result["status"] == "unavailable"
     assert result["complete"] is False
     assert result["current_rules_verified"] is False
+
+
+def test_triple_decker_rule_audit_ignores_unenacted_proposals_and_unrelated_sections():
+    audit = triple_decker_rules_current({
+        "complete": True,
+        "enacted_after_snapshot": [{"file": "26-0287", "sections": ["3.1.13"]}],
+        "pending": [{"file": "26-1337", "sections": ["3.1.17"]}],
+    })
+    assert audit["verified"] is True
+    assert [row["file"] for row in audit["pending_matters_not_applied"]] == ["26-1337"]
+
+
+def test_triple_decker_rule_audit_blocks_if_a_governing_section_changed():
+    audit = triple_decker_rules_current({
+        "complete": True,
+        "enacted_after_snapshot": [{"file": "26-9999", "sections": ["3.1.11"]}],
+        "pending": [],
+    })
+    assert audit["verified"] is False
