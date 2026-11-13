@@ -17,7 +17,7 @@ def test_health_and_home():
 
 
 @pytest.mark.anyio
-async def test_new_build_sales_research_does_not_wait_for_a_buildout(monkeypatch):
+async def test_condo_market_sales_research_does_not_wait_for_a_buildout(monkeypatch):
     calls = []
 
     async def fake_condo_sales(client, lon, lat, city, **kwargs):
@@ -30,8 +30,7 @@ async def test_new_build_sales_research_does_not_wait_for_a_buildout(monkeypatch
     )
     assert result["status"] == "screened"
     assert calls == [(-71.12, 42.40, "SOMERVILLE", {
-        "boston_pid": None, "min_year_built": 2022,
-        "radius_miles": 3, "new_build_only": True,
+        "boston_pid": None, "radius_miles": 3, "new_build_only": False,
     })]
 
 
