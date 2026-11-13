@@ -68,8 +68,8 @@ def test_incomplete_public_report_contains_no_property_facts_or_partial_estimate
               "current_valuation": {"market_range": None}, "research_quality": {"status": "partial"}}
     assert public_report(report) == {
         "ready": False,
-        "status": "researching",
-        "message": "This search did not produce all required verified sources, so no property details are shown. Try again after the source checks are available.",
+        "status": "incomplete",
+        "message": "We couldn't complete the verified research needed for this address. No property details were published. Select Retry search to check again.",
     }
 
 
