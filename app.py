@@ -128,7 +128,7 @@ async def search_zoning_sources(city, district, registered_url, section_urls=())
 
 
 async def new_build_sales_research(client, municipality, coordinates, boston_pid=None):
-    """Collect finished-condo sale evidence for every matched parcel, before buildout."""
+    """Collect condo market references before buildout, even when no scenario exists."""
     city = str(municipality or "").upper()
     if not city or not coordinates:
         return None
@@ -140,8 +140,7 @@ async def new_build_sales_research(client, municipality, coordinates, boston_pid
     async with asyncio.timeout(13):
         return await condo_sales(
             client, coordinates["lon"], coordinates["lat"], city,
-            boston_pid=boston_pid, min_year_built=datetime.now().year - 4,
-            radius_miles=3, new_build_only=True,
+            boston_pid=boston_pid, radius_miles=3, new_build_only=False,
         )
 
 
@@ -248,6 +247,7 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
     address=normalize_address(re.sub(r",\s*(?:USA|United States(?: of America)?)\s*$", "", address, flags=re.I))
     if not re.search(r"\b(MA|Massachusetts)\b",address,re.I): address=address.rstrip(", ") + ", MA"
     result={"query":address,"checked_at":now(),"parcel_candidates":[],"sales_research":{"status":"Sales connector not configured for this municipality","candidates":[]},"address":None,"coordinates":None,"parcel":None,"zoning":None,"existing_building":None,"zoning_potential":None,"recommendations":[],"constraints":[],"constraints_screen_complete":False,"zoning_review":None,"verification":{"address":"unverified","parcel":"unverified","assessor":"not matched","zoning":"unverified","amendments":"not checked"},"warnings":[],"sources":[SOURCES[0].copy()]}
+    development_registry_pending = []
     async with httpx.AsyncClient(timeout=13,follow_redirects=True) as client:
         somerville_street = municipal_zoning.somerville_street(address)
         geocoding_failed = False
@@ -438,11 +438,11 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
             try:
                 development_sales = await development_sales_task
                 development_sales = registry.sale_report(parts.get("city"), development_sales)
-                pending.extend(development_sales.get("pending_registry_review", []))
-                result["completed_project_sales_research"] = development_sales
+                development_registry_pending.extend(development_sales.get("pending_registry_review", []))
+                result["condo_market_sales_research"] = development_sales
             except (TimeoutError, httpx.HTTPError, ValueError, TypeError):
-                result["completed_project_sales_research"] = {
-                    "status": "Completed-project sale research could not be verified during this search.",
+                result["condo_market_sales_research"] = {
+                    "status": "Local condo sale research could not be verified during this search.",
                     "candidates": [], "source_url": None,
                 }
     zoning = result.get('zoning') or {}
@@ -463,6 +463,7 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
     sale_report = registry.sale_report(city, result["sales_research"])
     result["sales_research"] = sale_report
     pending = list(sale_report.get("pending_registry_review", []))
+    pending.extend(development_registry_pending)
     if result.get("parcel") and result["parcel"].get("assessor_account_count", 1) == 1:
         parcel = result["parcel"]
         transfer = parcel.get("last_transfer") or {}
@@ -503,7 +504,33 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
         result['recommendations'].append({'title':'Review mapped site constraints','reason':', '.join(hits)+' intersect the selected parcel in the listed municipal layers.',
             'next_step':'Review each mapped layer and its governing rules with the municipality before planning excavation, foundations, demolition or a larger building. A map intersection is a screening flag, not a permit determination.','confidence':'Mapped screening intersection'})
     if result.get("parcel") and city.upper() == "SOMERVILLE" and district == "NR" and not historical:
-        result["buildout_review"] = somerville.buildout(result["parcel"], result.get("existing_building"))
+        result["buildout_review"] = somerville.buildout(
+            result["parcel"], result.get("existing_building"), polygon,
+            result.get("coordinates"),
+        )
+        rule_audit = somerville_legislation.triple_decker_rules_current(
+            result.get("zoning_amendment_research"),
+        )
+        result["buildout_review"]["rule_audit"] = rule_audit
+        site_fit = result["buildout_review"].get("parcel_dimensional_screen") or {}
+        if rule_audit.get("verified"):
+            result["zoning"]["current_rules_verified"] = True
+            result["verification"]["zoning"] = "NR triple-decker dimensional rules checked against adopted ordinance and later enacted amendments"
+        if rule_audit.get("verified") and site_fit.get("status") == "dimensional_screen_pass":
+            result["zoning_potential"] = {
+                "scenario": "NR detached triple-decker · by-right principal-building screen",
+                "gross_area_low_sqft": site_fit["gross_area_low_sqft"],
+                "gross_area_high_sqft": site_fit["gross_area_high_sqft"],
+                "stories": site_fit["stories"],
+                "height_ft": None,
+                "principal_units_low": 2,
+                "principal_units_high": 3,
+                "rule_basis_verified": True,
+                "confidence": "Parcel GIS dimensions screened against adopted Somerville NR standards; confirm with a boundary survey and permit review.",
+                "method": site_fit["method"],
+                "limitations": site_fit["limitations"],
+                "sources": result["buildout_review"].get("sources", []),
+            }
     parcel = result.get("parcel") or {}
     multi_account = parcel.get("assessor_account_count", 1) > 1
     condo_account = ma_sales.use_group((result.get("existing_building") or {}).get("use_description")) == "condominium"
@@ -552,9 +579,12 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
     else:
         result["recommendations"].append({"title":"Review the preliminary zoning scenario","reason":"A district-specific scenario is available, subject to its stated assumptions and limitations.","next_step":"Have the city review a current survey and proposed footprint before paying for design work.","confidence":result["zoning_potential"].get("confidence")})
     market_range = (result.get("current_valuation") or {}).get("market_range")
-    result["redevelopment"] = analyze_redevelopment(result.get("zoning_potential"), result.get("existing_building"))
+    result["redevelopment"] = analyze_redevelopment(
+        result.get("zoning_potential"), result.get("existing_building"),
+        municipality=city,
+    )
     if result["redevelopment"].get("best"):
-        references = result.get("completed_project_sales_research")
+        references = result.get("condo_market_sales_research")
         candidates = (references or {}).get("candidates", [])
         subject_parcel = (result.get("parcel") or {}).get("parcel_number")
         comparable = [candidate for candidate in candidates if candidate.get("project_key") != subject_parcel]
@@ -562,6 +592,7 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
             result["zoning_potential"], result.get("existing_building"),
             comparable if references and not references.get("truncated") else [],
             current_market_range=market_range,
+            municipality=city,
         )
         result["redevelopment"]["sale_references"] = references
     if scenario := result["redevelopment"].get("best"):
