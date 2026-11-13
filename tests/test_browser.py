@@ -44,22 +44,15 @@ def test_partial_research_never_renders_any_property_details(page, app_url):
 
 def test_live_somerville_search_publishes_a_complete_verified_report(page, app_url):
     """Release gate: this exact live search must finish before CI can pass."""
-    api_reports = []
-    def capture(response):
-        if "/api/property?" in response.url:
-            try:
-                api_reports.append(response.json())
-            except (ValueError, json.JSONDecodeError):
-                pass
-
-    page.on("response", capture)
     page.set_default_timeout(105_000)
     page.goto(app_url)
     field = page.get_by_role("combobox")
     field.fill("9 Gorham St, Somerville, MA, 02144")
-    page.get_by_role("button", name="Explore property").click()
-    assert api_reports, "The property API did not return a report"
-    validate_complete_report(api_reports[-1])
+    with page.expect_response(lambda response: "/api/property?" in response.url, timeout=115_000) as api_response:
+        page.get_by_role("button", name="Explore property").click()
+    response = api_response.value
+    assert response.ok, f"Property API returned HTTP {response.status}"
+    validate_complete_report(response.json())
     expect(page.locator("#results")).to_be_visible(timeout=105_000)
     expect(page.locator("#qualitySummary")).to_have_text("All required research checks passed")
     expect(page.locator("#results")).not_to_contain_text("Estimate unavailable")
