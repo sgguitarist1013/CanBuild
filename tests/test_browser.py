@@ -35,7 +35,7 @@ def test_research_quality_checks_are_visible_and_rendered_as_text(page, app_url,
     page.goto(app_url)
     page.get_by_role('combobox').fill('95 Magazine St, Cambridge, MA')
     page.get_by_role('button',name='Explore property').click()
-    expect(page.locator('#qualitySummary')).to_have_text('1 research checks need review')
+    expect(page.locator('#qualitySummary')).to_have_text('1 research check needs review')
     expect(page.locator('#qualityChecks')).to_contain_text('zoning: Historical district needs current confirmation.')
     assert page.locator('#qualityChecks script').count()==0
 
