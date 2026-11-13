@@ -26,6 +26,20 @@ def test_search_displays_selected_property_and_withholds_estimates(page, app_url
     expect(page.locator("#go")).to_be_enabled()
 
 
+def test_research_quality_checks_are_visible_and_rendered_as_text(page, app_url, property_record):
+    record=dict(property_record,research_quality={
+        'status':'review_required','checks':[{'key':'zoning','state':'review',
+        'message':'Historical district needs current confirmation.'}]})
+    page.route('**/api/property?*',lambda route:route.fulfill(json=record))
+    page.route('**/api/suggest?*',lambda route:route.fulfill(json={'suggestions':[]}))
+    page.goto(app_url)
+    page.get_by_role('combobox').fill('95 Magazine St, Cambridge, MA')
+    page.get_by_role('button',name='Explore property').click()
+    expect(page.locator('#qualitySummary')).to_have_text('1 research check needs review')
+    expect(page.locator('#qualityChecks')).to_contain_text('zoning: Historical district needs current confirmation.')
+    assert page.locator('#qualityChecks script').count()==0
+
+
 def test_keyboard_search_works_without_a_suggestion(page, app_url, property_record):
     calls = []
     def respond(route):
