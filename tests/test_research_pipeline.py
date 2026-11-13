@@ -71,7 +71,7 @@ def test_incomplete_public_report_contains_no_property_facts_or_partial_estimate
     assert public_report(report) == {
         "ready": False,
         "status": "incomplete",
-        "message": "We couldn't complete the verified research needed for this address. No property details were published. Select Retry search to check again.",
+        "message": "We couldn't complete the verified research needed for this address. No property details are shown. Select Explore property to try again.",
     }
 
 

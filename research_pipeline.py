@@ -142,7 +142,7 @@ def public_report(report):
     return {
         "ready": False,
         "status": "incomplete",
-        "message": "We couldn't complete the verified research needed for this address. No property details were published. Select Retry search to check again.",
+        "message": "We couldn't complete the verified research needed for this address. No property details are shown. Select Explore property to try again.",
     }
 
 

@@ -87,5 +87,5 @@ def test_property_endpoint_combines_local_zoning_research_and_registry_check(mon
     assert response.json() == {
         "ready": False,
         "status": "incomplete",
-        "message": "We couldn't complete the verified research needed for this address. No property details were published. Select Retry search to check again.",
+        "message": "We couldn't complete the verified research needed for this address. No property details are shown. Select Explore property to try again.",
     }
