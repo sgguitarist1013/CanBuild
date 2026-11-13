@@ -127,6 +127,24 @@ async def search_zoning_sources(city, district, registered_url, section_urls=())
         return None
 
 
+async def new_build_sales_research(client, municipality, coordinates, boston_pid=None):
+    """Collect finished-condo sale evidence for every matched parcel, before buildout."""
+    city = str(municipality or "").upper()
+    if not city or not coordinates:
+        return None
+    if city == "CAMBRIDGE":
+        async with asyncio.timeout(13):
+            return await cambridge_new_build_sales(
+                client, lon=coordinates["lon"], lat=coordinates["lat"],
+            )
+    async with asyncio.timeout(13):
+        return await condo_sales(
+            client, coordinates["lon"], coordinates["lat"], city,
+            boston_pid=boston_pid, min_year_built=datetime.now().year - 4,
+            radius_miles=3, new_build_only=True,
+        )
+
+
 @app.post('/api/condo-scenario')
 def condo_scenario(program:CondoProgram):
     return analyze_program(program)
@@ -355,6 +373,13 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
             sales_task = asyncio.create_task(ma_sales.search(
                 client, lon, lat, parts.get("city"), result["parcel"], result.get("existing_building"),
             ))
+        development_sales_task = None
+        if result.get("parcel") and result.get("coordinates"):
+            city = parts.get("city") or ""
+            selected_pid = (result.get("parcel") or {}).get("parcel_number") if city.upper() == "BOSTON" else None
+            development_sales_task = asyncio.create_task(new_build_sales_research(
+                client, city, result["coordinates"], selected_pid,
+            ))
         atlas_task = asyncio.create_task(municipal_zoning.multifamily_screen(
             client, parts.get("city") or "", polygon, lat, (result.get("parcel") or {}).get("loc_id"),
         ))
@@ -409,6 +434,17 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
                     result["parcel"]["last_transfer"] = subject_transfer
             except (httpx.HTTPError, ValueError, TypeError):
                 result["sales_research"] = {"status": "Comparable sales service temporarily unavailable", "candidates": []}
+        if development_sales_task:
+            try:
+                development_sales = await development_sales_task
+                development_sales = registry.sale_report(parts.get("city"), development_sales)
+                pending.extend(development_sales.get("pending_registry_review", []))
+                result["completed_project_sales_research"] = development_sales
+            except (TimeoutError, httpx.HTTPError, ValueError, TypeError):
+                result["completed_project_sales_research"] = {
+                    "status": "Completed-project sale research could not be verified during this search.",
+                    "candidates": [], "source_url": None,
+                }
     zoning = result.get('zoning') or {}
     historical = zoning.get('historical_reference')
     district = zoning.get('district')
@@ -518,21 +554,7 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
     market_range = (result.get("current_valuation") or {}).get("market_range")
     result["redevelopment"] = analyze_redevelopment(result.get("zoning_potential"), result.get("existing_building"))
     if result["redevelopment"].get("best"):
-        references = None
-        try:
-            async with asyncio.timeout(13), httpx.AsyncClient(timeout=12, follow_redirects=True) as client:
-                if city.upper() == "CAMBRIDGE":
-                    coords = result["coordinates"]
-                    references = await cambridge_new_build_sales(client, lon=coords["lon"], lat=coords["lat"])
-                else:
-                    coords = result["coordinates"]
-                    references = await condo_sales(client, coords["lon"], coords["lat"], city,
-                        min_year_built=datetime.now().year - 4, radius_miles=3, new_build_only=True)
-        except (TimeoutError, httpx.HTTPError, ValueError, TypeError):
-            pass
-        if references:
-            references = registry.sale_report(city, references)
-            pending.extend(references.get("pending_registry_review", []))
+        references = result.get("completed_project_sales_research")
         candidates = (references or {}).get("candidates", [])
         subject_parcel = (result.get("parcel") or {}).get("parcel_number")
         comparable = [candidate for candidate in candidates if candidate.get("project_key") != subject_parcel]
