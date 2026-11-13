@@ -13,6 +13,7 @@ TERMINAL = {"ordained", "withdrawn", "placed on file", "denied", "rejected"}
 MATTER_TYPES = ("mayor's request", "zoning ordinance", "ordinance", "public communication")
 SECTION = re.compile(r"(?<!\d)(\d{1,2}(?:\.\d{1,2}){1,2})(?!\d)")
 NR_PREFIXES = ("2.1.", "2.3.", "2.4.", "3.1.", "3.2.", "8.1.", "9.2.", "10.", "12.1.", "14.1.")
+NR_TRIPLE_DECKER_RULE_SECTIONS = {"2.4.2", "3.1.6", "3.1.11", "3.1.17", "3.1.18"}
 
 
 def _after_snapshot(row):
@@ -102,3 +103,26 @@ async def screen_current_amendments(client, *, today=None):
                     if pending or enacted else
                     "No later relevant ordinance was found, but this check does not verify the current code text."),
     }
+
+
+def triple_decker_rules_current(amendment_screen):
+    """Check whether later enacted matters altered the NR dimensional rule bundle.
+
+    Pending proposals are reported to the user, but do not replace the enacted
+    ordinance until they are ordained and effective.
+    """
+    if not isinstance(amendment_screen, dict) or amendment_screen.get("complete") is not True:
+        return {"verified": False, "reason": "Official amendment history was not completely checked."}
+    changed = []
+    for record in amendment_screen.get("enacted_after_snapshot", []):
+        sections = set(record.get("sections") or [])
+        if sections & NR_TRIPLE_DECKER_RULE_SECTIONS:
+            changed.append(record)
+    if changed:
+        return {"verified": False, "reason": "A later enacted ordinance touches a governing dimensional section; its effective text needs comparison.",
+                "relevant_enacted_matters": changed}
+    pending = [record for record in amendment_screen.get("pending", [])
+               if set(record.get("sections") or []) & NR_TRIPLE_DECKER_RULE_SECTIONS]
+    return {"verified": True, "reason": "No later enacted matter changed the checked NR triple-decker dimensional sections.",
+            "pending_matters_not_applied": pending,
+            "checked_sections": sorted(NR_TRIPLE_DECKER_RULE_SECTIONS)}
