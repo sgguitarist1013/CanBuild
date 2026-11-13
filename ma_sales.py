@@ -35,10 +35,11 @@ async def search(client, lon, lat, city, parcel, building, limit=5):
     if not city or not parcel:
         return {"status":"A verified parcel and municipality are required","candidates":[],"source_url":SOURCE}
     area=(building or {}).get("residential_area_sqft") or (building or {}).get("building_area_sqft")
+    subject_lot = (parcel or {}).get("gis_area_sqft_approx")
     subject_use=(building or {}).get("use_description")
     since=(date.today()-timedelta(days=1096)).strftime("%Y%m%d")
     params={"f":"json","where":f"CITY = '{str(city).replace(chr(39),chr(39)*2)}' AND LS_PRICE > 0 AND LS_DATE >= '{since}'",
-        "geometry":f"{lon},{lat}","geometryType":"esriGeometryPoint","inSR":4326,"distance":1609,
+        "geometry":f"{lon},{lat}","geometryType":"esriGeometryPoint","inSR":4326,"distance":4828,
         "units":"esriSRUnit_Meter","spatialRel":"esriSpatialRelIntersects",
         "outFields":"OBJECTID,MAP_PAR_ID,LOC_ID,SITE_ADDR,CITY,LS_DATE,LS_PRICE,LS_BOOK,LS_PAGE,BLD_AREA,RES_AREA,UNITS,YEAR_BUILT,USE_DESC,LOT_SIZE,LOT_UNITS",
         "returnGeometry":"true","returnCentroid":"true","outSR":4326,"resultRecordCount":500,"orderByFields":"LS_DATE DESC"}
@@ -65,29 +66,40 @@ async def search(client, lon, lat, city, parcel, building, limit=5):
         # Compare like measurements: living area to living area, gross to gross.
         living=bool((building or {}).get('residential_area_sqft'))
         size=a.get('RES_AREA') if living else a.get('BLD_AREA')
-        if not isinstance(area,(int,float)) or area<=0 or not isinstance(size,(int,float)) or size<=0 or not .5 <= size/area <= 2: continue
+        if not isinstance(area,(int,float)) or area<=0 or not isinstance(size,(int,float)) or size<=0 or abs(size-area) > .15*area: continue
         use=a.get("USE_DESC")
-        if not subject_use or not use or use_group(subject_use)!=use_group(use): continue
-        if use_group(subject_use)=='nonresidential' and str(subject_use).upper()!=str(use).upper(): continue
+        if not residential(subject_use) or not residential(use): continue
+        lot_size=a.get("LOT_SIZE")
+        lot_units=str(a.get("LOT_UNITS") or "").strip().upper()
+        if isinstance(lot_size,(int,float)) and lot_size>0:
+            lot_area_sqft=round(lot_size*43560) if lot_units in {"A","AC","ACRE","ACRES"} else round(lot_size) if lot_units in {"S","SF","SQFT","SQ FT","SQUARE FEET","SQUARE FOOT"} else None
+        else:
+            lot_area_sqft=None
+        if isinstance(subject_lot,(int,float)) and subject_lot>0:
+            if not isinstance(lot_area_sqft,(int,float)) or abs(lot_area_sqft-subject_lot) > .30*subject_lot: continue
         xy=candidate_point(feature)
         if xy is None: continue
         phi=math.radians(lat); dphi=math.radians(xy[1]-lat); dl=math.radians(xy[0]-lon)
         distance=3958.8*2*math.asin(math.sqrt(math.sin(dphi/2)**2+math.cos(phi)*math.cos(math.radians(xy[1]))*math.sin(dl/2)**2))
-        if distance>1: continue
+        if distance>3: continue
         seen.add(identifier)
         candidates.append({"address":a.get("SITE_ADDR"),"sale_date":f"{sold[:4]}-{sold[4:6]}-{sold[6:]}",
             "sale_price":int(price),"gross_area_sqft":a.get('BLD_AREA'),"price_per_gross_sqft":round(price/a['BLD_AREA']) if a.get('BLD_AREA') and a['BLD_AREA']>0 else None,
             "comparison_area_sqft":size,"comparison_area_basis":"residential living area" if living else "assessor building area",
             "price_per_comparison_sqft":round(price/size),"arm_length_status":"Not verified; assessor last-sale record only",
             "units":a.get("UNITS"),"use_description":use,"parcel_number":a.get("MAP_PAR_ID"),
+            "lot_area_sqft":lot_area_sqft,"bedrooms_reported":a.get("BEDROOMS"),"bathrooms_reported":a.get("FULL_BATHS"),
             "record_reference":("Book "+str(a.get("LS_BOOK"))+" page "+str(a.get("LS_PAGE"))) if a.get("LS_BOOK") and a.get("LS_PAGE") else None,
             "distance_miles":round(distance,2),"source_url":SOURCE,"source_name":"MassGIS assessor-reported last sale"})
     candidates.sort(key=lambda c:(c["distance_miles"],-int(c["sale_date"].replace("-",""))))
-    selected=candidates[:limit]; prices=sorted(x["sale_price"] for x in selected)
+    nearby=[candidate for candidate in candidates if candidate["distance_miles"]<=.5]
+    expanded=len(nearby)<3
+    selected=(nearby if not expanded else candidates)[:max(3,limit)]; prices=sorted(x["sale_price"] for x in selected)
     median=(prices[len(prices)//2] if len(prices)%2 else round((prices[len(prices)//2-1]+prices[len(prices)//2])/2)) if prices else None
     return {"status":f"{len(selected)} local assessor-reported sale candidate(s)" if selected else "No sufficiently similar recent local sale records found",
         "candidates":selected,"median_sale_price":median,"count":len(selected),"source_url":SOURCE,
-        "checked_at":datetime.now(timezone.utc).isoformat(),
+        "checked_at":datetime.now(timezone.utc).isoformat(),"expanded":expanded,
+        "radius_miles":max([c["distance_miles"] for c in selected],default=.5),
         "truncated":bool(data.get('exceededTransferLimit')),
-        "method":"Within 1 mile by parcel centroid, same municipality and property-use group, reported sale in past 3 years, comparable area 50–200% using the same measurement basis; nearest candidates first.",
+        "method":"Same municipality; begin within 0.5 mile and expand up to 3 miles to find at least three candidates. Require area within 15%; when both lot areas are available, require lot area within 30%. Exact assessor class is not required. Bedroom and bathroom records are included when published and remain required for a qualified valuation.",
         "limitations":"MassGIS assessor-reported last-sale data can be stale, bundled, non-arm's-length, or have differing property measurements. Confirm deed, transaction conditions, condition, units and adjustments before relying on these candidates. This is not an appraisal."}
