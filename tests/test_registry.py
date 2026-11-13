@@ -83,5 +83,8 @@ def test_property_endpoint_combines_local_zoning_research_and_registry_check(mon
     monkeypatch.setattr(server, "search_zoning_sources", AsyncMock(return_value={"status": "Sources located"}))
     response = TestClient(server.app).get("/api/property", params={"address": "9 Gorham St, Somerville, MA"})
     assert response.status_code == 200
-    assert response.json()["on_demand_zoning_research"]["status"] == "Sources located"
-    assert response.json()["parcel"]["deed_verification"]["status"] == "verified"
+    assert response.json() == {
+        "ready": False,
+        "status": "researching",
+        "message": "We’re collecting and checking parcel, zoning, sale, and project-cost evidence. The property report will appear after all required checks are complete.",
+    }
