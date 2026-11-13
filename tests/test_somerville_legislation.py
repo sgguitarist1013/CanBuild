@@ -22,6 +22,10 @@ async def test_legistar_change_screen_finds_enacted_and_pending_zoning_changes()
                      "MatterTitle": "Transit-oriented zoning bonuses for additional affordable housing",
                      "MatterTypeName": "Mayor's Request", "MatterStatusName": "Sent for Discussion",
                      "MatterIntroDate": "2026-01-08T00:00:00"},
+                    {"MatterId": 5, "MatterGuid": "resident-zoning", "MatterFile": "26-0287",
+                     "MatterTitle": "26 registered voters requesting a Zoning Text Amendment to amend sections 3.1.8c, 3.1.9c, and 3.1.10c",
+                     "MatterTypeName": "Public Communication", "MatterStatusName": "Ordained",
+                     "MatterEnactmentDate": "2026-06-25T00:00:00"},
                     {"MatterId": 4, "MatterGuid": "other-guid", "MatterFile": "26-0004",
                      "MatterTitle": "Approve city contract expenditure", "MatterTypeName": "Mayor's Request",
                      "MatterStatusName": "Approved", "MatterIntroDate": "2026-01-08T00:00:00"}]
@@ -31,10 +35,10 @@ async def test_legistar_change_screen_finds_enacted_and_pending_zoning_changes()
         result = await screen_current_amendments(client)
     assert result["complete"] is True
     assert result["current_rules_verified"] is False
-    assert result["enacted_after_snapshot_count"] == 1
+    assert result["enacted_after_snapshot_count"] == 2
     assert result["pending_count"] == 2
     assert {row["file"] for row in result["enacted_after_snapshot"] + result["pending"]} == {
-        "25-0999", "26-1336", "26-0061",
+        "25-0999", "26-1336", "26-0061", "26-0287",
     }
     assert result["pending"][0]["source_url"].startswith("https://somervillema.legistar.com/")
 

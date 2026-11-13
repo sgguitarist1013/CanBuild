@@ -10,6 +10,7 @@ MATTERS = "https://webapi.legistar.com/v1/somervillema/matters"
 LEGISLATION = "https://somervillema.legistar.com/LegislationDetail.aspx"
 SNAPSHOT_AMENDMENTS_THROUGH = date(2025, 5, 22)
 TERMINAL = {"ordained", "withdrawn", "placed on file", "denied", "rejected"}
+MATTER_TYPES = ("mayor's request", "zoning ordinance", "ordinance", "public communication")
 SECTION = re.compile(r"(?<!\d)(\d{1,2}(?:\.\d{1,2}){1,2})(?!\d)")
 NR_PREFIXES = ("2.1.", "2.3.", "2.4.", "3.1.", "3.2.", "8.1.", "9.2.", "10.", "12.1.", "14.1.")
 
@@ -29,7 +30,7 @@ def _after_snapshot(row):
 def _relevant(row):
     title = str(row.get("MatterTitle") or "")
     matter_type = str(row.get("MatterTypeName") or "").lower()
-    if not any(kind in matter_type for kind in ("mayor's request", "zoning ordinance", "ordinance")):
+    if not any(kind in matter_type for kind in MATTER_TYPES):
         return False
     if any(section.startswith(NR_PREFIXES) for section in SECTION.findall(title)):
         return True
@@ -65,7 +66,7 @@ async def screen_current_amendments(client, *, today=None):
     async def fetch(year):
         prefix = f"{year:02d}-"
         response = await client.get(MATTERS, params={
-            "$filter": f"startswith(MatterFile,'{prefix}') and (MatterTypeName eq 'Mayor''s Request' or MatterTypeName eq 'Zoning Ordinance' or MatterTypeName eq 'Ordinance')",
+            "$filter": f"startswith(MatterFile,'{prefix}') and (MatterTypeName eq 'Mayor''s Request' or MatterTypeName eq 'Zoning Ordinance' or MatterTypeName eq 'Ordinance' or MatterTypeName eq 'Public Communication')",
             "$orderby": "MatterLastModifiedUtc desc", "$top": 1000,
             "$select": "MatterId,MatterGuid,MatterFile,MatterTitle,MatterTypeName,MatterStatusName,MatterEnactmentDate,MatterPassedDate,MatterIntroDate,MatterLastModifiedUtc",
         }, timeout=httpx.Timeout(8, connect=3))
