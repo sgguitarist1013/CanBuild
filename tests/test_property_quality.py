@@ -128,6 +128,22 @@ async def test_somerville_uses_current_city_map_host_and_safe_rule_links():
     assert result['zoning']['district']=='MR4'
     assert result['zoning']['source_updated_at']=='2025-06-17'
     assert len(result['zoning']['regulatory_links'])==1
+    assert result['constraints_screen_complete'] is True
+
+
+@pytest.mark.anyio
+async def test_constraint_screen_is_incomplete_if_any_configured_layer_fails():
+    parcel = to_ground(box(0, 0, 100, 100), 42)
+    def handler(request):
+        if '/ZoningByParcel/' in str(request.url):
+            return httpx.Response(200, json={'features': []})
+        if '/LocalHistoricDistricts/' in str(request.url):
+            return httpx.Response(503)
+        return httpx.Response(200, json={'features': []})
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await lookup(client, 'SOMERVILLE', parcel, 42, {})
+    assert result['constraints_screen_complete'] is False
+    assert any(row['status'] == 'unavailable' for row in result['constraints'])
 
 
 @pytest.mark.anyio

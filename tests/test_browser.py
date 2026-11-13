@@ -1,6 +1,7 @@
 import json
 import pytest
 from playwright.sync_api import expect
+from release_gate import validate_complete_report
 
 
 @pytest.fixture
@@ -40,6 +41,30 @@ def test_partial_research_never_renders_any_property_details(page, app_url):
     expect(page.locator("body")).not_to_contain_text("Estimate unavailable")
 
 
+def test_live_somerville_search_publishes_a_complete_verified_report(page, app_url):
+    """Release gate: this exact live search must finish before CI can pass."""
+    api_reports = []
+    def capture(response):
+        if "/api/property?" in response.url:
+            try:
+                api_reports.append(response.json())
+            except (ValueError, json.JSONDecodeError):
+                pass
+
+    page.on("response", capture)
+    page.set_default_timeout(105_000)
+    page.goto(app_url)
+    field = page.get_by_role("combobox")
+    field.fill("9 Gorham St, Somerville, MA, 02144")
+    page.get_by_role("button", name="Explore property").click()
+    expect(page.locator("#results")).to_be_visible(timeout=105_000)
+    assert api_reports, "The property API did not return a report"
+    validate_complete_report(api_reports[-1])
+    expect(page.locator("#qualitySummary")).to_have_text("All required research checks passed")
+    expect(page.locator("#results")).not_to_contain_text("Estimate unavailable")
+    expect(page.locator("#results")).not_to_contain_text("Unavailable")
+
+
 def test_report_without_explicit_ready_flag_is_withheld(page, app_url):
     page.route("**/api/property?*", lambda route: route.fulfill(json={
         "address": "95 MAGAZINE ST, CAMBRIDGE, MA", "parcel": {"parcel_number": "private-fact"},
@@ -65,6 +90,20 @@ def test_research_quality_checks_are_visible_and_rendered_as_text(page, app_url,
     expect(page.locator('#qualitySummary')).to_have_text('1 research check needs review')
     expect(page.locator('#qualityChecks')).to_contain_text('zoning: Historical district needs current confirmation.')
     assert page.locator('#qualityChecks script').count()==0
+
+
+def test_complete_research_quality_is_not_labeled_partial(page, app_url, property_record):
+    record = dict(property_record, research_quality={
+        "status": "ready",
+        "checks": [{"key": key, "state": "supported", "message": "Verified."} for key in
+                   ("parcel_identity", "zoning", "site_constraints", "as_is_comps", "buildout", "economics")],
+    })
+    page.route("**/api/property?*", lambda route: route.fulfill(json=record))
+    page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
+    page.goto(app_url)
+    page.get_by_role("combobox").fill("95 Magazine St, Cambridge, MA")
+    page.get_by_role("button", name="Explore property").click()
+    expect(page.locator("#qualitySummary")).to_have_text("All required research checks passed")
 
 
 def test_keyboard_search_works_without_a_suggestion(page, app_url, property_record):

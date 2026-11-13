@@ -416,7 +416,8 @@ async def somerville_parcel(client, address):
 async def lookup(client, city, parcel_geometry, latitude, parcel):
     city = str(city).upper()
     if parcel_geometry is None or city not in LOCAL_CONNECTORS:
-        return {"coverage": coverage(city), "zoning": None, "constraints": [], "review": None}
+        return {"coverage": coverage(city), "zoning": None, "constraints": [],
+                "constraints_screen_complete": False, "review": None}
     snapshot = SNAPSHOT_CONNECTORS.get(city)
     if snapshot:
         base, field, updated = snapshot["base"], snapshot["field"], snapshot["updated"]
@@ -531,7 +532,12 @@ async def lookup(client, city, parcel_geometry, latitude, parcel):
                 ('Permitted building types','Permitted_Building_Types'),('Allowed uses','Use_Provisions'),('Development standards','Development_Standards'),
                 ('Standards and measurements','Standards_and_Measurements'),('Parking and mobility','Parking_and_Mobility'))
                 if isinstance(attrs.get(key),str) and urlparse(attrs[key]).scheme=='https' and urlparse(attrs[key]).hostname=='online.encodeplus.com']
+    constraints_screen_complete = bool(screens) and len(constraints) == len(screens) and all(
+        item.get("status") in {"mapped intersection", "no mapped intersection"} and item.get("source_url")
+        for item in constraints
+    )
     return {"coverage": coverage(city), "zoning": zoning, "constraints": constraints,
+        "constraints_screen_complete": constraints_screen_complete,
         "status": error or ("Parcel crosses zoning boundaries or GIS coverage is incomplete" if matches and not district else "No zoning polygon matched" if not district else "Municipal GIS snapshot matched"),
         "review": reference_review(district, parcel) if city == "CHICOPEE" else None}
 

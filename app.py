@@ -228,7 +228,7 @@ def municipality_for_match(match):
 async def property_lookup(address:str=Query(min_length=5,max_length=240), boston_pid:str|None=Query(default=None,pattern=r"^\d{10}$")):
     address=normalize_address(re.sub(r",\s*(?:USA|United States(?: of America)?)\s*$", "", address, flags=re.I))
     if not re.search(r"\b(MA|Massachusetts)\b",address,re.I): address=address.rstrip(", ") + ", MA"
-    result={"query":address,"checked_at":now(),"parcel_candidates":[],"sales_research":{"status":"Sales connector not configured for this municipality","candidates":[]},"address":None,"coordinates":None,"parcel":None,"zoning":None,"existing_building":None,"zoning_potential":None,"recommendations":[],"constraints":[],"zoning_review":None,"verification":{"address":"unverified","parcel":"unverified","assessor":"not matched","zoning":"unverified","amendments":"not checked"},"warnings":[],"sources":[SOURCES[0].copy()]}
+    result={"query":address,"checked_at":now(),"parcel_candidates":[],"sales_research":{"status":"Sales connector not configured for this municipality","candidates":[]},"address":None,"coordinates":None,"parcel":None,"zoning":None,"existing_building":None,"zoning_potential":None,"recommendations":[],"constraints":[],"constraints_screen_complete":False,"zoning_review":None,"verification":{"address":"unverified","parcel":"unverified","assessor":"not matched","zoning":"unverified","amendments":"not checked"},"warnings":[],"sources":[SOURCES[0].copy()]}
     async with httpx.AsyncClient(timeout=13,follow_redirects=True) as client:
         somerville_street = municipal_zoning.somerville_street(address)
         geocoding_failed = False
@@ -372,6 +372,7 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
             except (httpx.HTTPError,ValueError,TypeError):
                 local={'zoning':None,'constraints':[],'review':None,'status':'Municipal spatial response could not be validated'}
             result['zoning']=local['zoning'];result['constraints']=local['constraints'];result['zoning_review']=local['review']
+            result['constraints_screen_complete']=local.get('constraints_screen_complete') is True
             if local['zoning']:
                 result['verification']['zoning'] = (
                     'Historical zoning map match; current zoning unverified' if local['zoning'].get('historical_reference')
