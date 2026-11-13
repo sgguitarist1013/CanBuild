@@ -89,3 +89,14 @@ def test_guard_withholds_inconsistent_market_range_and_financial_values():
         assert guarded["redevelopment"]["best"][field] is None
     assert guarded["redevelopment"]["best"]["gross_area_sqft"] == 12000
     assert guarded["research_quality"]["status"] == "error"
+
+
+def test_malformed_nonfinite_and_string_financial_values_are_withheld_safely():
+    quality = inspect_report({"redevelopment": {"best": {
+        "gross_area_sqft": 12000, "sellout_low": 1_000_000, "sellout_high": 1_200_000,
+        "cost_low": 900_000, "cost_high": float("nan"), "surplus_low": "unknown",
+        "unit_mix": [{"market_units": 1, "price_per_sqft_low": 700,
+                      "price_per_sqft_high": 900, "comparable_projects": 3}],
+    }}})
+    economics = next(check for check in quality["checks"] if check["key"] == "economics")
+    assert economics["state"] == "error"
