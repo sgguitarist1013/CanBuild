@@ -18,6 +18,7 @@ from parcel_engine import resolve_parcel, conceptual_massing, normalize_address,
 import boston
 import ma_sales
 import municipal_zoning
+import somerville_legislation
 from data_quality import review_building
 from condo_analysis import CondoProgram, analyze_program, cambridge_new_build_sales, condo_sales
 from monitoring import configure_monitoring
@@ -389,7 +390,16 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
             district = None if matched_zoning.get("historical_reference") else matched_zoning.get("district")
             zoning_sources = municipal_zoning.REGISTRY.get(city.upper(), {})
             sections = zoning_research.somerville_section_urls(matched_zoning.get("regulatory_links", ())) if city.upper() == "SOMERVILLE" else ()
-            result["on_demand_zoning_research"] = await search_zoning_sources(city, district, zoning_sources.get("code_url"), sections)
+            source_research = asyncio.create_task(search_zoning_sources(city, district, zoning_sources.get("code_url"), sections))
+            amendments = asyncio.create_task(somerville_legislation.screen_current_amendments(client)) if city.upper() == "SOMERVILLE" else None
+            result["on_demand_zoning_research"] = await source_research
+            if amendments:
+                amendment_result = await amendments
+                result["zoning_amendment_research"] = amendment_result
+                result["verification"]["amendments"] = (
+                    "Official Somerville amendment history checked; current ordinance text still needs comparison"
+                    if amendment_result.get("complete") else "Official Somerville amendment history unavailable"
+                )
         result["multifamily_screen"] = await atlas_task
         if sales_task:
             try:

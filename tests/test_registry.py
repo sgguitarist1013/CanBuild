@@ -81,6 +81,7 @@ def test_property_endpoint_combines_local_zoning_research_and_registry_check(mon
     monkeypatch.setattr(server.somerville, "subject_building", AsyncMock(return_value=None))
     monkeypatch.setattr(server.somerville, "sales", AsyncMock(return_value={"candidates": []}))
     monkeypatch.setattr(server, "search_zoning_sources", AsyncMock(return_value={"status": "Sources located"}))
+    monkeypatch.setattr(server.somerville_legislation, "screen_current_amendments", AsyncMock(return_value={"complete": True, "current_rules_verified": False}))
     response = TestClient(server.app).get("/api/property", params={"address": "9 Gorham St, Somerville, MA"})
     assert response.status_code == 200
     assert response.json() == {
