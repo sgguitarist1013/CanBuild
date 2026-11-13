@@ -7,7 +7,7 @@ def test_as_is_estimate_uses_three_distinct_registry_confirmed_like_sales():
                 "bedrooms_reported": 3, "bathrooms_reported": 2}
     base = {
         "comparison_label": "Same assessor class", "arm_length_status": "City sale flag Q",
-        "comparison_area_basis": "assessor living area", "bedrooms_reported": 3, "bathrooms_reported": 2,
+        "comparison_area_basis": "residential living area", "bedrooms_reported": 3, "bathrooms_reported": 2,
     }
 
     def comp(identifier, distance, size, price, status="verified", **changes):
