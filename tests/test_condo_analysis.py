@@ -107,6 +107,7 @@ async def test_somerville_condo_references_use_city_sales_layer_and_deed_fields(
             'BOOK_PAGE': f'{80000+i}/1', 'YEAR': 2025,
         }})
     rows.append({'attributes': {**rows[0]['attributes'], 'MBL': 'bad', 'TaxParMBL': 'different'}})
+    rows.append({'attributes': {**rows[0]['attributes'], 'OBJECTID': 5, 'AddNum': None}})
 
     def handler(request):
         assert request.url.path.endswith('/MapServer/0/query')
