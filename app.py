@@ -22,7 +22,7 @@ from data_quality import review_building
 from condo_analysis import CondoProgram, analyze_program, cambridge_new_build_sales, condo_sales
 from monitoring import configure_monitoring
 from redevelopment import analyze_redevelopment
-from research_pipeline import guard_report
+from research_pipeline import guard_report, public_report
 import zoning_research
 import somerville
 import registry
@@ -538,7 +538,7 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
         )
     if pending:
         queue_registry_review(city, pending)
-    return guard_report(result)
+    return public_report(guard_report(result))
 
 # Regression tests run with every deployment. A failing suite prevents startup.
 @app.on_event("startup")
