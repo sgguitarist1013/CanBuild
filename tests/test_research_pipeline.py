@@ -1,4 +1,4 @@
-from research_pipeline import inspect_report
+from research_pipeline import guard_report, inspect_report
 
 
 def test_unmatched_property_keeps_all_property_specific_sections_unavailable():
@@ -69,3 +69,23 @@ def test_surplus_must_reconcile_to_sellout_and_cost_ranges():
     }}})
     economics = next(check for check in quality["checks"] if check["key"] == "economics")
     assert economics["state"] == "error"
+
+
+def test_guard_withholds_inconsistent_market_range_and_financial_values():
+    report = {
+        "current_valuation": {"market_range": {"low": 2_000_000, "high": 1_000_000, "comp_count": 1}},
+        "redevelopment": {"best": {
+            "gross_area_sqft": 12000, "sellout_low": 1_000_000, "sellout_high": 1_200_000,
+            "cost_low": 900_000, "cost_high": 1_100_000,
+            "surplus_low": 250_000, "surplus_high": 300_000, "cost_lines": [{"name": "Costs"}],
+            "unit_mix": [{"market_units": 1, "price_per_sqft_low": 700,
+                          "price_per_sqft_high": 900, "comparable_projects": 3}],
+        }},
+    }
+    guarded = guard_report(report)
+    assert guarded["current_valuation"]["market_range"] is None
+    assert guarded["current_valuation"]["market_range_withheld_reason"]
+    for field in ("sellout_low", "sellout_high", "cost_low", "cost_high", "surplus_low", "surplus_high"):
+        assert guarded["redevelopment"]["best"][field] is None
+    assert guarded["redevelopment"]["best"]["gross_area_sqft"] == 12000
+    assert guarded["research_quality"]["status"] == "error"
