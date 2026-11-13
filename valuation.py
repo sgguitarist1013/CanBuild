@@ -15,7 +15,7 @@ def current_valuation(parcel, building, sales):
         if positive_number(assessment) else None,
     }
     area = building.get("residential_area_sqft") or building.get("building_area_sqft")
-    area_basis = "residential living area" if building.get("residential_area_sqft") else "assessor building area"
+    living_area_subject = bool(building.get("residential_area_sqft"))
     beds = building.get("bedrooms_reported")
     baths = building.get("bathrooms_reported")
     if sales.get("truncated") or not all(positive_number(n) for n in (area, beds, baths)):
@@ -33,7 +33,7 @@ def current_valuation(parcel, building, sales):
         lot_match = (not positive_number(subject_lot) or
                      (positive_number(lot_area) and abs(lot_area-subject_lot) <= .30*subject_lot))
         if (deed.get("status") == "verified" and price == sale.get("sale_price")
-                and sale.get("comparison_area_basis") == area_basis
+                and _same_area_basis(sale.get("comparison_area_basis"), living_area_subject)
                 and sale.get("parcel_number") and sale["parcel_number"] != parcel.get("parcel_number")
                 and all(positive_number(n) for n in (size, sale_beds, sale_baths, price))
                 and type(distance) in (int, float) and isfinite(distance) and distance >= 0
@@ -56,3 +56,13 @@ def current_valuation(parcel, building, sales):
             "comp_addresses": [sale["address"] for sale in selected],
         }
     return result
+
+
+def _same_area_basis(label, living_area_subject):
+    """Compare measurement meaning across municipal feeds' different labels."""
+    text = str(label or "").casefold()
+    sale_is_living = "living" in text or "residential area" in text
+    sale_is_gross = "gross" in text or "building area" in text
+    if living_area_subject:
+        return sale_is_living
+    return sale_is_gross and not sale_is_living
