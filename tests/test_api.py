@@ -2,6 +2,7 @@ from unittest.mock import patch
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+import app as app_module
 from app import app
 
 client = TestClient(app)
@@ -13,6 +14,25 @@ def test_health_and_home():
     html = client.get('/').text.strip()
     assert html.endswith('</html>')
     assert html.count('</html>') == 1
+
+
+@pytest.mark.anyio
+async def test_new_build_sales_research_does_not_wait_for_a_buildout(monkeypatch):
+    calls = []
+
+    async def fake_condo_sales(client, lon, lat, city, **kwargs):
+        calls.append((lon, lat, city, kwargs))
+        return {"status": "screened", "candidates": []}
+
+    monkeypatch.setattr(app_module, "condo_sales", fake_condo_sales)
+    result = await app_module.new_build_sales_research(
+        object(), "Somerville", {"lon": -71.12, "lat": 42.40},
+    )
+    assert result["status"] == "screened"
+    assert calls == [(-71.12, 42.40, "SOMERVILLE", {
+        "boston_pid": None, "min_year_built": 2022,
+        "radius_miles": 3, "new_build_only": True,
+    })]
 
 
 def test_development_zoning_rollout_is_explicit():
