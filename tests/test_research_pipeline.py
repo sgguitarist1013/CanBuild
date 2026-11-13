@@ -69,7 +69,7 @@ def test_incomplete_public_report_contains_no_property_facts_or_partial_estimate
     assert public_report(report) == {
         "ready": False,
         "status": "researching",
-        "message": "We’re collecting and checking parcel, zoning, sale, and project-cost evidence. The property report will appear after all required checks are complete.",
+        "message": "This search did not produce all required verified sources, so no property details are shown. Try again after the source checks are available.",
     }
 
 

@@ -142,7 +142,7 @@ def public_report(report):
     return {
         "ready": False,
         "status": "researching",
-        "message": "We’re collecting and checking parcel, zoning, sale, and project-cost evidence. The property report will appear after all required checks are complete.",
+        "message": "This search did not produce all required verified sources, so no property details are shown. Try again after the source checks are available.",
     }
 
 
