@@ -12,6 +12,8 @@ GIS = SOMERVILLE + "/ZoningByParcel/MapServer/0"
 NR_TYPES = "https://online.encodeplus.com/regs/somerville-ma/doc-view.aspx?pn=0&ajax=0&secid=470"
 NR_PURPOSE = "https://online.encodeplus.com/regs/somerville-ma/doc-view.aspx?pn=0&ajax=0&secid=467"
 NR_STANDARDS = "https://online.encodeplus.com/regs/somerville-ma/doc-view.aspx?pn=0&ajax=0&secid=475"
+TRIPLE_DECKER_ORDINANCE = "https://somervillema.legistar.com/LegislationDetail.aspx?GUID=EA73CB27-5E5D-41C9-B862-53E1E2FA3F43&ID=6366045"
+TRIPLE_DECKER_DIMENSIONAL_EXAMPLE = "https://s3.amazonaws.com/somervillema-live/s3fs-public/2026-03/17-Hudson-Somerville-MAAB-Variance-Submittal-1-28-26-1.pdf"
 DEMOLITION = "https://www.somervillema.gov/citizenserve"
 CLASSES = {"1010": "Single-family", "1040": "Two-family", "1050": "Three-family",
            "1090": "Multiple houses on one parcel"}
@@ -46,7 +48,69 @@ def parcel_area_sqft(feature):
         return None
 
 
-def buildout(parcel, building):
+def detached_triple_decker_fit(parcel, polygon, coordinates):
+    """Calculate a conservative GIS fit for the adopted NR triple-decker envelope."""
+    if polygon is None or polygon.is_empty or not coordinates:
+        return {"status": "unavailable", "reason": "Selected parcel polygon or address point is missing."}
+    rectangle = polygon.minimum_rotated_rectangle
+    vertices = list(rectangle.exterior.coords)
+    edges = []
+    for start, end in zip(vertices, vertices[1:]):
+        from shapely.geometry import LineString
+        line = LineString([start, end])
+        edges.append((line.length, line))
+    if len(edges) != 4 or min(length for length, _ in edges) <= 0:
+        return {"status": "unavailable", "reason": "Parcel polygon does not support a stable dimension screen."}
+
+    # Parcel geometry is projected in local feet. Convert the geocoded point to
+    # the same local projection and use its nearest rectangle edge as frontage.
+    from shapely.geometry import Point
+    lon, lat = coordinates.get("lon"), coordinates.get("lat")
+    if not isinstance(lon, (int, float)) or not isinstance(lat, (int, float)):
+        return {"status": "unavailable", "reason": "Geocoded parcel point is missing."}
+    radius_ft = 6_371_008.8 * 3.280839895
+    point = Point(radius_ft * radians(lon) * cos(radians(lat)), radius_ft * radians(lat))
+    sorted_edges = sorted(edges, key=lambda row: point.distance(row[1]))
+    frontage_ft, front_line = sorted_edges[0]
+    # A rectangle's frontage is the length of the nearest edge; lot depth is
+    # the perpendicular edge length. Do not sort these by size: corner lots
+    # often have a shorter frontage than depth.
+    other_dimensions = [length for length, _ in edges if abs(length - frontage_ft) > 1]
+    if not other_dimensions:
+        return {"status": "unavailable", "reason": "Parcel dimensions are too irregular to infer frontage from the address point."}
+    depth_ft = other_dimensions[0]
+    frontage_distance = point.distance(front_line)
+    next_distance = point.distance(sorted_edges[1][1])
+    frontage_status = "address point near one parcel edge" if frontage_distance <= 20 and next_distance - frontage_distance >= 8 else "frontage edge ambiguous"
+
+    # Assume access from the front lot line and apply the triple-decker side
+    # setback sum (12 ft), 10 ft front setback, and 20 ft rear setback. This
+    # intentionally excludes accessory buildings and does not infer a survey.
+    max_width = min(30.0, frontage_ft - 12.0)
+    max_depth = min(50.0, depth_ft - 30.0)
+    min_width, min_depth = 24.0, 36.0
+    lot_area = parcel.get("polygon_area_sqft_approx") or parcel.get("gis_area_sqft_approx")
+    coverage_cap = lot_area * .60 if isinstance(lot_area, (int, float)) else None
+    footprint = min(max_width * max_depth, coverage_cap) if coverage_cap is not None else max_width * max_depth
+    if frontage_status != "address point near one parcel edge":
+        return {"status": "review", "reason": "The geocoder point does not establish which parcel edge is the street frontage.",
+                "lot_frontage_ft_approx": round(frontage_ft, 1), "lot_depth_ft_approx": round(depth_ft, 1),
+                "frontage_match": frontage_status}
+    if max_width < min_width or max_depth < min_depth or footprint < min_width * min_depth:
+        return {"status": "no_fit_under_screened_standards", "reason": "The mapped parcel dimensions do not fit the minimum detached triple-decker massing under the screened setbacks.",
+                "lot_frontage_ft_approx": round(frontage_ft, 1), "lot_depth_ft_approx": round(depth_ft, 1),
+                "frontage_match": frontage_status}
+    gross_max = round(footprint * 3)
+    gross_min = min(gross_max, round(min_width * min_depth * 3))
+    return {"status": "dimensional_screen_pass", "lot_frontage_ft_approx": round(frontage_ft, 1),
+            "lot_depth_ft_approx": round(depth_ft, 1), "frontage_match": frontage_status,
+            "max_principal_footprint_sqft": round(footprint), "gross_area_low_sqft": gross_min,
+            "gross_area_high_sqft": gross_max, "stories": 3,
+            "method": "Minimum rotated parcel rectangle; geocoder point used to infer frontage; front 10 ft, rear 20 ft, side setbacks totaling 12 ft, max 30 ft building width, max 50 ft building depth, three stories, and 60% lot-coverage cap.",
+            "limitations": "Screening geometry, not a boundary survey or zoning determination. Assumes frontage-driveway side-setback standard, excludes an accessory cottage, existing accessory footprints, Green Score, easements, historic review, and the final design's principal entrance and component rules. Confirm with a survey and Somerville Planning before relying on it."}
+
+
+def buildout(parcel, building, polygon=None, coordinates=None):
     building = building or {}
     multi_house = assessor_class(building) == "1090"
     year = building.get("year_built")
@@ -56,10 +120,37 @@ def buildout(parcel, building):
         checks.insert(0, "The assessor reports multiple houses. Verify the legal building and dwelling count and any nonconforming rights before assuming what can be retained or replaced.")
     if isinstance(year, int) and 0 < year <= date.today().year - 75:
         checks.append("The reported construction year triggers an age check for demolition review. Confirm the building age and review process with Somerville before assuming demolition.")
+    lot_area = parcel.get("gis_area_sqft_approx")
+    lot_coverage_ceiling = round(lot_area * .60) if isinstance(lot_area, (int, float)) and lot_area > 0 else None
+    triple_decker_max_footprint = min(30 * 50, lot_coverage_ceiling) if lot_coverage_ceiling else 30 * 50
+    triple_decker_gross_ceiling = triple_decker_max_footprint * 3
+    site_fit = detached_triple_decker_fit(parcel, polygon, coordinates)
     return {
         "title": "Neighborhood Residence buildout screen",
-        "summary": "Screen a detached house, duplex, or detached triple-decker. Somerville’s NR code describes one to three homes in the principal residential building, depending on the building type.",
+        "summary": "The adopted NR ordinance permits a detached triple-decker without the former lot-depth, dwelling-unit-per-lot, or development-benefit conditions. A triple-decker accommodates two or three vertically stacked homes; site placement and demolition review remain separate checks.",
         "district_unit_range": "1–3 principal-building homes",
+        "adopted_principal_building_scenario": {
+            "building_type": "Detached triple-decker",
+            "principal_units_low": 2,
+            "principal_units_high": 3,
+            "maximum_stories": 3,
+            "building_width_ft": {"min": 24, "max": 30},
+            "building_depth_ft": {"min": 36, "max": 50},
+            "lot_coverage_max_pct": 60,
+            "maximum_principal_footprint_sqft_before_setbacks": triple_decker_max_footprint,
+            "maximum_principal_gross_area_sqft_before_setbacks": triple_decker_gross_ceiling,
+            "setbacks_ft": {"primary_front_min": 10, "primary_front_max": 20,
+                "side_min": 3, "side_sum_min_with_front_driveway": 12, "rear_min": 20},
+            "green_score_minimum": 0.35,
+            "site_fit": "Not confirmed: frontage, driveway access, parcel-specific setback geometry, building separation, Green Score, and current survey must be checked before treating the dimensional ceiling as a feasible footprint.",
+        },
+        "parcel_dimensional_screen": site_fit,
+        "adopted_rule_basis": {
+            "status": "adopted ordinance and current city dimensional submittal reviewed",
+            "ordinance_enactment_date": "2023-11-21",
+            "ordinance_effect": "Detached triple-decker permitted without conditions; lot-depth, units-per-lot and development-benefit conditions repealed.",
+            "dimensional_reference": "Somerville NR detached triple-decker standards, corroborated by a City-hosted 2026 zoning dimensional table.",
+        },
         "lot_area_sqft": parcel.get("gis_area_sqft_approx"),
         "existing_units": building.get("units"),
         "checks": checks,
@@ -68,6 +159,8 @@ def buildout(parcel, building):
         "sources": [{"name": "Somerville §3.1.3 · NR purpose", "url": NR_PURPOSE},
                     {"name": "Somerville §3.1.6 · NR building types", "url": NR_TYPES},
                     {"name": "Somerville §3.1.17 · Development standards", "url": NR_STANDARDS},
+                    {"name": "Somerville Ordinance 23-1198 · three units by right", "url": TRIPLE_DECKER_ORDINANCE},
+                    {"name": "City-hosted 2026 NR triple-decker dimensional table", "url": TRIPLE_DECKER_DIMENSIONAL_EXAMPLE},
                     {"name": "City permit and demolition review", "url": DEMOLITION}],
     }
 
