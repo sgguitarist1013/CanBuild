@@ -55,6 +55,7 @@
 <p id="potentialAnswer" class="answer"></p>
 <p id="propertyFactsSummary" class="small muted" hidden></p>
 <p id="deedSummary" class="small muted" hidden></p>
+<details id="qualityDetails" class="small"><summary id="qualitySummary">Research quality checks</summary><ul id="qualityChecks"></ul></details>
 <p id="salePreview" class="small" hidden></p>
 <div class="grid estimate-summary" id="redevelopmentMetrics" hidden>
 <div class="metric"><small>Proposed units</small><strong id="autoUnits"></strong></div>
@@ -381,6 +382,7 @@ function render(d) {
   $('results').querySelectorAll('details[open]').forEach(el=>{el.open=false});
   $('address').value=d.address||$('address').value;
   $('propertyAddress').textContent=d.assessor_address||d.address||'Property report';
+  renderQuality(d.research_quality);
   $('sourceStatus').textContent='Checked '+new Date(d.checked_at).toLocaleString()+' · Assessor FY '+(d.parcel?.fiscal_year||'not available');
   $('verification').textContent='Parcel: '+(d.verification?.parcel||'not verified')+' · Assessor: '+(d.verification?.assessor||'not verified')+' · Zoning: '+(d.verification?.zoning||'not verified');
   const e=d.existing_building||{};
@@ -419,6 +421,20 @@ function render(d) {
   $('status').textContent=d.parcel?'Property records loaded.':d.parcel_candidates?.length?'Address found. Confirm the parcel below.':'Parcel match unavailable.';
   $('propertyAddress').focus({preventScroll:true});
   $('results').scrollIntoView({block:'start'});
+}
+
+function renderQuality(quality){
+  const checks=quality?.checks||[];
+  const needsReview=checks.filter(c=>c.state==='review'||c.state==='error').length;
+  $('qualitySummary').textContent=quality
+    ? (quality.status==='error'?'Accuracy check found an issue':needsReview?needsReview+(needsReview===1?' research check needs review':' research checks need review'):'Research coverage is partial')
+    : 'Research quality checks unavailable';
+  $('qualityChecks').replaceChildren();
+  for(const check of checks){
+    const li=document.createElement('li');
+    li.textContent=check.key.replaceAll('_',' ')+': '+check.message;
+    $('qualityChecks').append(li);
+  }
 }
 function permitLink(container, label, url) {
   if(!url?.startsWith('https://')) return;
