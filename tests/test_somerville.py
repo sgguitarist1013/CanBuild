@@ -15,7 +15,12 @@ def feature(pid, dx, **fields):
     record = {"MBL": pid, "TaxParMBL": pid, "PCC": "1040", "SALE_VALID": "Q", "SALE_PRICE": 1300000,
               "SALE_DATE": "2026-09-08", "LIVING_AREA": 2600, "BEDROOM": 5, "BATH": 2,
               "AddNum": "14", "Street": "TEST ST"}
-    return {"attributes": {**record, **fields}, "centroid": {"x": -71.125 + dx, "y": 42.4}}
+    lon, lat = -71.125 + dx, 42.4
+    half_lon, half_lat = .00013, .000097
+    return {"attributes": {**record, **fields}, "centroid": {"x": lon, "y": lat},
+            "geometry": {"rings": [[[lon-half_lon,lat-half_lat],[lon+half_lon,lat-half_lat],
+                                      [lon+half_lon,lat+half_lat],[lon-half_lon,lat+half_lat],
+                                      [lon-half_lon,lat-half_lat]]]}}
 
 
 def test_nr_screen_uses_real_lot_area_and_distinguishes_unit_options_from_yield():
