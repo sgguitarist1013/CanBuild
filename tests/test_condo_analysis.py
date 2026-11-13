@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import httpx
 import pytest
@@ -92,6 +92,36 @@ async def test_condo_references_do_not_use_whole_building_or_future_sales():
     assert result['observed_price_per_sqft_low']==700
     assert result['observed_price_per_sqft_high']==900
     assert all(not c['new_construction_verified'] and not c['arm_length_verified'] for c in result['candidates'])
+
+
+@pytest.mark.anyio
+async def test_somerville_condo_references_use_city_sales_layer_and_deed_fields():
+    sold = int((datetime.now(timezone.utc) - timedelta(days=10)).timestamp() * 1000)
+    rows = []
+    for i, price in enumerate((700000, 800000, 900000), start=1):
+        rows.append({'attributes': {
+            'OBJECTID': i, 'MBL': f'{i}-A-1', 'TaxParMBL': f'{i}-A-1',
+            'AddNum': str(i * 10), 'Street': 'Example St', 'PCC': '1020',
+            'SALE_VALID': 'Q', 'SALE_PRICE': price, 'SALE_DATE': sold,
+            'LIVING_AREA': 1000, 'BEDROOM': 2, 'BATH': 1,
+            'BOOK_PAGE': f'{80000+i}/1', 'YEAR': 2025,
+        }})
+    rows.append({'attributes': {**rows[0]['attributes'], 'MBL': 'bad', 'TaxParMBL': 'different'}})
+
+    def handler(request):
+        assert request.url.path.endswith('/MapServer/0/query')
+        assert "PCC = '1020'" in request.url.params['where']
+        assert "SALE_VALID = 'Q'" in request.url.params['where']
+        assert request.url.params['distance'] == '1609'
+        return httpx.Response(200, json={'features': rows})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await condo_sales(client, -71.1, 42.3, 'SOMERVILLE', radius_miles=1)
+    assert len(result['candidates']) == 3
+    assert result['observed_price_per_sqft_low'] == 700
+    assert result['observed_price_per_sqft_high'] == 900
+    assert result['candidates'][0]['record_reference'] == '80001/1'
+    assert result['candidates'][0]['source_url'].endswith('/MapServer/0')
 
 
 @pytest.mark.anyio
