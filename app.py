@@ -247,6 +247,7 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
     address=normalize_address(re.sub(r",\s*(?:USA|United States(?: of America)?)\s*$", "", address, flags=re.I))
     if not re.search(r"\b(MA|Massachusetts)\b",address,re.I): address=address.rstrip(", ") + ", MA"
     result={"query":address,"checked_at":now(),"parcel_candidates":[],"sales_research":{"status":"Sales connector not configured for this municipality","candidates":[]},"address":None,"coordinates":None,"parcel":None,"zoning":None,"existing_building":None,"zoning_potential":None,"recommendations":[],"constraints":[],"constraints_screen_complete":False,"zoning_review":None,"verification":{"address":"unverified","parcel":"unverified","assessor":"not matched","zoning":"unverified","amendments":"not checked"},"warnings":[],"sources":[SOURCES[0].copy()]}
+    frontage_road = None
     development_registry_pending = []
     async with httpx.AsyncClient(timeout=13,follow_redirects=True) as client:
         somerville_street = municipal_zoning.somerville_street(address)
@@ -374,12 +375,17 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
                 client, lon, lat, parts.get("city"), result["parcel"], result.get("existing_building"),
             ))
         development_sales_task = None
+        frontage_task = None
         if result.get("parcel") and result.get("coordinates"):
             city = parts.get("city") or ""
             selected_pid = (result.get("parcel") or {}).get("parcel_number") if city.upper() == "BOSTON" else None
             development_sales_task = asyncio.create_task(new_build_sales_research(
                 client, city, result["coordinates"], selected_pid,
             ))
+            if city.upper() == "SOMERVILLE" and polygon is not None and somerville_street:
+                frontage_task = asyncio.create_task(somerville.street_frontage(
+                    client, polygon, lat, somerville_street,
+                ))
         atlas_task = asyncio.create_task(municipal_zoning.multifamily_screen(
             client, parts.get("city") or "", polygon, lat, (result.get("parcel") or {}).get("loc_id"),
         ))
@@ -445,6 +451,11 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
                     "status": "Local condo sale research could not be verified during this search.",
                     "candidates": [], "source_url": None,
                 }
+        if frontage_task:
+            try:
+                frontage_road = await frontage_task
+            except (TimeoutError, httpx.HTTPError, ValueError, TypeError):
+                frontage_road = {"status": "unavailable", "reason": "MassGIS road centerline research failed."}
     zoning = result.get('zoning') or {}
     historical = zoning.get('historical_reference')
     district = zoning.get('district')
@@ -506,7 +517,7 @@ async def property_lookup(address:str=Query(min_length=5,max_length=240), boston
     if result.get("parcel") and city.upper() == "SOMERVILLE" and district == "NR" and not historical:
         result["buildout_review"] = somerville.buildout(
             result["parcel"], result.get("existing_building"), polygon,
-            result.get("coordinates"),
+            result.get("coordinates"), frontage_road,
         )
         rule_audit = somerville_legislation.triple_decker_rules_current(
             result.get("zoning_amendment_research"),
