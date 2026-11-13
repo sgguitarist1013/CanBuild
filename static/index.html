@@ -131,7 +131,7 @@ function renderValues(d){
   const best=d.redevelopment?.best;
   $('currentMarketValue').textContent=market?range(market.low,market.high):'Estimate unavailable';
   $('currentMarketBasis').textContent=market
-    ? market.comp_count+' Registry-confirmed sale'+(market.comp_count===1?'':'s')+' within '+market.radius_miles+' mi, scaled to subject living area.'+(market.confidence==='limited'?' Limited evidence: indicative range only; additional comparable sales needed.':'')
+    ? market.comp_count+' Registry-confirmed sale'+(market.comp_count===1?'':'s')+' within '+market.radius_miles+' mi, scaled to subject living area.'+(market.confidence==='limited'?' Limited evidence. More comparable sales are needed to estimate acquisition costs.':'')
     : 'No qualifying deed-confirmed comparable sales found. Market estimate cannot be supported.';
   $('assessedValueContext').hidden=!assessment;
   $('assessedValueContext').textContent=assessment

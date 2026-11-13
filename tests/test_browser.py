@@ -376,3 +376,31 @@ def test_permit_history_loads_only_when_opened_and_keeps_city_links(page, app_ur
     page.get_by_text("Building permits and applications", exact=True).click()
     expect(page.locator("#permitRecords")).to_contain_text("Issued 2021-08-23")
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("width", [320, 390])
+def test_limited_current_value_does_not_price_acquisition(page, app_url, property_record, width):
+    from redevelopment import analyze_redevelopment
+    from tests.test_redevelopment import verified_condos
+
+    market = {"low": 1000000, "high": 1200000, "comp_count": 2, "confidence": "limited", "radius_miles": .5}
+    comps = [dict(row, arm_length_verified=True, new_construction_verified=True)
+             for row in verified_condos(1700)]
+    redevelopment = analyze_redevelopment(
+        {"gross_area_high_sqft": 8000, "stories": 4}, {}, comps, current_market_range=market,
+    )
+    record = dict(property_record, zoning={"district": "C-1"}, redevelopment=redevelopment,
+                  current_valuation={"market_range": market})
+    page.set_viewport_size({"width": width, "height": 844})
+    page.route("**/api/property?*", lambda route: route.fulfill(json=record))
+    page.route("**/api/suggest?*", lambda route: route.fulfill(json={"suggestions": []}))
+    page.goto(app_url)
+    page.get_by_role("combobox").fill("95 Magazine St, Cambridge, MA")
+    page.get_by_role("button", name="Explore property").click()
+    expect(page.locator("#currentMarketValue")).to_contain_text("$1,000,000")
+    expect(page.locator("#currentMarketBasis")).to_contain_text("Limited evidence")
+    expect(page.locator("#autoCost")).to_contain_text("before acquisition")
+    expect(page.locator("#autoSellout")).to_contain_text("$")
+    expect(page.locator("#surplusSummary")).to_be_hidden()
+    expect(page.locator("#redevelopmentEvidence")).to_be_hidden()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")

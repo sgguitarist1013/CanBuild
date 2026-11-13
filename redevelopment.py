@@ -110,6 +110,9 @@ def analyze_redevelopment(massing, building, references=(), *, current_market_ra
         return {"status": "No supported redevelopment envelope for this parcel."}
     building = building or {}
     market = current_market_range or {}
+    comp_count = market.get("comp_count")
+    if market.get("confidence") == "limited" or (type(comp_count) is int and comp_count < 3):
+        market = {}
     low, high = market.get("low"), market.get("high")
     acquisition = (low + high) / 2 if positive_number(low) and positive_number(high) and low <= high else None
     existing_gross = building.get("building_area_sqft")
