@@ -19,7 +19,8 @@ jobs:
       - run: pip install -r requirements-dev.txt
       - run: python -m playwright install --with-deps chromium
       - run: python -m pytest -q --ignore=tests/test_browser.py
-      - run: python -m pytest tests/test_browser.py -q --tracing retain-on-failure --screenshot only-on-failure
+      - name: Browser regressions and live Somerville completion gate
+        run: python -m pytest tests/test_browser.py -q --tracing retain-on-failure --screenshot only-on-failure
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

@@ -5,38 +5,46 @@ from statistics import quantiles
 from valuation import positive_number
 
 STUDY = "https://www.cambridgema.gov/-/media/Files/CDD/Housing/Inclusionary/cambridgeinclusionaryhousingstudy2026.pdf"
+SOMERVILLE_STUDY = "https://somervillema.legistar.com/View.ashx?GUID=DF598D48-21DE-4552-A115-27356A330673&ID=14924562&M=F"
 INCLUSIONARY = "https://www.cambridgema.gov/CDD/housing/fordevelopersandpropmanagers/inclusionarydevelopers"
 LENDING = "https://www.occ.gov/publications-and-resources/publications/comptrollers-handbook/files/commercial-real-estate-lending/index-commercial-real-estate-lending.html"
 UNIT_SIZES = (700, 1050, 1400)
 UNIT_BATHS = (1, 2, 2)
 TARGET_MIX = (.20, .50, .30)  # RKG table 34
 COMMON_FRACTION = .18
+SOMERVILLE_UNIT_TYPES = ((3, 2, 1200, 1.0),)  # 3 bed / 2 bath condo underwriting proxy
 
 
-def unit_mix(net_area):
+def unit_mix(net_area, unit_types=None):
     """Fit a mix close to the target bedroom distribution, using whole units."""
+    unit_types = unit_types or tuple((i + 1, UNIT_BATHS[i], size, TARGET_MIX[i])
+                                     for i, size in enumerate(UNIT_SIZES))
     counts = [0, 0, 0]
+    if len(unit_types) != len(counts):
+        counts = [0] * len(unit_types)
     left = net_area
-    while left >= UNIT_SIZES[0]:
-        feasible = [i for i, area in enumerate(UNIT_SIZES) if area <= left]
+    while left >= min(row[2] for row in unit_types):
+        feasible = [i for i, row in enumerate(unit_types) if row[2] <= left]
         total = sum(counts) + 1
-        i = max(feasible, key=lambda j: TARGET_MIX[j] * total - counts[j])
+        i = max(feasible, key=lambda j: unit_types[j][3] * total - counts[j])
         counts[i] += 1
-        left -= UNIT_SIZES[i]
+        left -= unit_types[i][2]
     return counts
 
 
-def reserve_affordable(counts, required_area):
+def reserve_affordable(counts, required_area, unit_types=None):
     """Reserve full units, preferring a mix proportionate to the proposed program."""
-    reserved = [0, 0, 0]
+    unit_types = unit_types or tuple((i + 1, UNIT_BATHS[i], size, TARGET_MIX[i])
+                                     for i, size in enumerate(UNIT_SIZES))
+    reserved = [0] * len(counts)
     allocated_area = 0
     while allocated_area < required_area:
         i = max(
-            (j for j in range(3) if reserved[j] < counts[j]),
+            (j for j in range(len(counts)) if reserved[j] < counts[j]),
             key=lambda j: counts[j] * .20 - reserved[j],
         )
         reserved[i] += 1
-        allocated_area += UNIT_SIZES[i]
+        allocated_area += unit_types[i][2]
     return reserved
 
 
@@ -56,7 +64,7 @@ def matching_condos(references, beds, baths, area):
     return nearby[:4] if len(nearby) >= 3 else ranked[:3]
 
 
-def pricing(references):
+def pricing(references, municipality="CAMBRIDGE", unit_types=None):
     rates = []
     verified = [
         row for row in references
@@ -64,19 +72,24 @@ def pricing(references):
         and positive_number(row.get("sale_price")) and deed.get("consideration") == row["sale_price"]
         and positive_number(row.get("price_per_living_sqft"))
     ]
-    for beds, (area, baths) in enumerate(zip(UNIT_SIZES, UNIT_BATHS), 1):
+    unit_types = unit_types or tuple((i + 1, UNIT_BATHS[i], size, TARGET_MIX[i])
+                                     for i, size in enumerate(UNIT_SIZES))
+    for beds, baths, area, _target in unit_types:
         rows = matching_condos(verified, beds, baths, area)
         if len(rows) >= 3:
             low, _, high = quantiles([r["price_per_living_sqft"] for r in rows], n=4, method="inclusive")
-            rates.append((round(low), round(high), "MassLandRecords-confirmed Cambridge sales", rows))
+            rates.append((round(low), round(high), f"MassLandRecords-confirmed {municipality.title()} condo sales", rows))
         else:
             rates.append((None, None, "Insufficient matching deed-confirmed sales", rows))
     return rates
 
 
-def cost_budget(gross_area, existing_area, stories, units, acquisition, sellout, *, stress):
+def cost_budget(gross_area, existing_area, stories, units, acquisition, sellout, *, stress, municipality="CAMBRIDGE"):
     """Model costs through disposition; rates are documented assumptions, not quotes."""
-    building = gross_area * (320 if stories <= 4 else 372) * (1.10 if stress else 1)
+    somerville = municipality.upper() == "SOMERVILLE"
+    building_rate = ((293 if stress else 250) if somerville
+                     else (320 if stories <= 4 else 372) * (1.10 if stress else 1))
+    building = gross_area * building_rate
     lines = {
         "Building construction, GC overhead and profit": building,
         "Demolition and ordinary abatement allowance": existing_area * (25 if stress else 15),
@@ -86,7 +99,7 @@ def cost_budget(gross_area, existing_area, stories, units, acquisition, sellout,
     hard = sum(lines.values())
     lines.update({
         "Hard-cost contingency and escalation": hard * (.12 if stress else .075),
-        "Architecture, engineering and consultants": hard * .08,
+        "Architecture, engineering and consultants": hard * (.20 if somerville else .08),
         "Permits, approvals, inspection and utility fees": hard * .025,
         "Survey, geotechnical, environmental and testing": hard * .015,
         "Legal, accounting, condo documents and development management": hard * .03,
@@ -94,18 +107,20 @@ def cost_budget(gross_area, existing_area, stories, units, acquisition, sellout,
         "Taxes, post-completion carry and initial condo reserves": units * (10000 if stress else 7000),
     })
     development = sum(lines.values())
-    # Illustrative 70% LTC, average 50% drawn on development, land drawn at close.
+    # Somerville RKG assumes 40% equity (60% debt) and 6.5% interest.
+    # Cambridge uses a separate screening assumption; draw timing stays illustrative.
+    debt_share, annual_rate = ((.60, .065) if somerville else (.70, .075))
     months = (24 if stories > 4 else 18) + (9 if stress else 6)
     lines["Financing fees and interest through sellout"] = (
-        .70 * development * (.0125 + .075 * .5 * months / 12)
-        + .70 * (acquisition or 0) * (.0125 + .075 * months / 12)
+        debt_share * development * (.0125 + annual_rate * .5 * months / 12)
+        + debt_share * (acquisition or 0) * (.0125 + annual_rate * months / 12)
     )
-    lines["Brokerage, marketing, closing, excise and concessions"] = sellout * (.075 if stress else .055)
+    lines["Brokerage, marketing, closing, excise and concessions"] = sellout * (.075 if stress else .05)
     lines["Acquisition proxy and buyer closing costs"] = acquisition * 1.02 if acquisition else None
     return {key: round(value) if value is not None else None for key, value in lines.items()}
 
 
-def analyze_redevelopment(massing, building, references=(), *, current_market_range=None):
+def analyze_redevelopment(massing, building, references=(), *, current_market_range=None, municipality="CAMBRIDGE"):
     if not massing or not massing.get("gross_area_high_sqft"):
         return {"status": "No supported redevelopment envelope for this parcel."}
     building = building or {}
@@ -117,7 +132,8 @@ def analyze_redevelopment(massing, building, references=(), *, current_market_ra
     existing_units = building.get("units")
     has_existing_area = positive_number(existing_gross)
     demolition_area = existing_gross if has_existing_area else massing["gross_area_high_sqft"] / massing["stories"]
-    prices = pricing(references)
+    unit_types = SOMERVILLE_UNIT_TYPES if municipality.upper() == "SOMERVILLE" else None
+    prices = pricing(references, municipality, unit_types)
     options = [("Base redevelopment", massing, False)]
     if bonus := massing.get("inclusionary_scenario"):
         options.append(("Conditional inclusionary height option", bonus, True))
@@ -126,10 +142,12 @@ def analyze_redevelopment(massing, building, references=(), *, current_market_ra
     for name, option, conditional in options:
         gross = option["gross_area_high_sqft"]
         common = ceil(gross * COMMON_FRACTION)
-        counts = unit_mix(gross - common)
+        types = unit_types or tuple((i + 1, UNIT_BATHS[i], UNIT_SIZES[i], TARGET_MIX[i])
+                                    for i in range(len(UNIT_SIZES)))
+        counts = unit_mix(gross - common, types)
         if not sum(counts):
             continue
-        unit_area = sum(count * size for count, size in zip(counts, UNIT_SIZES))
+        unit_area = sum(count * unit_type[2] for count, unit_type in zip(counts, types))
         # Living area is also a lower bound on existing gross floor area.
         if ((has_existing_area and gross <= existing_gross)
                 or (positive_number(existing_living) and unit_area <= existing_living)
@@ -139,14 +157,15 @@ def analyze_redevelopment(massing, building, references=(), *, current_market_ra
             continue
         # Use the gross envelope as a conservative proxy for the 10,000 sq ft trigger.
         restricted_area = ceil(.20 * unit_area) if conditional or sum(counts) >= 10 or gross >= 10000 else 0
-        restricted = reserve_affordable(counts, restricted_area)
+        restricted = reserve_affordable(counts, restricted_area, types)
         mix = []
-        for i, (count, affordable, area, price) in enumerate(zip(counts, restricted, UNIT_SIZES, prices), start=1):
+        for i, (count, affordable, unit_type, price) in enumerate(zip(counts, restricted, types, prices), start=1):
             if count:
-                mix.append({"bedrooms": i, "area_sqft": area, "market_units": count - affordable,
+                beds, baths, area, _target = unit_type
+                mix.append({"bedrooms": beds, "area_sqft": area, "market_units": count - affordable,
                             "restricted_units": affordable, "price_per_sqft_low": price[0],
                             "price_per_sqft_high": price[1], "pricing_basis": price[2], "comparable_projects": len(price[3]),
-                            "bathrooms_assumed": UNIT_BATHS[i-1], "sale_matches": price[3]})
+                            "bathrooms_assumed": baths, "sale_matches": price[3]})
         scenario = {
             "name": name, "conditional": conditional, "stories": option["stories"],
             "height_ft": option.get("height_ft"), "gross_area_sqft": gross,
@@ -163,8 +182,8 @@ def analyze_redevelopment(massing, building, references=(), *, current_market_ra
                 sum(row["market_units"] * row["area_sqft"] * row[f"price_per_sqft_{band}"] for row in market_mix)
                 for band in ("low", "high")
             )
-            downside = cost_budget(gross, demolition_area, option["stories"], sum(counts), acquisition, sale_low, stress=True)
-            upside = cost_budget(gross, demolition_area, option["stories"], sum(counts), acquisition, sale_high, stress=False)
+            downside = cost_budget(gross, demolition_area, option["stories"], sum(counts), acquisition, sale_low, stress=True, municipality=municipality)
+            upside = cost_budget(gross, demolition_area, option["stories"], sum(counts), acquisition, sale_high, stress=False, municipality=municipality)
             costs_high = sum(x for x in downside.values() if x is not None)
             costs_low = sum(x for x in upside.values() if x is not None)
             scenario.update(
@@ -197,8 +216,10 @@ def analyze_redevelopment(massing, building, references=(), *, current_market_ra
         ],
         "ranking": ranking, "acquisition_proxy": acquisition, "demolition_area_proxy": not has_existing_area,
         "restricted_proceeds_credited": 0,
-        "assumptions": "18% common/service area, standard assumed unit sizes, no dedicated parking, no restricted-unit proceeds, and no subsidies. Demolition area uses the assessor building area or a one-floor footprint proxy. Budget allowances are screening assumptions. Large abatement, relocation, remediation, unusual foundations, parking, insurance or offsite work can materially change costs. Surplus is before income tax and investor distributions.",
-        "sources": [{"name": "Cambridge September 2026 underwriting study · tables 27, 30 and 34", "url": STUDY},
+        "assumptions": ("Somerville: 18% common/service area and a three-unit, 3-bedroom/2-bathroom, 1,200-sq-ft-per-unit layout are underwriting assumptions, not zoning mandates. Local hard-cost rates and soft-cost percentage use the City's 2025 RKG feasibility analysis; the 3-unit project-scale premium, sitework, demolition/abatement, permit, carry, and transaction allowances remain screening assumptions. No dedicated parking, restricted proceeds, or subsidies. Large abatement, relocation, remediation, unusual foundations, parking, insurance or offsite work can materially change costs. Surplus is before income tax and investor distributions."
+                        if municipality.upper() == "SOMERVILLE" else "18% common/service area, standard assumed unit sizes, no dedicated parking, no restricted-unit proceeds, and no subsidies. Demolition area uses the assessor building area or a one-floor footprint proxy. Budget allowances are screening assumptions. Large abatement, relocation, remediation, unusual foundations, parking, insurance or offsite work can materially change costs. Surplus is before income tax and investor distributions."),
+        "sources": ([{"name": "Somerville 2025 RKG Financial Feasibility Analysis · construction and financing inputs", "url": SOMERVILLE_STUDY}]
+                    if municipality.upper() == "SOMERVILLE" else [{"name": "Cambridge September 2026 underwriting study · tables 27, 30 and 34", "url": STUDY},
                     {"name": "Cambridge inclusionary requirements", "url": INCLUSIONARY},
-                    {"name": "OCC construction lending and interest reserves", "url": LENDING}],
+                    {"name": "OCC construction lending and interest reserves", "url": LENDING}]),
     }

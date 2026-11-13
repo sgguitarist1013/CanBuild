@@ -427,7 +427,7 @@ function renderQuality(quality){
   const checks=quality?.checks||[];
   const needsReview=checks.filter(c=>c.state==='review'||c.state==='error').length;
   $('qualitySummary').textContent=quality
-    ? (quality.status==='error'?'Accuracy check found an issue':needsReview?needsReview+(needsReview===1?' research check needs review':' research checks need review'):'Research coverage is partial')
+    ? (quality.status==='error'?'Accuracy check found an issue':quality.status==='ready'?'All required research checks passed':needsReview?needsReview+(needsReview===1?' research check needs review':' research checks need review'):'Research coverage is partial')
     : 'Research quality checks unavailable';
   $('qualityChecks').replaceChildren();
   for(const check of checks){

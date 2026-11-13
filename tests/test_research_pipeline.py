@@ -1,4 +1,6 @@
 from research_pipeline import guard_report, inspect_report
+from release_gate import validate_complete_report
+import pytest
 
 
 def test_unmatched_property_keeps_all_property_specific_sections_unavailable():
@@ -69,7 +71,7 @@ def test_incomplete_public_report_contains_no_property_facts_or_partial_estimate
     assert public_report(report) == {
         "ready": False,
         "status": "incomplete",
-        "message": "We couldn't complete the verified research needed for this address. No property details were published. Select Retry search to check again.",
+        "message": "We couldn't complete the verified research needed for this address. No property details are shown. Select Explore property to try again.",
     }
 
 
@@ -142,3 +144,30 @@ def test_malformed_nonfinite_and_string_financial_values_are_withheld_safely():
     }}})
     economics = next(check for check in quality["checks"] if check["key"] == "economics")
     assert economics["state"] == "error"
+
+
+def test_release_gate_rejects_the_current_incomplete_address_response():
+    with pytest.raises(AssertionError, match="research is incomplete"):
+        validate_complete_report({"ready": False, "status": "incomplete"})
+
+
+def test_release_gate_accepts_only_a_complete_report_with_verified_comps_and_costs():
+    checks = [
+        {"key": key, "state": "supported"}
+        for key in ("parcel_identity", "zoning", "site_constraints", "as_is_comps", "buildout", "economics")
+    ]
+    addresses = ["1 Test St", "2 Test St", "3 Test St"]
+    report = {
+        "ready": True, "address": "9 GORHAM ST, SOMERVILLE, MA", "parcel": {"parcel_number": "17-A-6"},
+        "research_quality": {"status": "ready", "checks": checks},
+        "current_valuation": {"market_range": {"low": 1_000_000, "high": 1_200_000, "comp_count": 3,
+                              "comp_addresses": addresses}},
+        "sales_research": {"candidates": [{"address": address, "deed_verification": {"status": "verified"}}
+                                            for address in addresses]},
+        "zoning_potential": {"rule_basis_verified": True}, "constraints_screen_complete": True,
+        "constraints": [],
+        "redevelopment": {"best": {"sellout_low": 2_000_000, "sellout_high": 2_500_000,
+                        "cost_low": 1_500_000, "cost_high": 1_800_000,
+                        "cost_lines": [{"name": "Hard costs"}]}},
+    }
+    assert validate_complete_report(report) is report
