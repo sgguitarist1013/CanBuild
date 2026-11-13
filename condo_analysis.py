@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, model_validator
 
 import boston
 import ma_sales
+import somerville
 
 CAMBRIDGE_ASSESSOR = "https://data.cambridgema.gov/d/waa7-ibdu"
 CAMBRIDGE_ASSESSOR_API = "https://data.cambridgema.gov/resource/waa7-ibdu.json"
@@ -247,6 +248,59 @@ async def condo_sales(client, lon, lat, city, boston_pid=None, min_year_built=No
             a['_record_reference']=s.get('latest_bkgpcert')
             rows.append(reference(a,price,sold,area,boston.SOURCE))
         return reference_summary(rows,boston.SOURCE,bool(data.get('exceededTransferLimit') or sales.get('exceededTransferLimit')),min_year_built)
+    if city.upper() == 'SOMERVILLE':
+        # The municipal zoning/parcel layer also publishes validated assessor
+        # condo sales, room counts, year built, and Registry book/page fields.
+        # Prefer it to the slower statewide parcel service for this city.
+        cutoff = today - timedelta(days=1096)
+        where = (
+            "PCC = '1020' AND MBL = TaxParMBL AND SALE_VALID = 'Q' "
+            "AND SALE_PRICE >= 10000 AND LIVING_AREA > 0 "
+            f"AND SALE_DATE >= timestamp '{cutoff.isoformat()} 00:00:00'"
+        )
+        if min_year_built:
+            where += f" AND YEAR >= {int(min_year_built)} AND YEAR <= {today.year}"
+        response = await client.get(somerville.GIS + '/query', params={
+            'f': 'json', 'where': where,
+            'geometry': f'{lon},{lat}', 'geometryType': 'esriGeometryPoint',
+            'inSR': 4326, 'distance': 1609 * radius_miles,
+            'units': 'esriSRUnit_Meter', 'spatialRel': 'esriSpatialRelIntersects',
+            'outFields': 'OBJECTID,MBL,TaxParMBL,AddNum,Street,PCC,SALE_VALID,SALE_PRICE,SALE_DATE,LIVING_AREA,BEDROOM,BATH,BOOK_PAGE,YEAR',
+            'returnGeometry': 'false', 'resultRecordCount': 1000,
+            'orderByFields': 'SALE_DATE DESC',
+        }, timeout=httpx.Timeout(10, connect=4))
+        response.raise_for_status()
+        data = response.json()
+        if data.get('error') or not isinstance(data.get('features'), list):
+            raise ValueError('Somerville condominium sale query unavailable')
+        rows = []
+        for feature in data['features']:
+            a = feature.get('attributes') or {}
+            sold = boston.sale_date(a.get('SALE_DATE'))
+            price, area, year = a.get('SALE_PRICE'), a.get('LIVING_AREA'), a.get('YEAR')
+            if (a.get('PCC') != '1020' or a.get('SALE_VALID') != 'Q'
+                    or a.get('MBL') != a.get('TaxParMBL')
+                    or not sold or not cutoff <= sold <= today
+                    or not isinstance(price, (int, float)) or price < 10000
+                    or not isinstance(area, (int, float)) or area <= 0
+                    or (min_year_built and (not isinstance(year, (int, float)) or not min_year_built <= year <= today.year))):
+                continue
+            book_page = str(a.get('BOOK_PAGE') or '').strip()
+            if not re.fullmatch(r'[1-9][0-9]*/[0-9]+', book_page):
+                continue
+            attrs = {
+                'SITE_ADDR': f"{a.get('AddNum', '').strip()} {a.get('Street', '').strip()}".strip(),
+                'PROP_ID': a.get('MBL'), 'LOC_ID': f"{a.get('AddNum')} {a.get('Street')}",
+                'YEAR_BUILT': year, '_record_reference': book_page,
+            }
+            comp = reference(attrs, price, sold, area, somerville.GIS)
+            comp['bedrooms_reported'] = a.get('BEDROOM')
+            comp['bathrooms_reported'] = a.get('BATH')
+            comp['market_scope'] = 'Somerville municipal assessor sales'
+            rows.append(comp)
+        truncated = bool(data.get('exceededTransferLimit') or len(data['features']) >= 1000)
+        return reference_summary(rows, somerville.GIS, truncated, min_year_built,
+                                new_build_only=new_build_only, radius_miles=radius_miles)
     response=await client.get(ma_sales.SERVICE,params={'f':'json',
         'where':"CITY = '"+city.upper().replace("'","''")+"' AND UPPER(USE_DESC) LIKE '%CONDO%' AND LS_PRICE >= 10000 AND RES_AREA > 0"+(f' AND YEAR_BUILT >= {min_year_built}' if min_year_built else ''),
         'geometry':f'{lon},{lat}','geometryType':'esriGeometryPoint','inSR':4326,'distance':1609 * radius_miles,'units':'esriSRUnit_Meter',
