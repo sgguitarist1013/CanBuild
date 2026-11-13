@@ -36,3 +36,17 @@ def test_as_is_estimate_uses_three_distinct_registry_confirmed_like_sales():
 
 def test_missing_assessment_and_comps_stay_unavailable():
     assert current_valuation({}, {"assessed_value": float("inf")}, {}) == {"market_range": None, "assessment": None}
+
+
+def test_somerville_assessor_living_area_label_matches_residential_living_area_subject():
+    parcel = {"parcel_number": "subject", "gis_area_sqft_approx": 5000}
+    building = {"residential_area_sqft": 2700, "bedrooms_reported": 5, "bathrooms_reported": 2}
+    sales = {"candidates": [
+        {"parcel_number": f"comp-{n}", "address": f"{n} Example St", "comparison_area_sqft": 2700,
+         "comparison_area_basis": "assessor living area", "bedrooms_reported": 5,
+         "bathrooms_reported": 2, "lot_area_sqft": 5000, "distance_miles": .1 * n,
+         "sale_price": price, "deed_verification": {"status": "verified", "consideration": price}}
+        for n, price in enumerate((1_200_000, 1_300_000, 1_400_000), start=1)
+    ]}
+    result = current_valuation(parcel, building, sales)
+    assert result["market_range"]["comp_count"] == 3
