@@ -28,6 +28,24 @@ def assessor_class(building):
     return CODES.get(use_group(use))
 
 
+def parcel_area_sqft(feature):
+    """Calculate a screening lot area from the selected parcel polygon geometry."""
+    try:
+        from shapely.ops import transform
+        from municipal_zoning import esri_polygon
+        polygon = esri_polygon(feature.get("geometry"))
+        if polygon.is_empty or polygon.geom_type not in {"Polygon", "MultiPolygon"}:
+            return None
+        latitude = radians(polygon.centroid.y)
+        radius_m = 6_371_008.8
+        projected = transform(lambda x, y, z=None: (radius_m * radians(x) * cos(latitude),
+                                                     radius_m * radians(y)), polygon)
+        area = projected.area * 10.7639104167
+        return round(area) if area > 0 else None
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
 def buildout(parcel, building):
     building = building or {}
     multi_house = assessor_class(building) == "1090"
@@ -90,8 +108,6 @@ def sale_candidates(features, lon, lat, parcel, building, today):
         pid, code = row.get("MBL"), row.get("PCC")
         if not pid or pid != row.get("TaxParMBL") or pid == parcel.get("parcel_number") or row.get("SALE_VALID") != "Q":
             continue
-        if code != subject_class and (subject_class != "1090" or code not in {"1040", "1050"}):
-            continue
         sold, price, size = boston.sale_date(row.get("SALE_DATE")), row.get("SALE_PRICE"), row.get(area_field)
         beds, baths = row.get("BEDROOM"), row.get("BATH")
         if (not sold or not 0 <= (today - sold).days <= 1096 or not row.get("AddNum") or not row.get("Street")
@@ -106,11 +122,17 @@ def sale_candidates(features, lon, lat, parcel, building, today):
         dx, dy = radians(point[0] - lon), radians(point[1] - lat)
         hav = sin(dy / 2)**2 + cos(radians(lat)) * cos(radians(point[1])) * sin(dx / 2)**2
         distance = 2 * 3958.8 * asin(sqrt(min(1, hav)))
+        lot_area = parcel_area_sqft(feature)
+        subject_lot = parcel.get("gis_area_sqft_approx")
+        if isinstance(subject_lot, (int, float)) and subject_lot > 0:
+            if not isinstance(lot_area, (int, float)) or abs(lot_area-subject_lot) > .30*subject_lot:
+                continue
         record = {"address": f"{row['AddNum']} {row['Street']}", "sale_date": sold.isoformat(), "sale_price": price,
             "parcel_number": pid, "use_description": CLASSES[code], "comparison_area_sqft": size,
             "comparison_area_basis": area_basis, "price_per_comparison_sqft": round(price / size),
             "distance_miles": distance, "size_difference_pct": round((size - subject_area) / subject_area * 100),
-            "bedrooms_reported": beds, "bathrooms_reported": baths, "record_reference": row.get("BOOK_PAGE"),
+            "bedrooms_reported": beds, "bathrooms_reported": baths,
+            "lot_area_sqft": lot_area, "record_reference": row.get("BOOK_PAGE"),
             "source_url": GIS, "source_name": "Somerville municipal GIS sales", "arm_length_status": "City sale flag Q",
             "comparison_label": "Same assessor class" if code == subject_class else "Similar residential sale · different assessor class"}
         if pid not in rows or rows[pid]["sale_date"] < record["sale_date"]:
@@ -128,7 +150,7 @@ async def sales(client, lon, lat, parcel, building):
         return {"status": "Size-matched sales require reported area, bedrooms and bathrooms", "candidates": [], "source_url": GIS}
     today = date.today()
     cutoff = (today - timedelta(days=1096)).isoformat()
-    codes = "'1040','1050','1090'" if code == "1090" else f"'{code}'"
+    codes = "'1010','1040','1050','1090'"
     area_field = "LIVING_AREA" if living else "GROSS_AREA"
     low, high = ceil(area * (1 - SIZE_TOLERANCE)), floor(area * (1 + SIZE_TOLERANCE))
     params = {
@@ -157,5 +179,5 @@ async def sales(client, lon, lat, parcel, building):
     return {"status": f"{len(matches)} local sale reference(s) matched on size, beds and baths" if matches else "No local sales matched the size and room criteria",
             "candidates": matches, "count": len(matches), "same_class_count": exact_count, "source_url": GIS,
             "expanded": expanded, "radius_miles": round(radius, 3), "truncated": bool(data.get("exceededTransferLimit")),
-            "method": "Somerville only. Within 15% of subject area using the same measurement, within one bedroom and one bathroom, and city sale flag Q in the last three years. Start at 0.5 mile and, if needed, return the three nearest matches in the municipality. For multiple-house parcels, similar two- and three-family sales are labeled separately by assessor class.",
+            "method": "Somerville only. Within 15% of subject living or gross area using the same measurement, within one bedroom and one bathroom, lot within 30% when parcel geometry is available, and city sale flag Q in the last three years. Start at 0.5 mile and, if needed, return the three nearest matches in the municipality. Exact assessor class is not required.",
             "limitations": "Assessor counts, recorded sales and building areas require verification. These references do not establish market value or completed-project sellout."}
