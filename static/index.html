@@ -716,7 +716,7 @@ async function lookup(selectedPid=null) {
   try {
     const url='/api/property?address='+encodeURIComponent(query)+(selectedPid?'&boston_pid='+encodeURIComponent(selectedPid):'');
     const report=await jsonResponse(url,{signal:controller.signal});
-    if(report.ready===false){
+    if(report.ready!==true){
       $('results').classList.add('hide');
       $('intro').classList.remove('hide');
       document.body.classList.remove('has-results');
