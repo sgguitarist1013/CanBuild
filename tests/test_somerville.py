@@ -1,9 +1,11 @@
 from datetime import date
+from math import cos, radians
 
 import httpx
 import pytest
+from shapely.geometry import box
 
-from somerville import buildout, sale_candidates, sales
+from somerville import buildout, detached_triple_decker_fit, sale_candidates, sales
 
 
 SUBJECT = {"use_description": "Multiple Houses on one parcel", "residential_area_sqft": 2722,
@@ -30,6 +32,24 @@ def test_nr_screen_uses_real_lot_area_and_distinguishes_unit_options_from_yield(
     assert result["existing_units"] is None
     assert any("multiple houses" in check for check in result["checks"])
     assert any("demolition" in check for check in result["checks"])
+
+
+def test_nr_triple_decker_screen_applies_adopted_setbacks_and_lot_coverage():
+    radius_ft = 6_371_008.8 * 3.280839895
+    lat = 42.4
+    lon = -71.125
+    delta_lon = 20 / (radius_ft * cos(radians(lat))) * 180 / 3.141592653589793
+    frontage_lon = lon + delta_lon
+    frontage_lat = lat + 2 / radius_ft * 180 / 3.141592653589793
+    x = radius_ft * radians(lon) * cos(radians(lat))
+    y = radius_ft * radians(lat)
+    parcel = {"gis_area_sqft_approx": 5400, "polygon_area_sqft_approx": 5400}
+    result = detached_triple_decker_fit(parcel, box(x, y, x + 60, y + 90), {"lon": frontage_lon, "lat": frontage_lat})
+    assert result["status"] == "dimensional_screen_pass"
+    assert result["lot_frontage_ft_approx"] == 60
+    assert result["lot_depth_ft_approx"] == 90
+    assert result["max_principal_footprint_sqft"] == 1500
+    assert result["gross_area_high_sqft"] == 4500
 
 
 def test_comp_match_preserves_size_rooms_and_distinguishes_assessor_class():
