@@ -4,6 +4,7 @@ This module does not infer missing facts or upgrade source confidence. It record
 which report sections have evidence, and flags internal inconsistencies so the
 UI and tests can make unsupported conclusions visible.
 """
+from math import isfinite
 
 
 def _check(key, state, message):
@@ -47,8 +48,8 @@ def inspect_report(report):
     if market:
         count = market.get("comp_count")
         low, high = market.get("low"), market.get("high")
-        valid_range = (type(count) is int and count >= 3 and type(low) in (int, float)
-                       and type(high) in (int, float) and low > 0 and high >= low)
+        valid_range = (type(count) is int and count >= 3 and _finite_number(low)
+                       and _finite_number(high) and low > 0 and high >= low)
         checks.append(_check("as_is_comps", "supported" if valid_range else "error",
             "Market range has at least three distinct qualifying sales." if valid_range
             else "Market range failed minimum count or numeric consistency checks."))
@@ -64,7 +65,8 @@ def inspect_report(report):
         pricing_rows = [row for row in market_mix if row.get("price_per_sqft_low") is not None
                         or row.get("price_per_sqft_high") is not None]
         unsupported = [row for row in pricing_rows
-                       if row.get("comparable_projects", 0) < 3
+                       if type(row.get("comparable_projects")) is not int
+                       or row.get("comparable_projects") < 3
                        or row.get("price_per_sqft_low") is None
                        or row.get("price_per_sqft_high") is None]
         has_financials = any(best.get(field) is not None for field in
@@ -117,14 +119,18 @@ def _financials_consistent(scenario):
     for low, high in ((sellout_low, sellout_high), (cost_low, cost_high)):
         if (low is None) != (high is None):
             return False
-        if low is not None and (type(low) not in (int, float) or type(high) not in (int, float)
+        if low is not None and (not _finite_number(low) or not _finite_number(high)
                                 or low < 0 or high < low):
             return False
     surplus_low, surplus_high = scenario.get("surplus_low"), scenario.get("surplus_high")
-    if surplus_low is not None and (sellout_low is None or cost_high is None
+    if surplus_low is not None and (not _finite_number(surplus_low) or sellout_low is None or cost_high is None
                                     or abs(surplus_low - (sellout_low - cost_high)) > 1):
         return False
-    if surplus_high is not None and (sellout_high is None or cost_low is None
+    if surplus_high is not None and (not _finite_number(surplus_high) or sellout_high is None or cost_low is None
                                      or abs(surplus_high - (sellout_high - cost_low)) > 1):
         return False
     return True
+
+
+def _finite_number(value):
+    return type(value) in (int, float) and isfinite(value)
